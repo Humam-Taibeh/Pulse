@@ -651,22 +651,45 @@ _DARK = {
     "overlay":     "rgba(5, 6, 10, 0.45)",
     "panel":       "rgba(255, 255, 255, 0.038)",
     "panel_line":  "rgba(255, 255, 255, 0.075)",
-    # THE card tier: #16181D exactly, opaque. Opaque and not translucent
+    # THE card tier: #282C38 exactly, opaque. Opaque and not translucent
     # because a card must look identical on the well, inside a dialog and
     # over the console — a translucent card tinted itself differently in
     # each, which is the other half of the old "lacks depth" complaint.
-    "card":        "rgba(22, 24, 29, 1.0)",
+    #
+    # RAISED from #16181D to #22252E. At the old value the card measured
+    # 1.11:1 against the content well — both near-black, and the card did
+    # not read as a surface at all. The obvious fix (darken the well) does
+    # almost nothing here: WCAG's ratio is (Lhi+0.05)/(Llo+0.05), and down
+    # at these luminances the +0.05 floor dominates both terms, so pushing
+    # the well from #090A0E to nearly pure black bought only 1.11 -> 1.15:1.
+    # The card's own luminance is the term with room to move; raising it
+    # takes the pair to 1.29:1 while leaving the well — and therefore the
+    # ambient star field seen THROUGH it — completely untouched.
+    #
+    # #22252E IS A CEILING, NOT A PREFERENCE. The status badge paints
+    # text_faint on this card and is held to AA by
+    # test_visual_polish.test_a_status_badge_clears_aa_on_the_worst_card_
+    # it_can_land_on. Every step lighter eats that margin: #22252E measures
+    # 4.59:1, and the very next step tried (#242833) fell to 4.41:1 and
+    # failed. Going lighter than this needs the BADGE's own colour raised
+    # first — the palette cannot buy more separation on its own.
+    "card":        "rgba(34, 37, 46, 1.0)",
     # hero/featured tier — a small, deliberate step (1.08:1). It reads
     # because it sits next to the card, not because it out-brightens it.
-    "card_hi":     "rgba(28, 31, 38, 1.0)",
+    # Moved WITH the card and by the ratio it always had (1.077:1): left at
+    # #1C1F26 the "elevated" tier would have ended up DARKER than the
+    # ordinary card it exists to sit above.
+    "card_hi":     "rgba(40, 43, 53, 1.0)",
     # hover: a cool indigo lift, paired with the accent border and the glow
     # frame in card_qss — the "subtle glowing accent on hover" the redesign
     # asks for, kept low so a pointer sweep lights the grid rather than
     # flashing it.
     "card_hover":  "rgba(125, 155, 255, 0.075)",
-    # The delicate border highlight. On obsidian a hairline this quiet is
-    # legible precisely BECAUSE the surfaces around it are quiet.
-    "card_line":   "rgba(255, 255, 255, 0.088)",
+    # The delicate border highlight. Lifted 0.088 -> 0.13 along with the
+    # card: the hairline's job is to define the card's edge, and against a
+    # LIGHTER card the old alpha no longer separated it from its own fill
+    # (1.27:1 before, 1.50:1 now).
+    "card_line":   "rgba(255, 255, 255, 0.13)",
     "card_sheen":  "rgba(255, 255, 255, 0.045)",  # top stop of the glass gradient
     # Dialogs and toasts sit OVER dense text (card grids, the console):
     # fully/near-fully opaque, or the content underneath bleeds through
@@ -783,21 +806,39 @@ _LIGHT = {
     # heavily tinted blue-slate page that no longer read as light mode, with
     # cards sitting in a cold gradient rather than on paper.
     #
-    # v11 takes the actual macOS construction instead. The page is the
-    # system grey #F2F2F7; cards are PURE WHITE; and the ~1.13:1 gap between
-    # them is not asked to carry the elevation at all — a crisp #E5E5EA
-    # hairline plus a soft cast shadow does that (shadow_alphas). This is
-    # why the mode can be bright and still have depth: on macOS the white is
-    # the figure and the grey is the ground, and the shadow is what
-    # separates them.
+    # v11 takes the actual macOS construction instead: white is the figure,
+    # grey is the ground, and cards are PURE WHITE throughout.
+    #
+    # THE CANVAS STAYS AT #F2F2F7 — and that is a constraint, not inertia.
+    # The active filter chip is a solid tone fill whose TEXT is bg_solid
+    # (knockout on the tone), so this token is not only the page: it is the
+    # foreground of every active chip. Darkening it to #D6D8E0 to chase card
+    # separation dropped the worst tone (warn) from 4.81:1 to 3.77:1 and
+    # broke AA — see test_v103_fixes.TestFilterChipContrast. Even one step
+    # down (#EAEAF0) already fails at 4.48:1.
+    #
+    # The separation is bought from `overlay` instead (below), which is the
+    # surface actually behind the cards and carries no text of its own.
     "bg_solid":    "#f2f2f7",   # see the note on the dark side's dropped "bg"
     # A whisper of a gradient — a few points either side of #F2F2F7, enough
     # that the page has air without becoming a tinted backdrop again.
     "bg_grad_top":    "#f7f7fa",
     "bg_grad_bottom": "#e9e9f0",
-    # The content well settles to the system grey exactly, so the card grid
-    # sits on #F2F2F7 whatever the gradient is doing behind it.
-    "overlay":     "rgba(242, 242, 247, 0.55)",
+    # THE CONTENT WELL IS WHERE LIGHT MODE'S CARD SEPARATION COMES FROM.
+    # Cards do not sit on the canvas — they sit in this well — so it is the
+    # only surface whose colour changes what a card is actually seen
+    # against. Tinted from the flat #F2F2F7 to a real grey, it composites
+    # to ~#DADCE3 over the canvas and takes card/well from 1.12:1 to
+    # 1.38:1: white cards now read as sheets on grey rather than white on
+    # white. It carries no text of its own, which is exactly why the
+    # separation is affordable here and not on bg_solid.
+    #
+    # THE ALPHA IS LOAD-BEARING AND STAYS AT 0.55. This well is also the
+    # surface the ambient star field is seen THROUGH, so its opacity scales
+    # star contrast directly — a first pass that bought separation by
+    # raising it to 0.94 measured an 88% drop in star deltaE and would have
+    # quietly deleted the living background. Colour is free; opacity is not.
+    "overlay":     "rgba(198, 200, 210, 0.55)",
     # frosted sidebar / dock — a soft white glass a step above the grey
     # page, a step below the pure-white cards. macOS sidebar material.
     "panel":       "rgba(255, 255, 255, 0.60)",
@@ -815,10 +856,11 @@ _LIGHT = {
     # elevation move this mode can never make.
     "card_hi":     "rgba(255, 255, 255, 1.0)",
     "card_hover":  "rgba(74, 92, 224, 0.045)",
-    # #E5E5EA — Apple's ultra-thin system separator. 1.26:1 against the
-    # white card: crisp enough to draw the card's outline exactly, quiet
-    # enough that a grid of them doesn't read as a table of boxes.
-    "card_line":   "#e5e5ea",
+    # #B7BAC4 — 1.94:1 against the white card. Darkened from #E5E5EA
+    # (1.26:1) along with the ground: a separator tuned to sit between two
+    # near-white surfaces is too faint to draw a white card's edge once
+    # that card sits on a real grey.
+    "card_line":   "#b7bac4",
     "card_sheen":  "rgba(255, 255, 255, 0.9)",    # top stop of the glass gradient
     # Same opacity rule as dark: overlays never let text bleed through.
     "dialog_bg":   "rgba(255, 255, 255, 1.0)",
@@ -2398,6 +2440,56 @@ def label_qss(t: dict, role: str) -> str:
             f"background: transparent; border: none; {extra}")
 
 
+def sidebar_version_qss(t: dict) -> str:
+    """The sidebar footer's identity line, which is ALSO the self-updater's
+    manual "check for updates" button (main.PulseApp._on_footer_clicked).
+    Pairs with elevate_button_qss as the rail's two footer controls.
+
+    Its resting state is DERIVED from the `caption` label role it replaced,
+    not retyped, so the line that closes the rail looks exactly as quiet as
+    it always did — a control announcing itself here would re-weight a zone
+    deliberately kept calm.
+
+    But it is clickable, and it shipped with no hover or press state at
+    all: the affordance was invisible, discoverable only by clicking the
+    version number on a hunch. Hover therefore lifts the text the FULL way
+    (text_faint -> text) over an accent wash and hairline, and press pushes
+    both further while dimming the text, so the click is acknowledged on
+    the way down.
+
+    The first attempt lifted one step to text_muted over `card_hover`,
+    whose 7.5% alpha is all but invisible against the rail — it technically
+    had a hover state and still failed the thing a hover state is for.
+    Discoverability is the requirement, so the contrast has to be legible,
+    not merely present.
+
+    The rest state paints NOTHING — but it reserves the border as
+    `1px solid transparent`, so the hairline appearing on hover cannot
+    reflow the footer by two pixels the moment the pointer arrives.
+    """
+    size, weight, color_key, extra = _LABEL_ROLES["caption"]
+    return f"""
+        QPushButton {{
+            background: transparent;
+            border: 1px solid transparent;
+            color: {t[color_key]};
+            font-size: {size}; font-weight: {weight}; {extra}
+            padding: 7px 4px;
+            border-radius: {RADIUS['control']}px;
+        }}
+        QPushButton:hover {{
+            color: {t['text']};
+            background: {alpha(t['accent'], 0.11)};
+            border: 1px solid {alpha(t['accent'], 0.30)};
+        }}
+        QPushButton:pressed {{
+            color: {t['text_muted']};
+            background: {alpha(t['accent'], 0.20)};
+            border: 1px solid {alpha(t['accent'], 0.44)};
+        }}
+    """
+
+
 # NOTE: apply_blur_behind() (SetWindowCompositionAttribute /
 # ACCENT_ENABLE_BLURBEHIND) was removed here. DWM blur-behind is only
 # visible through a per-pixel-alpha window, so it required the
@@ -2445,20 +2537,12 @@ def enable_native_sizing_frame(hwnd: int) -> bool:
         return False
 
 
-def resize_border_thickness() -> tuple[int, int]:
-    """The (x, y) frame Windows adds around a maximized WS_THICKFRAME
-    window, in physical pixels — what WM_NCCALCSIZE must subtract so a
-    maximized window's content stops at the work area instead of bleeding
-    off every edge of the monitor."""
-    if sys.platform != "win32":
-        return (0, 0)
-    try:
-        gsm = ctypes.windll.user32.GetSystemMetrics
-        SM_CXSIZEFRAME, SM_CYSIZEFRAME, SM_CXPADDEDBORDER = 32, 33, 92
-        pad = gsm(SM_CXPADDEDBORDER)
-        return (gsm(SM_CXSIZEFRAME) + pad, gsm(SM_CYSIZEFRAME) + pad)
-    except (OSError, AttributeError):
-        return (0, 0)
+# resize_border_thickness() was removed here. It existed for exactly one
+# caller — the WM_NCCALCSIZE inset that subtracted it from a maximized
+# window's client rect — and that caller is gone: the inset was guarded by
+# an IsZoomed() test that never fired (see main.clamp_maximized_client),
+# and the guard's replacement clamps to the monitor work area rather than
+# subtracting a frame, so the metric has no remaining use.
 
 
 def apply_native_rounding(hwnd: int, rounded: bool = True) -> bool:

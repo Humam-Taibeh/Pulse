@@ -314,7 +314,7 @@ def test_the_kept_file_survives_even_when_stale(monkeypatch, tmp_path):
 # ============================================================
 def test_the_repo_matches_the_git_remote():
     """A typo here points the updater at somebody else's releases."""
-    assert updater.REPO == "Humam-Taibeh/Humam-Windows-Architecture"
+    assert updater.REPO == "Humam-Taibeh/Pulse"
     assert updater.REPO in updater._API_LATEST
     assert updater._API_LATEST.startswith("https://api.github.com/")
 
@@ -326,6 +326,33 @@ def test_the_asset_pattern_matches_what_the_build_script_emits():
     assert not updater._ASSET_RE.match("PULSE_Setup.exe")
     assert not updater._ASSET_RE.match("PULSE_Setup_v10.3.exe")
     assert not updater._ASSET_RE.match("evil.exe")
+
+
+def test_the_bare_release_asset_name_is_also_recognised():
+    """The v10.3 beta shipped as `Pulse.exe`, which the versioned pattern
+    does not match. That made _find_assets return no installer, so check()
+    returned None and the updater silently reported 'up to date' for a
+    release that existed."""
+    assert updater._ASSET_FALLBACK_RE.match("Pulse.exe")
+    assert updater._ASSET_FALLBACK_RE.match("PULSE.EXE")
+    assert not updater._ASSET_FALLBACK_RE.match("evil.exe")
+    assert not updater._ASSET_FALLBACK_RE.match("Pulse.exe.bak")
+    assert not updater._ASSET_FALLBACK_RE.match("NotPulse.exe")
+
+
+def test_the_versioned_installer_wins_over_the_bare_name():
+    """Order-independently: the versioned name survives leaving the
+    download folder, the bare one does not."""
+    bare = {"name": "Pulse.exe", "browser_download_url": "https://x/i", "size": 1}
+    versioned = {"name": "PULSE_Setup_v10.4.0.exe",
+                 "browser_download_url": "https://x/v", "size": 1}
+
+    for assets in ([bare, versioned], [versioned, bare]):
+        installer, _ = updater._find_assets({"assets": assets})
+        assert installer is versioned
+
+    installer, _ = updater._find_assets({"assets": [bare]})
+    assert installer is bare
 
 
 def test_requests_are_identified_and_versioned():

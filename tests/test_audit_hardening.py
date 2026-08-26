@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import gc
 import subprocess
+import threading
 import time
 import weakref
 from pathlib import Path
@@ -516,8 +517,12 @@ def test_the_worker_dialog_roster_is_complete():
     }
     # DnsSwitcherDialog / ContextMenuDialog also own threads but are
     # constructed with extra arguments; they inherit the same guard.
+    # SelfUpdateDialog likewise: its constructor takes an updater.Update,
+    # not a ps1_path, AND its thread only starts on a user click rather
+    # than at construction — see test_self_update_dialog_settles_its_
+    # thread below for its own version of this guard.
     missing = threaded - set(_WORKER_DIALOGS) - {
-        "DnsSwitcherDialog", "ContextMenuDialog"}
+        "DnsSwitcherDialog", "ContextMenuDialog", "SelfUpdateDialog"}
     assert not missing, (
         f"these dialogs grew a QThread and are not covered: {sorted(missing)}")
 
@@ -575,14 +580,21 @@ def test_repeated_worker_dialog_opens_do_not_accumulate(window, qapp, name):
 def test_the_dialog_wait_budget_matches_the_shell():
     """Same hazard, same budget. If main.py's wait is retuned and the
     dialogs' is not, the two disagree about how long a backend kill is
-    allowed to take to land."""
+    allowed to take to land.
+
+    Compares the two CONSTANTS. This used to grep main.py for the literal
+    `wait(3000)`, which stopped meaning anything the moment the shell's
+    budget became a named constant of its own — the string vanished while
+    the invariant it stood for was intact. Reading both numbers tests the
+    thing the string was only ever a proxy for.
+    """
+    from frontend.main import PulseApp
     from frontend.widgets import PulseDialog
 
-    shell = (_SRC / "frontend" / "main.py").read_text(encoding="utf-8")
-    assert f"wait({PulseDialog._WORKER_WAIT_MS})" in shell, (
-        f"PulseDialog._WORKER_WAIT_MS is {PulseDialog._WORKER_WAIT_MS}ms but "
-        "main.PulseApp.closeEvent no longer waits for that long — the shell "
-        "and its dialogs must give a cancelled backend the same grace")
+    assert PulseApp._THREAD_WAIT_MS == PulseDialog._WORKER_WAIT_MS, (
+        f"the shell waits {PulseApp._THREAD_WAIT_MS}ms for a background "
+        f"thread but its dialogs wait {PulseDialog._WORKER_WAIT_MS}ms — the "
+        "two must give a cancelled backend the same grace")
 
 
 def test_grace_precedes_cancel_and_is_shorter_than_the_join():
@@ -626,6 +638,273 @@ def test_an_already_cancelled_worker_costs_no_grace(window, qapp):
     dialog.reject()
     dialog.deleteLater()
     _drain(qapp)
+
+
+def _dummy_update():
+    from utils import updater
+    return updater.Update(
+        version="99.0.0", tag="v99.0.0", notes="Test release notes.",
+        url="https://example.invalid/PULSE_Setup_v99.0.0.exe",
+        size=1024, sums_url="https://example.invalid/SHA256SUMS",
+        asset_name="PULSE_Setup_v99.0.0.exe", prerelease=False)
+
+
+def test_self_update_dialog_settles_its_thread_after_close(window, qapp, monkeypatch):
+    """SelfUpdateDialog's own version of test_closing_a_worker_dialog_
+    settles_its_thread — it is exempted from the generic roster above
+    (different constructor, and the thread only starts on a user click,
+    not at construction) but owns the exact same PulseDialog.done()-
+    funnelled QThread and needs the exact same guard.
+
+    updater.download is monkeypatched to block until released rather than
+    hit the network — this test is about the Qt teardown machinery, not
+    about updater.py's own download loop (see test_updater.py for that).
+    """
+    from PySide6.QtCore import QThread
+    from frontend.widgets import SelfUpdateDialog
+    from utils import updater as U
+
+    release_evt = threading.Event()
+
+    def fake_download(update, progress=None, cancel=None):
+        while not release_evt.is_set():
+            if cancel is not None and cancel():
+                raise U.UpdateError("cancelled")
+            release_evt.wait(0.02)
+        return "C:\\fake\\PULSE_Setup_v99.0.0.exe"
+
+    monkeypatch.setattr(U, "download", fake_download)
+    monkeypatch.setattr(U, "verify", lambda path, update: None)
+
+    dialog = SelfUpdateDialog(window, window.theme.t, _dummy_update())
+    dialog.show()
+    _drain(qapp, 2)
+    dialog._start_download()
+    _drain(qapp, 2)
+    assert dialog._thread is not None and dialog._thread.isRunning(), (
+        "the fake download should still be blocking at this point")
+
+    dialog.reject()          # cancels the worker, then PulseDialog.done()
+    release_evt.set()        # let the (already-cancelling) fake loop exit
+    _drain(qapp, 3)
+
+    running = [obj for obj in vars(dialog).values()
+               if isinstance(obj, QThread) and obj.isRunning()]
+    assert not running, (
+        "SelfUpdateDialog: worker thread still running after close — "
+        "destroying the dialog now would abort the process (qFatal)")
+    dialog.deleteLater()
+    _drain(qapp)
+
+
+# ============================================================
+#  WORKER SIGNALS MUST REACH THE GUI THREAD
+# ============================================================
+# THE FREEZE. PulseApp._check_for_updates connected its result slot as a
+# bare `lambda upd: self._on_update_checked(upd, silent)`, purely to
+# smuggle the extra `silent` flag through.
+#
+# A signal connected to a lambda gives Qt no QObject receiver to resolve a
+# thread affinity from, so PySide falls back to the SENDER's thread and
+# invokes it DIRECTLY. The sender was moveToThread()'d, so the slot ran on
+# the worker thread — where it mutated the footer label, built a Toast
+# (whose timers then had worker-thread affinity and no loop to drive them,
+# which is why "Checking for updates…" sat frozen in the corner) and
+# constructed + exec()'d a modal whose backdrop capture calls
+# QWidget.grab(). Rendering from a non-GUI thread deadlocks against the GUI
+# thread: Windows reported "Python is not responding".
+#
+# Every other worker in this app connects a BOUND METHOD, which resolves to
+# the GUI thread and queues correctly. Two guards below: the behaviour, and
+# the syntax that broke it.
+def _relocated_lambda_connections(source: str, label: str = "<src>") -> list[str]:
+    """Every `X.<signal>.connect(lambda ...)` where X was moveToThread()'d.
+
+    Scoped to the enclosing function, which is how these are always
+    written: `worker = ...; worker.moveToThread(thread); worker.sig...`.
+
+    NARROW ON PURPOSE. A lambda on the signal of a GUI-RESIDENT object is
+    perfectly safe — PlaybookRunner lives in the GUI thread (parented, never
+    relocated) and emits from GUI-thread slots, so its lambdas run there
+    too. The hazard is specifically a lambda on the signal of an object
+    whose affinity has been moved off the GUI thread.
+    """
+    hits: list[str] = []
+    tree = ast.parse(source, filename=label)
+    for scope in ast.walk(tree):
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        relocated = {
+            ast.unparse(node.func.value)
+            for node in ast.walk(scope)
+            if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "moveToThread")
+        }
+        if not relocated:
+            continue
+        for node in ast.walk(scope):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "connect"
+                    and node.args
+                    and isinstance(node.args[0], ast.Lambda)):
+                continue
+            signal = node.func.value
+            if (isinstance(signal, ast.Attribute)
+                    and ast.unparse(signal.value) in relocated):
+                hits.append(f"{label}:{node.lineno} -> "
+                            f"{ast.unparse(signal)}.connect(lambda ...)")
+    return hits
+
+
+def test_the_relocated_lambda_scanner_actually_catches_the_bug():
+    """Guard the guard. A scanner that silently matches nothing would pass
+    the test below forever — this is the exact code shape that froze the
+    app, and it must be detected."""
+    bad = _relocated_lambda_connections(
+        "def _check(self, silent):\n"
+        "    thread = QThread(self)\n"
+        "    worker = SelfUpdateCheckWorker()\n"
+        "    worker.moveToThread(thread)\n"
+        "    worker.finished.connect(lambda u: self._done(u, silent))\n",
+        "sample")
+    assert len(bad) == 1, f"the scanner missed the known-bad shape: {bad}"
+
+    good = _relocated_lambda_connections(
+        "def _check(self, silent):\n"
+        "    thread = QThread(self)\n"
+        "    worker = SelfUpdateCheckWorker()\n"
+        "    worker.moveToThread(thread)\n"
+        "    worker.finished.connect(self._done)\n"
+        "    runner.finished.connect(lambda r: self._other(r))\n",
+        "sample")
+    assert not good, f"the scanner flagged safe connections: {good}"
+
+
+def test_no_relocated_worker_signal_is_connected_to_a_lambda():
+    """The generalised guard for the freeze above.
+
+    A lambda has no QObject receiver, so Qt cannot queue it onto the GUI
+    thread — it runs wherever the sender lives, and the sender here has
+    been moved OFF the GUI thread. Connect a BOUND METHOD of a GUI-thread
+    QObject and carry any extra arguments as state (see
+    PulseApp._update_check_silent), or emit them through the signal.
+    """
+    hits: list[str] = []
+    paths = sorted((_SRC / "frontend").glob("*.py")) + [_SRC / "utils" / "helpers.py"]
+    for path in paths:
+        hits += _relocated_lambda_connections(
+            path.read_text(encoding="utf-8"), path.name)
+    assert not hits, (
+        "these signals belong to moveToThread()'d workers but are connected to "
+        "lambdas, which PySide runs on the SENDER's thread — off the GUI "
+        "thread, where touching a widget is undefined behaviour and rendering "
+        "one deadlocks:\n  " + "\n  ".join(hits))
+
+
+def _settle_update_check(window, qapp, budget_s: float = 20.0):
+    """Wait out any check already in flight (the app fires one ~2.5s after
+    launch, and `window` is session-scoped, so it may still be running)."""
+    deadline = time.time() + budget_s
+    while window._update_check_thread is not None and time.time() < deadline:
+        _drain(qapp, 1)
+    return window._update_check_thread is None
+
+
+def test_the_update_check_result_lands_on_the_gui_thread(window, qapp, monkeypatch):
+    """The freeze itself, pinned as behaviour rather than as syntax.
+
+    Asserts the thread `_on_update_checked` actually runs on, so this still
+    fails if the connection is broken some other way than a lambda.
+    `toasts.show` is the probe because the slot calls it and monkeypatching
+    it cannot disturb the connection under test — patching the slot itself
+    would REPLACE a bound method with a plain function and manufacture the
+    very bug being measured.
+    """
+    from PySide6.QtCore import QThread
+    from utils import updater as U
+
+    assert _settle_update_check(window, qapp), "a prior check never settled"
+
+    gui_thread = QThread.currentThread()
+    seen: list = []
+
+    # SelfUpdateCheckWorker.run looks `check` up on the module at call
+    # time, so patching the attribute is enough to keep this off the wire.
+    monkeypatch.setattr(U, "check", lambda current=None, channel=None: None)
+    monkeypatch.setattr(window.toasts, "show",
+                        lambda *a, **k: seen.append(QThread.currentThread()))
+
+    window._check_for_updates(silent=False)     # silent=False -> slot toasts
+    deadline = time.time() + 10.0
+    while not seen and time.time() < deadline:
+        _drain(qapp, 1)
+
+    assert seen, "the update check never delivered a result"
+    assert seen[0] is gui_thread, (
+        "_on_update_checked ran on a worker thread. It mutates widgets and can "
+        "exec() a modal whose backdrop capture renders — off the GUI thread "
+        "that is the 'Python is not responding' deadlock, not an exception.")
+    assert _settle_update_check(window, qapp), "the check thread never settled"
+
+
+def test_closing_settles_all_three_background_threads(window, qapp, monkeypatch):
+    """The shell owns THREE background threads, and closeEvent used to join
+    exactly one of them.
+
+    The task thread was always cancelled and joined; the applied-state probe
+    and the self-update check were not. Closing while either was in flight
+    destroyed a running QThread (qFatal) and let its worker emit into a
+    deleted receiver — reproduced as `RuntimeError: Signal source has been
+    deleted` out of SelfUpdateCheckWorker.run.
+
+    Driven through _settle_background_threads rather than a real close: the
+    `window` fixture is session-scoped and shared, so actually closing it
+    would take every later test down with it.
+    """
+    from PySide6.QtCore import QThread
+    from utils import updater as U
+
+    assert _settle_update_check(window, qapp), "a prior check never settled"
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_check(current=None, channel=None):
+        started.set()
+        release.wait(8.0)          # bounded, so a bug cannot hang the suite
+        return None
+
+    monkeypatch.setattr(U, "check", slow_check)
+    window._check_for_updates(silent=True)
+
+    deadline = time.time() + 5.0
+    while not started.is_set() and time.time() < deadline:
+        _drain(qapp, 1)
+    assert started.is_set(), "the check worker never started"
+
+    thread = window._update_check_thread
+    assert thread is not None and thread.isRunning()
+
+    # The window would be destroyed right after this returns, so nothing it
+    # owns may still be attached to a live thread.
+    window._settle_background_threads()
+    release.set()
+
+    still_parented = [
+        t for t in (window._thread, window._probe_thread,
+                    window._update_check_thread)
+        if isinstance(t, QThread) and t.isRunning() and t.parent() is window]
+    assert not still_parented, (
+        f"{len(still_parented)} running thread(s) are still parented to the "
+        "window after settling — Qt would destroy them mid-run, which is "
+        "qFatal (an abort), not an exception")
+
+    deadline = time.time() + 10.0
+    while thread.isRunning() and time.time() < deadline:
+        _drain(qapp, 1)
+    _drain(qapp, 2)
 
 
 def test_done_is_the_guard_point_not_reject():

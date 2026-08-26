@@ -52,9 +52,10 @@ _SRC_DIR = os.path.dirname(_FRONTEND_DIR)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from utils import prefs, resources, version  # noqa: E402
+from utils import prefs, resources, updater, version  # noqa: E402
 from utils.helpers import (  # noqa: E402
-    PowerShellTask, SystemPulseSampler, TaskResult, ToastManager, has_battery,
+    PowerShellTask, SelfUpdateCheckWorker, SystemPulseSampler, TaskResult,
+    ToastManager, has_battery,
 )
 from frontend import theme as TH  # noqa: E402
 from frontend.animations import (  # noqa: E402
@@ -75,7 +76,8 @@ from frontend.widgets import (  # noqa: E402
     NavPill, NoticeDialog, OfficeWizardDialog, PlaybookDialog,
     PowerHealthDialog,
     PulseDialog, RestorePointDialog, RevertChoiceDialog,
-    ResponsiveGridHost, ShortcutSheetDialog, SoftwareCatalogDialog,
+    ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
+    SoftwareCatalogDialog,
     StartupManagerDialog, StorageAnalyzerDialog, TitleBar,
     ToolInstallWizardDialog, UpdateCenterDialog,
     refit_dialog,
@@ -296,7 +298,7 @@ class WelcomePage(QWidget):
 
         ┌──────────────────────────────────────────────────────────┐
         │ ✦  PULSE                    Engine Ready · Administrator │  hero banner
-        │    Enterprise-Grade Windows Orchestration                │
+        │    Windows Orchestration Toolkit                         │
         │                                                          │
         │ QUICK ACTIONS ─────────────────────────────────────────  │
         │ ┌────────┐ ┌────────┐ ┌────────┐                         │
@@ -342,11 +344,26 @@ class WelcomePage(QWidget):
     ACTION_MAX_COLS = 3
 
     #: Width the masthead tagline may ask for before it starts eliding.
-    #: Its natural width at the `tagline` type role, so the line renders in
-    #: full on any window with room for it and degrades to an ellipsis only
-    #: once the masthead is genuinely squeezed — which begins just under
-    #: 1020px and reaches 40px of loss at the app's 980px minimum.
-    _TAGLINE_W = 260
+    #: MEASURED as the natural width of the tagline set below, at the
+    #: `tagline` type role and including its 1px letter-spacing, so the
+    #: line renders in full on any window with room for it and degrades to
+    #: an ellipsis only once the masthead is genuinely squeezed.
+    #:
+    #: RE-MEASURE THIS WHENEVER THE TAGLINE TEXT CHANGES, and measure it
+    #: off the LIVE, POLISHED widget — a QLabel's font-size arrives from
+    #: QSS during polish, so QFontMetrics(label.font()) before that reads
+    #: the default type size and under-reports (the same polish-timing trap
+    #: ClampedLabel.changeEvent documents). "Windows Orchestration Toolkit"
+    #: measures 191px live and 234px if measured wrong.
+    #:
+    #: It was 260 for the previous, longer "Enterprise-Grade Windows
+    #: Orchestration" (255px live). At 192 the current text fits inside its
+    #: own cap at every window size the app can be at, including the 980px
+    #: minimum — which is what
+    #: TestMastheadTagline::test_the_shipped_tagline_fits_at_the_apps_
+    #: minimum_width pins, so lengthening the copy without revisiting this
+    #: number fails loudly rather than shipping a truncated masthead.
+    _TAGLINE_W = 192
 
     # (category index, task) for each Quick Action — one per module, so the
     # band reads as a full-spectrum control surface. Resolved via
@@ -423,14 +440,14 @@ class WelcomePage(QWidget):
         # and a QLabel squeezed below its text width does not elide — it
         # CLIPS, mid-glyph, with no ellipsis to say anything was lost.
         # At 1000px it lost 20px; at the 980px minimum, 40px, rendering
-        # "Enterprise-Grade Windows Orchest" against a hard edge.
+        # the tagline cut off mid-word against a hard edge.
         #
         # ElidedCaption already solves exactly this (it is the horizontal
         # twin of ClampedLabel) and brings the right second half of the fix
         # with it: a minimum width of zero, so the tagline stops being a
         # floor the masthead has to honour at all.
         self._tag = ElidedCaption(max_width=self._TAGLINE_W)
-        self._tag.setFullText("Enterprise-Grade Windows Orchestration")
+        self._tag.setFullText("Windows Orchestration Toolkit")
         id_col.addWidget(self._tag)
         id_col.addStretch()
         hb.addLayout(id_col)
@@ -1291,6 +1308,74 @@ class _NCCALCSIZE_PARAMS(ctypes.Structure):
                 ("lppos", ctypes.c_void_p)]
 
 
+def monitor_work_area(hwnd) -> tuple[int, int, int, int] | None:
+    """(left, top, right, bottom) of the work area `hwnd` sits on, in
+    physical pixels — the desktop minus the taskbar. None off-Windows or if
+    the query fails, which callers must treat as "do nothing"."""
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        class _MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_ulong),
+                        ("rcMonitor", ctypes.wintypes.RECT),
+                        ("rcWork", ctypes.wintypes.RECT),
+                        ("dwFlags", ctypes.c_ulong)]
+
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        monitor = ctypes.windll.user32.MonitorFromWindow(
+            ctypes.wintypes.HWND(int(hwnd)), 2)   # MONITOR_DEFAULTTONEAREST
+        if not monitor or not ctypes.windll.user32.GetMonitorInfoW(
+                monitor, ctypes.byref(info)):
+            return None
+        work = info.rcWork
+        return (work.left, work.top, work.right, work.bottom)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def clamp_maximized_client(hwnd, rect, work=None) -> bool:
+    """Trim a proposed WM_NCCALCSIZE client rect that has swallowed the
+    whole work area. Returns whether it changed anything.
+
+    A maximized WS_THICKFRAME window is normally oversized by the frame on
+    every side, so a custom frame that keeps client == window has to pull
+    it back or the content hangs off all four monitor edges and over the
+    taskbar.
+
+    THIS REPLACES AN IsZoomed() TEST THAT NEVER FIRED. The old code insets
+    by resize_border_thickness() when IsZoomed() reports maximized — but
+    IsZoomed() reads the WS_MAXIMIZE style, and this message is part of the
+    transition that sets it. Traced live, IsZoomed() returns False for
+    every NCCALCSIZE of a showMaximized(), so the branch was dead;
+    GetWindowPlacement().showCmd was measured too and is stale in exactly
+    the same way, so swapping probes fixes nothing.
+
+    Clamping needs no state at all, which is why it is used instead. It is
+    also self-correcting where a blind inset was not: when Windows proposes
+    exactly the work area — which is what Qt's maximize path produces here,
+    and why the dead branch was never missed — this is a no-op, whereas
+    firing the old inset would have carved a frame-sized gap out of a
+    correctly sized window.
+
+    The guard is that the rect must cover the work area on ALL FOUR sides.
+    A floating window dragged off the left spills past `left` but stops
+    short of `right`, so it is never clamped and can still be moved
+    partly off-screen.
+    """
+    work = work if work is not None else monitor_work_area(hwnd)
+    if work is None:
+        return False
+    left, top, right, bottom = work
+    if not (rect.left <= left and rect.top <= top
+            and rect.right >= right and rect.bottom >= bottom):
+        return False
+    if (rect.left, rect.top, rect.right, rect.bottom) == (left, top, right, bottom):
+        return False
+    rect.left, rect.top, rect.right, rect.bottom = left, top, right, bottom
+    return True
+
+
 # ============================================================
 #  MAIN WINDOW
 # ============================================================
@@ -1339,6 +1424,18 @@ class PulseApp(QMainWindow):
         self._playbook_dialog = None
         self._probe_thread: QThread | None = None
         self._probe_worker: PowerShellTask | None = None
+        self._update_check_thread: QThread | None = None
+        self._update_check_worker: SelfUpdateCheckWorker | None = None
+        #: The Update a background/manual check last found, or None. Kept
+        #: so a click on the footer after a silent check reopens the SAME
+        #: result instead of spending a second network round-trip on
+        #: something already known.
+        self._pending_update: "updater.Update | None" = None
+        #: Whether the check now in flight should stay quiet about a "no
+        #: update" answer. Companion state rather than an argument bound
+        #: into the connected slot — see _check_for_updates for why a
+        #: lambda there is a thread-affinity bug, not a shortcut.
+        self._update_check_silent = True
         self._tweak_state: dict = {}
         self._nav_buttons: list[NavButton] = []
         self._status_state = "ready"
@@ -1372,6 +1469,13 @@ class PulseApp(QMainWindow):
         QTimer.singleShot(300, self._startup_toasts)
         # first applied-state read, after the window has settled
         QTimer.singleShot(600, self._refresh_tweak_state)
+        # Silent self-update check (v10.3) — see updater.py's module
+        # docstring: EVERY network failure resolves to None, so this can
+        # never produce an error dialog on a broken/offline/freshly-imaged
+        # machine. Delayed well past the other two: it is the one startup
+        # probe that leaves the machine, and it should never be what a slow
+        # network makes the user wait on.
+        QTimer.singleShot(2500, lambda: self._check_for_updates(silent=True))
 
     # The width the shell's chrome consumes before a single card can be
     # drawn: sidebar + body margins + body spacing + content padding +
@@ -1552,8 +1656,20 @@ class PulseApp(QMainWindow):
 
         # Anchors the nav column so it no longer floats above a void — a
         # quiet identity line the way VS Code / Linear close their rails.
-        self._side_footer = QLabel(f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}")
-        self._side_footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # A QPushButton, not a QLabel (v10.3): this is also the self-
+        # updater's one call site (see updater.py) — clicking it checks for
+        # updates, or opens the SelfUpdateDialog directly for one a silent
+        # background check already found. setFlat + label_qss keep it
+        # looking exactly like the plain caption it replaced.
+        self._side_footer = QPushButton(f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}")
+        self._side_footer.setFlat(True)
+        self._side_footer.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._side_footer.setToolTip("Check for updates")
+        # Chrome, not content: the rail's footer must not join the card
+        # grids' arrow-key traversal or take focus off a page — the same
+        # call the drawer's own toolbar buttons make (widgets.py:733).
+        self._side_footer.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._side_footer.clicked.connect(self._on_footer_clicked)
         side.addWidget(self._side_footer)
         body.addWidget(self._sidebar)
 
@@ -1632,7 +1748,7 @@ class PulseApp(QMainWindow):
         self._content.setStyleSheet(TH.content_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
-        self._side_footer.setStyleSheet(TH.label_qss(t, "caption"))
+        self._side_footer.setStyleSheet(TH.sidebar_version_qss(t))
         if self._elevate_btn is not None:
             self._elevate_btn.setStyleSheet(TH.elevate_button_qss(t))
         if self._admin_chip is not None:
@@ -1849,6 +1965,123 @@ class PulseApp(QMainWindow):
         if self._probe_thread is not None:
             self._probe_thread.deleteLater()
             self._probe_thread = None
+
+    # ============================================================
+    #  SELF-UPDATE (v10.3) — the sidebar footer's click, and one silent
+    #  background check on launch. This is updater.py's ONLY GUI call
+    #  site: everything else (download/verify progress, the SHA-256
+    #  hand-off) lives in SelfUpdateDialog, which this only opens.
+    # ============================================================
+    def _on_footer_clicked(self):
+        if self._update_check_thread is not None:
+            return   # a check is already in flight
+        if self._pending_update is not None:
+            self._open_update_dialog(self._pending_update)
+            return
+        self.toasts.show("info", "Checking for updates…", 2000)
+        self._check_for_updates(silent=False)
+
+    def _check_for_updates(self, silent: bool):
+        if self._update_check_thread is not None:
+            return
+        # `silent` travels on self and the slot below is a BOUND METHOD.
+        # Both halves of that are the thread-affinity contract, not style.
+        #
+        # A signal connected to a bare `lambda` gives Qt no QObject
+        # receiver to resolve a thread affinity from, so PySide falls back
+        # to the SENDER's thread and invokes it directly. `worker` is
+        # moveToThread()'d, so binding `silent` into a lambda here ran
+        # _on_update_checked ON THE WORKER THREAD, where it mutated the
+        # footer label, built a Toast and constructed + exec()'d a modal
+        # dialog. That dialog's backdrop capture (widgets._capture_backdrop
+        # -> QWidget.grab()) RENDERS, and rendering from a non-GUI thread
+        # deadlocks against the GUI thread: the app hung hard ("Python is
+        # not responding") with the "Checking for updates…" toast frozen
+        # mid-flight — frozen precisely because that toast's own timers had
+        # been given worker-thread affinity and had no loop to drive them.
+        #
+        # A bound method of this window resolves to the GUI thread, so
+        # AutoConnection queues it correctly. It is exactly what every
+        # other worker in this app connects (see _refresh_tweak_state);
+        # this was the one place that reached for a lambda instead.
+        #
+        # Only one check is ever in flight (guarded above), and both the
+        # write here and the read in the slot happen on the GUI thread, so
+        # the companion field cannot race or desync from its request.
+        self._update_check_silent = silent
+        thread = QThread(self)
+        worker = SelfUpdateCheckWorker(version.VERSION, version.CHANNEL)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_update_checked)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(self._on_update_check_thread_finished)
+        self._update_check_thread = thread
+        self._update_check_worker = worker
+        thread.start()
+
+    def _on_update_check_thread_finished(self):
+        if self._update_check_worker is not None:
+            self._update_check_worker.deleteLater()
+            self._update_check_worker = None
+        if self._update_check_thread is not None:
+            self._update_check_thread.deleteLater()
+            self._update_check_thread = None
+
+    def _on_update_checked(self, update):
+        """GUI-THREAD ONLY. Connected as a bound method precisely so Qt
+        queues it here rather than running it on the check worker's thread
+        — see the note in _check_for_updates. Everything below touches
+        widgets, so this running anywhere else is the freeze bug."""
+        silent = self._update_check_silent
+        self._pending_update = update
+        if update is None:
+            if not silent:
+                self.toasts.show(
+                    "success", f"You're up to date — v{version.VERSION}.", 3500)
+            return
+        # Update the footer to say so even for a silent check — a toast
+        # alone disappears; the footer is where the answer stays findable.
+        self._side_footer.setText(
+            f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}  ·  "
+            f"Update available")
+        if silent:
+            self.toasts.show(
+                "info",
+                f"Pulse v{update.version} is available — click your version "
+                "in the sidebar to install.", 6000)
+        else:
+            # Deferred one turn rather than opened inline. This slot runs
+            # while worker.finished is still being delivered: thread.quit
+            # is queued behind it, so the check thread has not unwound yet.
+            # exec()ing here would spin a nested event loop at that moment,
+            # holding the finished check thread open for as long as the
+            # modal is up — while the modal starts a SECOND worker thread
+            # of its own for the download. One turn later the check thread
+            # has fully settled and the two lifecycles never overlap.
+            QTimer.singleShot(0, self._open_pending_update)
+
+    def _open_pending_update(self):
+        """Deferred manual-path entry point — see _on_update_checked."""
+        if self._pending_update is not None:
+            self._open_update_dialog(self._pending_update)
+
+    def _open_update_dialog(self, update):
+        dialog = SelfUpdateDialog(self, self.theme.t, update)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.installer_path:
+            return
+        if self._busy():
+            self.toasts.show(
+                "info", "Wait for the current operation to finish before "
+                        "restarting to update.", 4000)
+            return
+        try:
+            updater.apply(dialog.installer_path)
+        except updater.UpdateError as exc:
+            self.toasts.show("error", f"Could not start the installer: {exc}", 6000)
+            return
+        self.toasts.show("success", "Installing update — Pulse will restart…", 2000)
+        QTimer.singleShot(400, QApplication.instance().quit)
 
     # ============================================================
     #  PER-TASK RUN HISTORY (v10.1) — "Ran 3d ago · ~2m" on the card
@@ -2828,11 +3061,85 @@ class PulseApp(QMainWindow):
             # run lock that reject() otherwise enforces.
             if self._playbook_dialog is not None:
                 self._playbook_dialog.force_close()
-        if self._task_is_running():
-            if self._worker is not None:
-                self._worker.cancel()
-            self._thread.wait(3000)
+        self._settle_background_threads()
         super().closeEvent(event)
+
+    #: Bound on how long a closing window waits for ONE background thread.
+    #: Deliberately the same number as widgets.PulseDialog._WORKER_WAIT_MS —
+    #: same hazard, same budget — and test_audit_hardening pins the two
+    #: together so they cannot drift.
+    _THREAD_WAIT_MS = 3000
+
+    def _settle_background_threads(self):
+        """Cancel, silence and join EVERY background thread this window
+        owns, not just the task thread.
+
+        There are three, and until now only one was handled. The other two
+        are read-only and easy to forget precisely because they never show
+        up in the UI: the applied-state probe (_refresh_tweak_state) and
+        the self-update check (_check_for_updates). Closing the window
+        while either was in flight destroyed the QThread and its worker
+        from under a running `run()`, and the worker's next `emit` hit a
+        deleted C++ object — observed directly as
+
+            RuntimeError: Signal source has been deleted
+
+        raised out of SelfUpdateCheckWorker.run when the app was closed
+        during the startup update check. Destroying a QThread that is still
+        running is the worse half of that: it is qFatal, an abort with no
+        traceback, which is exactly the hazard PulseDialog.done() already
+        guards its own dialogs against.
+
+        THE ORDER MATTERS, and it is the dialogs' order:
+          1. cancel — for the probe that kills the PowerShell process tree,
+             which is what unblocks its worker's blocking stdout read. The
+             update check has no cancel: it is a urllib GET whose only
+             brake is its own connect/read timeout.
+          2. quit + bounded wait — the same 3000ms grace the task thread
+             has always had.
+          3. only if it is STILL running: disconnect every signal so a late
+             `emit` cannot reach this dying window, and un-parent the
+             thread so Qt does not destroy a running QThread when the
+             window goes. It then finishes on its own and is leaked, which
+             at shutdown costs nothing and is strictly better than an
+             abort. This is the escape hatch for the update check, whose
+             worst case (5s connect + 10s read) genuinely exceeds the
+             grace.
+        """
+        for worker, thread in ((self._worker, self._thread),
+                               (self._probe_worker, self._probe_thread),
+                               (self._update_check_worker,
+                                self._update_check_thread)):
+            if thread is None:
+                continue
+            try:
+                if not thread.isRunning():
+                    continue
+            except RuntimeError:        # C++ side already gone
+                continue
+
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except RuntimeError:
+                    pass
+            try:
+                thread.quit()
+                thread.wait(self._THREAD_WAIT_MS)
+                if not thread.isRunning():
+                    continue
+                for obj in (worker, thread):
+                    if obj is None:
+                        continue
+                    try:
+                        obj.disconnect()
+                    except (RuntimeError, TypeError):
+                        # TypeError: PySide raises it for "no connections"
+                        pass
+                thread.setParent(None)
+            except RuntimeError:
+                pass
 
     # Win32 hit-test codes for the native resize border (WM_NCHITTEST)
     _HT = {"L": 10, "R": 11, "T": 12, "TL": 13, "TR": 14,
@@ -2938,22 +3245,7 @@ class PulseApp(QMainWindow):
                 # window rect unchanged makes the client area cover the
                 # entire window, which is the whole custom-frame trick.
                 params = _NCCALCSIZE_PARAMS.from_address(msg.lParam)
-                rect = params.rgrc[0]
-                # IsZoomed(), not Qt's isMaximized(): this message is part
-                # of the maximize transition itself, so Qt's window state
-                # has not been updated yet and would report the OLD state
-                # — leaving the maximized window oversized by the frame on
-                # every edge. The OS always knows.
-                if ctypes.windll.user32.IsZoomed(msg.hWnd):
-                    # A maximized WS_THICKFRAME window is deliberately
-                    # oversized by the frame on every side; without this
-                    # inset the content would hang off all four edges of
-                    # the monitor (and over the taskbar).
-                    bx, by = TH.resize_border_thickness()
-                    rect.left += bx
-                    rect.top += by
-                    rect.right -= bx
-                    rect.bottom -= by
+                clamp_maximized_client(msg.hWnd, params.rgrc[0])
                 return True, 0
 
             if msg.message == self._WM_NCHITTEST:

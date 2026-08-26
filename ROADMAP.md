@@ -129,7 +129,20 @@ being zeroed. Latent today because every current call site passes a default.
   another AV heuristic.
 - [ ] **CI release builds** with published `SHA256SUMS`, pre-release VirusTotal
   scan, and proactive submission to Microsoft's false-positive portal. The CI
-  workflow added in v10.0 is the foundation this builds on.
+  workflow added in v10.0 is the foundation this builds on. This is now the
+  ONLY thing standing between the self-updater and being end-to-end usable —
+  see below.
+- [x] **Wire the self-updater into the GUI.** `src/utils/updater.py` (`check`,
+  `download`, `verify`, `apply`) now has three call sites in
+  `src/frontend/`: a silent background `check()` ~2.5s after launch
+  (`PulseApp._check_for_updates`), the sidebar footer's version label as
+  the manual "Check for updates" entry point, and `widgets.SelfUpdateDialog`
+  (own worker thread, follows the same `PulseDialog.done()` teardown
+  contract every other worker dialog uses) owning `download()`/`verify()`
+  before handing a verified path back to `main.py` for `apply()` + quit.
+  Still moot for the live v10.3 release asset until the item above ships a
+  `SHA256SUMS` — `verify()` refuses it and the dialog surfaces that as a
+  loud error rather than installing anything.
 
 ## Phase 3 · Completing the state story
 

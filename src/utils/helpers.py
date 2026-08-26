@@ -846,6 +846,68 @@ class PowerShellTask(QObject):
 
 
 # ============================================================
+#  SELF-UPDATE WORKERS — the Qt wrapper around utils/updater.py
+# ============================================================
+# updater.py is deliberately Qt-free (see its module docstring); these two
+# QObjects are the thin, moveToThread-able shell around it, in exactly the
+# shape PowerShellTask wraps core.ps1 above — construct, moveToThread(),
+# connect thread.started to run(), read the result off a signal back on
+# the GUI thread.
+class SelfUpdateCheckWorker(QObject):
+    """Runs updater.check() off the GUI thread. It never raises (see the
+    module's EVERY NETWORK FAILURE IS SILENT policy) but it is still a
+    network round-trip with up to ~15s of possible latency
+    (_CONNECT_TIMEOUT + _READ_TIMEOUT), which is enough to freeze the UI
+    for a very real number of users on the wrong network."""
+
+    finished = Signal(object)   # utils.updater.Update | None
+
+    def __init__(self, current: str | None = None, channel: str | None = None):
+        super().__init__()
+        self._current = current
+        self._channel = channel
+
+    def run(self):
+        from utils import updater
+        self.finished.emit(updater.check(self._current, self._channel))
+
+
+class SelfUpdateInstallWorker(QObject):
+    """Downloads and verifies one utils.updater.Update off the GUI thread.
+
+    Deliberately stops at verify() — APPLYING (launching the installer and
+    quitting Pulse) stays on the GUI thread in the caller, the same way
+    apply() itself documents: a hand-off, not something to background.
+    """
+
+    progress = Signal(int, int)   # (received, total) — see updater.download
+    verifying = Signal()
+    finished = Signal(bool, str)  # (ok, installer path | error message)
+
+    def __init__(self, update):
+        super().__init__()
+        self._update = update
+        self._cancel_evt = threading.Event()
+
+    def cancel(self):
+        self._cancel_evt.set()
+
+    def run(self):
+        from utils import updater
+        try:
+            path = updater.download(
+                self._update,
+                progress=lambda received, total: self.progress.emit(received, total),
+                cancel=self._cancel_evt.is_set)
+            self.verifying.emit()
+            updater.verify(path, self._update)
+        except updater.UpdateError as exc:
+            self.finished.emit(False, str(exc))
+            return
+        self.finished.emit(True, path)
+
+
+# ============================================================
 #  TOAST NOTIFICATION (bottom-right, theme-aware, dismissible)
 # ============================================================
 class Toast(QFrame):

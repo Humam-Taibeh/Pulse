@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from utils import resources, version
 
 #: The repository releases are published from.
-REPO = "Humam-Taibeh/Humam-Windows-Architecture"
+REPO = "Humam-Taibeh/Pulse"
 _API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 _API_LIST = f"https://api.github.com/repos/{REPO}/releases?per_page=10"
 
@@ -66,8 +66,28 @@ _USER_AGENT = f"PULSE/{version.VERSION} (+https://github.com/{REPO})"
 _CONNECT_TIMEOUT = 5.0
 _READ_TIMEOUT = 10.0
 
-#: The installer asset, as tools/build_release.ps1 names it.
+#: The installer asset, as tools/build_release.ps1 names it. This is the
+#: PREFERRED form: the version in the filename means a downloaded file can
+#: still be identified after it leaves the browser's download folder.
 _ASSET_RE = re.compile(r"^PULSE_Setup_v\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
+
+#: The bare name the v10.3 beta was published under. ACCEPTED BUT NOT
+#: PREFERRED, and the distinction is the whole reason there are two
+#: patterns rather than one alternation.
+#:
+#: A release asset named `Pulse.exe` does not match _ASSET_RE, so
+#: _find_assets returned no installer at all and check() returned None —
+#: which, under this module's deliberately silent failure policy, meant the
+#: updater reported "no update available" for a release that existed. A
+#: silent no-op is the worst possible shape for that bug, so the pattern is
+#: widened here rather than left to be fixed by renaming the next asset.
+#:
+#: It stays a separate, anchored literal instead of being folded into
+#: _ASSET_RE because it is strictly weaker: it carries no version, so it
+#: only ever identifies "the installer in THIS release" and cannot be
+#: distinguished from a stale copy on disk. When a release publishes both
+#: forms, _find_assets takes the versioned one.
+_ASSET_FALLBACK_RE = re.compile(r"^Pulse\.exe$", re.IGNORECASE)
 #: The digest list that same script emits. Its absence blocks the update.
 _SUMS_ASSET = "SHA256SUMS"
 
@@ -148,16 +168,26 @@ def _pick_release(payload, channel: str) -> dict | None:
 
 
 def _find_assets(release: dict) -> tuple[dict | None, dict | None]:
-    installer = sums = None
+    """The installer and the checksum list, or None for either.
+
+    The versioned installer wins over the bare `Pulse.exe` whenever a
+    release carries both, and it wins REGARDLESS OF ASSET ORDER — the old
+    single-pattern loop assigned on every match, so with two candidates the
+    winner was whichever GitHub happened to list last. Preference belongs
+    to the name that carries a version, not to the API's ordering.
+    """
+    installer = fallback = sums = None
     for asset in release.get("assets") or []:
         if not isinstance(asset, dict):
             continue
         name = asset.get("name") or ""
         if _ASSET_RE.match(name):
             installer = asset
+        elif _ASSET_FALLBACK_RE.match(name):
+            fallback = asset
         elif name == _SUMS_ASSET:
             sums = asset
-    return installer, sums
+    return (installer or fallback), sums
 
 
 def check(current: str | None = None,

@@ -13,6 +13,7 @@ it must not be the part that only runs on a developer's workstation.
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
@@ -272,6 +273,190 @@ def test_the_gl_field_renders_without_error(gl_field, qapp):
     qapp.processEvents()
     assert gl_field._gl_frames > 0, "paintGL was never reached"
     assert gl_field._ready, "the shaders did not link"
+
+
+@requires_live_gl
+def test_the_gl_field_paints_an_opaque_canvas_in_both_themes(gl_field, qapp):
+    """THE LIGHT-MODE BLACK-CHROME BUG.
+
+    The field is the bottom layer of the shell, so every pixel it leaves
+    transparent is a pixel QOpenGLWidget composites to BLACK — it does not
+    fall through to the shell's QSS gradient underneath. In light mode that
+    read as dark patches in the chrome: the window margins, the gap between
+    the sidebar and the body, and the rail behind the nav.
+
+    The cause was the star pass blending with (ZERO, ONE_MINUS_SRC_ALPHA)
+    in light, i.e. `dst = (1-a)*dst` on colour AND alpha. Applied by every
+    fragment a point sprite rasterises — including rim fragments whose `a`
+    is visually nothing — 126 overlapping sprites decayed the canvas toward
+    black and toward alpha 0. Measured before the fix, at 900x600: 23 of 25
+    sample points fully transparent, mean luminance 0.09 where the light
+    canvas should be 0.92.
+
+    NOTHING CAUGHT IT, and the reason is structural rather than an
+    oversight: conftest pins the whole suite to PULSE_AMBIENT=raster, so
+    test_ambient.py's star and wash contracts all measure the RASTER field,
+    and they compute their expectations from the particle model in Python
+    rather than from any renderer's output. The two live-GL tests that do
+    run here only assert that paintGL was reached and the shaders linked.
+    So the GPU renderer had no test that looked at a single pixel it
+    produced — which is exactly what this does.
+
+    ONE FIELD, RE-THEMED, rather than a parametrised field per theme. Two
+    live GL widgets in a single pytest session leave state on each other —
+    run parametrised, the second theme measured 7 of 25 pixels
+    non-opaque while each theme alone measured 0. That is the fixture
+    fragility this module's header already documents, not a product
+    defect, and re-theming one field is the truer test anyway: switching
+    the theme at runtime is exactly how a user reaches light mode.
+    """
+    from PySide6.QtTest import QTest
+
+    from frontend import theme as TH
+
+    def grab_once():
+        qapp.processEvents()
+        image = gl_field.grabFramebuffer()   # the only API reading GL content
+        width, height = image.width(), image.height()
+        alphas, luminances = [], []
+        for fy in (0.1, 0.3, 0.5, 0.7, 0.9):
+            for fx in (0.1, 0.3, 0.5, 0.7, 0.9):
+                pixel = image.pixelColor(int(width * fx), int(height * fy))
+                alphas.append(pixel.alpha())
+                luminances.append(0.2126 * pixel.redF()
+                                  + 0.7152 * pixel.greenF()
+                                  + 0.0722 * pixel.blueF())
+        return alphas, luminances
+
+    #: Generous, because the orbs legitimately lift the canvas (dark
+    #: measures ~0.12 against a 0.04 floor). Nowhere near wide enough to let
+    #: a canvas that decayed to black pass as light.
+    tolerance = 0.25
+
+    def sample(expected):
+        """POLLED on BOTH conditions, never a bare sleep.
+
+        How many frames the driver has presented by a given wall-clock
+        moment is not something this test controls, so a fixed qWait was
+        flaky — the same file passed and then failed with no code change
+        between runs.
+
+        Polling only on opacity was WORSE, and wrong in an instructive way:
+        the very first grab after apply_theme can still hold the PREVIOUS
+        theme's canvas, which is itself perfectly opaque, so the loop exited
+        immediately and the luminance check then compared a dark frame
+        against light's expectation. The settled state is both conditions at
+        once, so both are what we wait for.
+
+        This weakens nothing. If the blend regresses the field never becomes
+        opaque, every poll fails, and the assertions below run on the last
+        sample exactly as they would have.
+        """
+        QTest.qWait(200)       # never sample before at least one repaint
+        alphas, luminances = grab_once()
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            settled_alpha = all(a == 255 for a in alphas)
+            settled_lum = abs(
+                sum(luminances) / len(luminances) - expected) < tolerance
+            if settled_alpha and settled_lum:
+                break
+            QTest.qWait(150)   # GL needs real frames, not processEvents bursts
+            alphas, luminances = grab_once()
+        return alphas, luminances
+
+    for mode in ("dark", "light"):
+        tokens = TH.tokens(mode)
+        canvas = TH.to_qcolor(tokens["bg_grad_bottom"])
+        expected = (0.2126 * canvas.redF() + 0.7152 * canvas.greenF()
+                    + 0.0722 * canvas.blueF())
+
+        gl_field.apply_theme(tokens)
+        alphas, luminances = sample(expected)
+
+        see_through = sum(1 for a in alphas if a < 255)
+        assert not see_through, (
+            f"{mode}: {see_through} of {len(alphas)} sampled pixels are not "
+            f"fully opaque (alpha min={min(alphas)}) — QOpenGLWidget "
+            "composites those to black, which is the light-mode dark-chrome "
+            "bug")
+
+        measured = sum(luminances) / len(luminances)
+        assert abs(measured - expected) < tolerance, (
+            f"{mode}: the field's mean luminance is {measured:.3f} but its "
+            f"canvas token is {expected:.3f} — it is not painting the theme's "
+            "canvas")
+
+
+def test_the_viewport_is_never_restored_in_logical_pixels():
+    """THE 125%-SCALING BLEED, guarded by source shape rather than pixels.
+
+    _draw_orbs renders the orb buffer into an FBO, which means it must
+    RESTORE the viewport afterwards — and it restored it to (0, 0, w, h),
+    the widget's LOGICAL size, on a framebuffer that QOpenGLWidget
+    allocates in DEVICE pixels. At 1.25x that rasterised the blit and every
+    star into the bottom-left 80% x 80% of the surface, leaving an
+    unpainted band across the top and down the right edge that composited
+    as a displaced grey rectangle hanging outside the shell.
+
+    It only struck when the orb buffer rebuilt (its 100 ms cadence), so it
+    read as a random flicker; it vanished at integer scaling and on the
+    raster path, which is what finally located it.
+
+    THIS IS A SOURCE CHECK ON PURPOSE. The defect is invisible to any
+    same-machine render at 1.0x, and the live-GL tests are opt-in and skip
+    on every CI runner — so a pixel test would not have caught it and would
+    not catch it coming back. What can be asserted anywhere is that the
+    logical dimensions never reach glViewport.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from frontend import ambient_gl
+
+    source = textwrap.dedent(inspect.getsource(ambient_gl.GLAmbientField))
+    tree = ast.parse(source)
+
+    logical = {"w", "h"}
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "glViewport"):
+            continue
+        args = [ast.unparse(a) for a in node.args]
+        # glViewport(x, y, width, height) — only the size args matter
+        if len(args) == 4 and (set(args[2:]) & logical):
+            offenders.append(f"line {node.lineno}: glViewport({', '.join(args)})")
+
+    assert not offenders, (
+        "glViewport is being given the widget's LOGICAL size on a "
+        "device-pixel framebuffer — at fractional DPI that paints into a "
+        "fraction of the surface and leaves the rest as a displaced "
+        "artifact:\n  " + "\n  ".join(offenders))
+
+
+def test_the_star_shader_scales_point_size_by_dpr():
+    """gl_PointSize rasterises in DEVICE pixels while `star.z` is the
+    raster path's LOGICAL sprite span, shared verbatim so the two renderers
+    draw the same field. Unscaled, every star is 1/dpr too small on a
+    fractional display — a quiet drift between the two backends that
+    test_ambient's own star-weight contracts cannot see, because they
+    measure the raster field."""
+    from frontend import ambient_gl
+
+    vert = ambient_gl._STAR_VERT
+    assert "uniform float dpr" in vert, "the star shader takes no dpr"
+    assert "gl_PointSize = star.z * dpr" in vert, (
+        "gl_PointSize is not scaled to device pixels — stars render "
+        "1/dpr too small at fractional scaling")
+    # ...and the uniform has to actually be fed.
+    import inspect
+    draw = inspect.getsource(ambient_gl.GLAmbientField._draw_stars)
+    assert 'uniformLocation("dpr")' in draw, (
+        "the shader declares dpr but _draw_stars never sets it, so it "
+        "defaults to 0 and every star collapses to nothing")
 
 
 @requires_live_gl

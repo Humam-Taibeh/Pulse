@@ -941,6 +941,39 @@ class TestThemes:
         ("text_faint", "dialog_bg", 3.0),
     ]
 
+    #: (surface, surface, floor). SEPARATE from the text pairs above, and
+    #: added because their absence hid a real defect: every pair above
+    #: passed while a card measured 1.12:1 (light) and 1.11:1 (dark)
+    #: against the well it sits in — text was legible ON the card, and the
+    #: card itself did not read as a surface at all. Body copy and
+    #: elevation are two different questions and only one of them was
+    #: being asked.
+    #:
+    #: The floors are LOW on purpose, and are not WCAG numbers. WCAG 1.4.11
+    #: asks 3:1 of a UI boundary, which neither theme can reach without
+    #: abandoning its register — a white-on-grey macOS light mode and a
+    #: near-black dark mode both separate their surfaces by a whisker of
+    #: luminance plus a hairline. These are regression floors: they pin the
+    #: separation the palette was deliberately solved to, so a future edit
+    #: that flattens a card back into its well fails loudly instead of
+    #: shipping. Each sits just under its measured value.
+    #: `dialog_bg` is deliberately ABSENT. A dialog never sits on the
+    #: content well — PulseDialog covers the body with a dense scrim and
+    #: centres the panel on that, so its separation is from the scrim, and
+    #: measuring it against the well pins a relationship no one ever sees.
+    #: (It measures 1.14:1 there, which looks like a defect and is not.)
+    _SURFACE_PAIRS = [
+        ("card",      "overlay",  1.25),   # the card in its content well
+        ("card_hi",   "overlay",  1.25),   # the hero tier, ditto
+    ]
+
+    #: (border, surface, floor). If the fill barely separates, the hairline
+    #: is what actually draws the card's edge — so it carries the elevation
+    #: and is worth its own floor.
+    _BORDER_PAIRS = [
+        ("card_line", "card", 1.45),
+    ]
+
     @staticmethod
     def _relative_luminance(color) -> float:
         channels = []
@@ -988,6 +1021,60 @@ class TestThemes:
                         f"(floor {floor}:1)")
         assert checked == 2 * len(self._CONTRAST_PAIRS), "not every pair ran"
         assert not failures, "contrast floor breached:\n  " + "\n  ".join(failures)
+
+    def test_surfaces_separate_from_the_surface_beneath_them(self, qapp):
+        """ELEVATION, which the text pairs above do not measure.
+
+        A card can carry perfectly legible text and still be invisible as a
+        surface — which is exactly what shipped: 1.12:1 in light, 1.11:1 in
+        dark, cards dissolving into the well they sit in while every text
+        floor stayed green.
+
+        Both surfaces are composited onto the canvas before measuring, for
+        the reason the text test gives: `overlay` and `card` are rgba, and
+        an uncomposited rgba measures against nothing.
+        """
+        from frontend import theme as TH
+
+        failures = []
+        checked = 0
+        for name, tokens in self._themes(qapp).items():
+            for fg_key, bg_key, floor in self._SURFACE_PAIRS:
+                assert fg_key in tokens and bg_key in tokens, (
+                    f"{name}: surface pair ({fg_key}, {bg_key}) names a token "
+                    "that no longer exists — update _SURFACE_PAIRS")
+                checked += 1
+                canvas = tokens["bg_solid"]
+                fg = TH.to_qcolor(TH.blend(canvas, tokens[fg_key]))
+                bg = TH.to_qcolor(TH.blend(canvas, tokens[bg_key]))
+                ratio = self._contrast(fg, bg)
+                if ratio < floor:
+                    failures.append(
+                        f"{name}: {fg_key} on {bg_key} = {ratio:.2f}:1 "
+                        f"(floor {floor}:1) — the surface has flattened into "
+                        "the one beneath it")
+        assert checked == 2 * len(self._SURFACE_PAIRS), "not every pair ran"
+        assert not failures, "surface floor breached:\n  " + "\n  ".join(failures)
+
+    def test_a_card_border_separates_from_its_own_fill(self, qapp):
+        """When the fill barely separates, the hairline IS the elevation —
+        so it cannot be tuned for one card colour and left behind when that
+        colour moves. Dark's line sat at alpha 0.088, solved against a
+        #16181D card; against the lighter card it now draws it would have
+        measured 1.27:1."""
+        from frontend import theme as TH
+
+        failures = []
+        for name, tokens in self._themes(qapp).items():
+            for line_key, surface_key, floor in self._BORDER_PAIRS:
+                surface = TH.blend(tokens["bg_solid"], tokens[surface_key])
+                line = TH.to_qcolor(TH.blend(surface, tokens[line_key]))
+                ratio = self._contrast(line, TH.to_qcolor(surface))
+                if ratio < floor:
+                    failures.append(
+                        f"{name}: {line_key} on {surface_key} = {ratio:.2f}:1 "
+                        f"(floor {floor}:1)")
+        assert not failures, "border floor breached:\n  " + "\n  ".join(failures)
 
     #: The plaque tint alphas icon_plaque_qss paints per mode. Duplicated
     #: here deliberately: a test that imported the numbers from the code it

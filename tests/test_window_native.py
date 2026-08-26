@@ -120,9 +120,18 @@ class TestMaximized:
         yield floating
 
     def test_client_matches_work_area(self, maximized, qapp):
-        """WM_NCCALCSIZE must inset by the frame when zoomed. Using Qt's
-        isMaximized() here instead of IsZoomed() bled the window ~9px off
-        every edge, because Qt's state lags the transition."""
+        """A maximized custom-frame window's client area must land exactly
+        on the work area — not over the taskbar, not short of it.
+
+        The docstring here used to credit an IsZoomed() test in
+        WM_NCCALCSIZE for insetting the frame. That was wrong: traced live,
+        IsZoomed() returns False for every NCCALCSIZE of a maximize (the
+        message is part of the transition that sets WS_MAXIMIZE), so the
+        inset never ran and this passed only because Qt's maximize path
+        proposes the work area exactly. The handler now clamps instead —
+        see main.clamp_maximized_client — which is a no-op on that path and
+        a correction on any path that proposes an oversized rect. The
+        assertion is unchanged because the required OUTCOME never was."""
         from PySide6.QtGui import QGuiApplication
         hwnd = w32.hwnd_of(maximized)
         avail = QGuiApplication.primaryScreen().availableGeometry()
@@ -156,3 +165,69 @@ def test_resize_borders_return_after_restore(floating, qapp):
     points = w32.edge_points(w32.window_rect(hwnd))
     assert w32.hit_name(hwnd, *points["LEFT"]) == "LEFT"
     assert w32.hit_name(hwnd, *points["BOTTOMRIGHT"]) == "BOTTOMRIGHT"
+
+
+class TestMaximizedClamp:
+    """main.clamp_maximized_client — the WM_NCCALCSIZE geometry rule.
+
+    Unit-tested against a synthetic rect and an injected work area, so it
+    runs on any machine: the states that matter (a window Windows oversized
+    on maximize, a window dragged off the left edge) are awkward to stage
+    against a real desktop and trivial to state directly.
+    """
+
+    class _Rect:
+        """Stands in for ctypes RECT — the clamp only reads/writes fields."""
+
+        def __init__(self, left, top, right, bottom):
+            self.left, self.top = left, top
+            self.right, self.bottom = right, bottom
+
+        def astuple(self):
+            return (self.left, self.top, self.right, self.bottom)
+
+    WORK = (0, 0, 2560, 1380)      # 2560x1440 monitor, 60px taskbar
+
+    def _clamp(self, rect):
+        from frontend.main import clamp_maximized_client
+        return clamp_maximized_client(0, rect, work=self.WORK)
+
+    def test_an_oversized_maximized_rect_is_trimmed_to_the_work_area(self):
+        """THE CASE THE OLD IsZoomed() BRANCH WAS MEANT TO CATCH. A
+        maximized WS_THICKFRAME window is normally oversized by the frame
+        on every side; a custom frame keeping client == window then hangs
+        content off all four monitor edges and over the taskbar."""
+        rect = self._Rect(-9, -9, 2569, 1389)
+        assert self._clamp(rect) is True
+        assert rect.astuple() == self.WORK, (
+            "an oversized maximized rect was not pulled back to the work area")
+
+    def test_a_rect_already_equal_to_the_work_area_is_left_alone(self):
+        """Qt's own maximize path proposes exactly this, and the previous
+        implementation's blind frame inset would have carved a ~9px gap out
+        of a window that was already correct."""
+        rect = self._Rect(*self.WORK)
+        assert self._clamp(rect) is False
+        assert rect.astuple() == self.WORK
+
+    def test_a_floating_window_dragged_off_screen_is_not_clamped(self):
+        """The guard: covering the work area on ALL FOUR sides is what
+        distinguishes maximized from merely off-screen. Clamping this would
+        trap the window on the desktop and squeeze its client area."""
+        rect = self._Rect(-200, 100, 900, 800)   # hangs off the left
+        assert self._clamp(rect) is False
+        assert rect.astuple() == (-200, 100, 900, 800)
+
+    def test_an_ordinary_floating_rect_is_not_clamped(self):
+        rect = self._Rect(188, 125, 1693, 1080)
+        assert self._clamp(rect) is False
+        assert rect.astuple() == (188, 125, 1693, 1080)
+
+    def test_an_unavailable_work_area_does_nothing(self):
+        """monitor_work_area returns None off-Windows or on a failed query,
+        and 'do nothing' is the only safe reading of that."""
+        from frontend.main import clamp_maximized_client
+
+        rect = self._Rect(-9, -9, 2569, 1389)
+        assert clamp_maximized_client(0, rect, work=None) is False
+        assert rect.astuple() == (-9, -9, 2569, 1389)

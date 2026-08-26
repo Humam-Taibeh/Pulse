@@ -25,7 +25,82 @@ GUI version, with core changes called out explicitly.
   `$Script:DevHubBundles` are gone with them (nothing in the backend ever
   read the mirror), and `test_contract.py` now fails if either comes back.
 
+### Fixed
+- **Light mode rendered black chrome on every GPU machine.** The ambient
+  field's star pass blended with `glBlendFunc(ZERO, ONE_MINUS_SRC_ALPHA)`
+  in light mode — `dst = (1-a)*dst` on colour *and* alpha, applied by every
+  fragment a point sprite rasterises, rim fragments included. Across 126
+  overlapping sprites the canvas decayed toward black and toward alpha 0,
+  and `QOpenGLWidget` composites a transparent pixel to black rather than
+  revealing the shell beneath. Measured standalone: 23 of 25 sample points
+  fully transparent at 0.09 luminance where the light canvas should be
+  0.92. Now a single premultiplied source-over (`ONE,
+  ONE_MINUS_SRC_ALPHA`) for both themes — which is what `_STAR_FRAG`
+  always emitted — giving 25/25 opaque at 0.93, with dark byte-identical.
+- **A displaced grey rectangle hung outside the shell at fractional DPI.**
+  `_draw_orbs` restored the viewport with `glViewport(0, 0, w, h)` in
+  *logical* pixels after rendering the orb buffer, but `QOpenGLWidget`
+  allocates its framebuffer in *device* pixels. At 125% that rasterised
+  the blit and every star into the bottom-left 80%×80% of the surface,
+  leaving an unpainted band across the top and down the right edge. It
+  struck roughly one frame in six — only when the orb buffer rebuilt on
+  its 100 ms cadence — which is why it read as a random flicker, and it
+  vanished at integer scaling or on the raster path. `gl_PointSize` had
+  the same logical/device confusion and drew every star 1/dpr too small.
+- **Closing the window during a background check could abort the process.**
+  `closeEvent` joined the task thread and neither of the other two. The
+  state probe and the self-update check were left running while Qt
+  destroyed them, which raises `RuntimeError: Signal source has been
+  deleted` at best and qFatals at worst. All three now settle through one
+  path: cancel, quit, bounded join, and — only if still running — signals
+  severed and the thread un-parented so Qt cannot destroy it mid-run.
+- **The maximized `WM_NCCALCSIZE` inset never ran.** It was guarded by
+  `IsZoomed()`, which reads the `WS_MAXIMIZE` style that this very message
+  is part of setting; traced live it returns `False` for every
+  `NCCALCSIZE` of a maximize, so the branch was dead
+  (`GetWindowPlacement().showCmd` is stale in exactly the same way).
+  Replaced with a state-free clamp to the monitor work area, which is a
+  no-op on the path Qt actually takes and a correction on any path that
+  proposes an oversized rect. `theme.resize_border_thickness()` went with
+  it — that inset was its only caller.
+
+### Changed
+- **Cards now read as surfaces in both themes.** A card measured 1.12:1
+  against the content well in light and 1.11:1 in dark — legible text on a
+  surface that was itself invisible. Light buys its separation from
+  `overlay` (the well behind the cards, which carries no text) rather than
+  the canvas, reaching 1.38:1; dark raises the card itself, since near
+  black the WCAG `+0.05` floor dominates and darkening the well bought
+  only 1.11 → 1.15:1. Both land at a ceiling set by *existing* AA
+  contracts, not by preference: the status badge holds dark's card at
+  `#22252E`, and the active filter chip — whose knockout text is
+  `bg_solid` — is why light's canvas could not move at all. Two new
+  guards, `_SURFACE_PAIRS` and `_BORDER_PAIRS`, pin elevation and hairline
+  separation, which nothing measured before.
+
 ### Added
+- **`tools/diagnose_edge_bleed.py`** — a rendering-artifact bisector that
+  runs the app with one subsystem disabled at a time (integer DPI, raster
+  ambient, no `QGraphicsEffect`, square corners). It located the
+  fractional-DPI viewport bug in one pass after geometry analysis had
+  cleared every "obvious" suspect, because the defect was in the viewport
+  drawn *into* a correctly sized surface.
+- **The self-updater is wired into the GUI.** `src/utils/updater.py`'s
+  `check()` / `download()` / `verify()` / `apply()` had no caller anywhere
+  in `src/frontend/` before this — the SHA-256 verification described in
+  the README's Safety Model ran in no live code path. Three call sites now
+  exist: a silent background `check()` ~2.5s after launch (never an error
+  dialog — see the module's EVERY NETWORK FAILURE IS SILENT policy), the
+  sidebar footer's version label doubling as a manual "Check for updates"
+  button, and a new `widgets.SelfUpdateDialog` (notes → progress → ready →
+  error) that owns `download()`/`verify()` on its own worker thread —
+  following the same `PulseDialog.done()` teardown contract as every other
+  worker dialog — before handing a verified installer path back to
+  `main.py`, which calls `apply()` and quits. A build that fails
+  `updater.can_apply()` (running from source) gets a "View Release" link
+  instead of a button that would fail the moment it's clicked. Still moot
+  for the live v10.3 release asset, which publishes no `SHA256SUMS`; that
+  remains tracked in the Roadmap.
 - **A denser, deeper ambient field.** The background wash went from three
   orbs and 42 flat motes to **five orbs and 126 stars in three depth
   tiers** — far stars small, dim and slow; near ones larger, brighter and

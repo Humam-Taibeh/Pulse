@@ -148,10 +148,18 @@ class TestDensity:
 #: (label, rgb, alpha). Taken from the tokens themselves: `overlay` is the
 #: content well, `panel` the sidebar. Nobody ever sees a star against the
 #: bare canvas — the wash is the bottom widget in the shell.
+#
+# The LIGHT entries moved when the ground became a real grey (theme._LIGHT:
+# bg_solid #F2F2F7 -> #D6D8E0, overlay rgb 242,242,247 -> 198,200,210). Note
+# what did NOT move: both ALPHAS. The well's opacity is what scales star
+# contrast — the separation pass that produced these colours was explicitly
+# solved with the alphas pinned, because an earlier cut that raised the
+# well to 0.94 measured an 88% drop in star deltaE. If a future palette
+# edit changes an alpha here, these tests are the ones that should hurt.
 _VEILS = {
     "dark":  [("content well", (5, 6, 10), 0.45),
               ("sidebar", (18, 20, 26), 0.55)],
-    "light": [("content well", (242, 242, 247), 0.55),
+    "light": [("content well", (198, 200, 210), 0.55),
               ("sidebar", (255, 255, 255), 0.60)],
 }
 _CANVAS = {"dark": (11, 13, 17), "light": (242, 242, 247)}

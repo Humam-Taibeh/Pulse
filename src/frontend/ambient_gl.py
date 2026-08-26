@@ -96,9 +96,8 @@ except ImportError:                                  # pragma: no cover
 _GL_TRIANGLES = 0x0004
 _GL_POINTS = 0x0000
 _GL_BLEND = 0x0BE2
-_GL_SRC_ALPHA = 0x0302
+_GL_ONE = 0x0001
 _GL_ONE_MINUS_SRC_ALPHA = 0x0303
-_GL_ZERO = 0x0000
 _GL_SRC_COLOR = 0x0300
 _GL_TEXTURE_2D = 0x0DE1
 _GL_TEXTURE_MIN_FILTER = 0x2801
@@ -188,11 +187,17 @@ void main() { frag = texture(tex, uv); }
 # guarantees is far above this field's largest sprite (20px).
 _STAR_VERT = """#version 330 core
 layout(location = 0) in vec4 star;   // x_px, y_px, span_px, alpha
-uniform vec2 res;
+uniform vec2  res;
+uniform float dpr;
 out float v_alpha;
 void main() {
     v_alpha = star.w;
-    gl_PointSize = star.z;
+    // star.z is a LOGICAL span (the raster path's sprite size, shared
+    // verbatim), but gl_PointSize rasterises in DEVICE pixels — so on a
+    // fractional-DPI display an unscaled span draws the star 1/dpr too
+    // small. star.xy needs no such scaling: it is divided by `res` in the
+    // same units, so the NDC it produces is resolution-independent.
+    gl_PointSize = star.z * dpr;
     gl_Position = vec4((star.xy / res) * 2.0 - 1.0, 0.0, 1.0);
 }
 """
@@ -483,17 +488,44 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
 
     # -- painting ---------------------------------------------
     def paintGL(self):
+        """TWO COORDINATE SPACES, AND THEY ARE NOT INTERCHANGEABLE.
+
+        The SIMULATION is logical: star positions, orb geometry and the
+        occluder rects all come from Qt widget coordinates. The
+        FRAMEBUFFER is device pixels — QOpenGLWidget allocates it at
+        size() * devicePixelRatio(). Everything GL measures in pixels
+        (glViewport, gl_PointSize) therefore needs the device numbers,
+        and everything normalised against `res` needs the logical ones.
+
+        MIXING THEM IS THE 125%-SCALING BLEED. _draw_orbs used to restore
+        the viewport with glViewport(0, 0, w, h) in LOGICAL pixels after
+        rendering the orb buffer, so on a 1.25x display the blit and the
+        stars were rasterised into the bottom-left 80% x 80% of a
+        1504x954 framebuffer — leaving an unpainted band across the top
+        and down the right edge, which composited as a displaced grey
+        rectangle hanging outside the shell. It struck about one frame in
+        six because the orb buffer only rebuilds on its 100 ms cadence,
+        which is exactly why it read as a random flicker rather than a
+        constant offset, and it disappeared at integer scaling (where
+        logical == device) or on the raster path (which has no viewport).
+        """
         self._gl_frames += 1
         w, h = max(1, self.width()), max(1, self.height())
+        dpr = self.devicePixelRatioF()
+        dw, dh = max(1, round(w * dpr)), max(1, round(h * dpr))
         if not self._ready:
             c = self._canvas_bottom
             self._fns.glClearColor(c.redF(), c.greenF(), c.blueF(), 1.0)
             self._fns.glClear(0x00004000)             # GL_COLOR_BUFFER_BIT
             return
 
+        # Asserted rather than inherited. Qt sets the viewport before
+        # paintGL, but relying on that is what let a stale one survive
+        # inside a single frame in the first place.
+        self._fns.glViewport(0, 0, dw, dh)
         self._vao.bind()
-        self._draw_orbs(w, h)
-        self._draw_stars(w, h)
+        self._draw_orbs(w, h, dw, dh)
+        self._draw_stars(w, h, dpr)
         self._vao.release()
 
     def _ensure_fbo(self, w: int, h: int):
@@ -503,7 +535,11 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
             self._last_orb_t = -1e9
         return self._fbo
 
-    def _draw_orbs(self, w: int, h: int):
+    def _draw_orbs(self, w: int, h: int, dw: int, dh: int):
+        """`w, h` are LOGICAL (they size the low-res orb buffer, keeping its
+        documented ~1/6 cost profile independent of display scaling);
+        `dw, dh` are the DEVICE dimensions the default framebuffer actually
+        has, and are the only correct thing to restore the viewport to."""
         fbo = self._ensure_fbo(w, h)
         # Rebuild the low-res orb buffer only on its own cadence. While
         # frozen (an OS move/resize loop) it is never rebuilt at all — the
@@ -520,7 +556,9 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
             self._fns.glDrawArrays(_GL_TRIANGLES, 0, 3)
             prog.release()
             fbo.release()
-            self._fns.glViewport(0, 0, w, h)
+            # DEVICE pixels. This line read (0, 0, w, h) — the logical size
+            # — which is the fractional-DPI bleed described in paintGL.
+            self._fns.glViewport(0, 0, dw, dh)
 
         self._fns.glBindTexture(_GL_TEXTURE_2D, fbo.texture())
         self._fns.glTexParameteri(_GL_TEXTURE_2D, _GL_TEXTURE_MIN_FILTER,
@@ -570,18 +608,38 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
                 prog.uniformLocation(f"orb_peak[{i}]"),
                 peaks[i] * max(0.0, min(1.0, breathe)))
 
-    def _draw_stars(self, w: int, h: int):
+    def _draw_stars(self, w: int, h: int, dpr: float = 1.0):
         data = self.star_buffer(w, h)
         if not data:
             return
         prog = self._star_prog
         self._fns.glEnable(_GL_BLEND)
-        # Light mode's motes are DARK ink on paper, so they must subtract
-        # rather than add — the same inversion the orbs make above.
-        if self._light:
-            self._fns.glBlendFunc(_GL_ZERO, _GL_ONE_MINUS_SRC_ALPHA)
-        else:
-            self._fns.glBlendFunc(_GL_SRC_ALPHA, _GL_ONE_MINUS_SRC_ALPHA)
+        # PREMULTIPLIED SOURCE-OVER, and the same factors in BOTH themes.
+        #
+        # _STAR_FRAG emits `vec4(star_color * a, a)` — colour already
+        # multiplied by coverage — so (ONE, ONE_MINUS_SRC_ALPHA) is the
+        # canonical pair for it: dst = src + (1-a)*dst, on colour AND alpha.
+        # No theme branch is needed, because "dark ink on paper" is just a
+        # dark star_color composited over a light canvas; the inversion the
+        # orbs make (see _set_orb_uniforms) is not needed here and was the
+        # bug.
+        #
+        # WHAT THIS REPLACES, and why light mode had black chrome. Light
+        # used glBlendFunc(ZERO, ONE_MINUS_SRC_ALPHA), i.e.
+        # dst = (1-a)*dst on every channel including ALPHA. That is
+        # multiplicative decay applied by every fragment a point rasterises
+        # — including the near-invisible rim ones, where `a` rounds to
+        # nothing visually but still scales the destination. Across 126
+        # overlapping sprites the canvas decayed toward black AND toward
+        # alpha 0, and QOpenGLWidget composites a transparent pixel to
+        # black rather than revealing the shell beneath it. MEASURED on the
+        # standalone field at 900x600: 23 of 25 sample points fully
+        # transparent, mean luminance 0.09 where the light canvas should be
+        # 0.92. With this blend: 25/25 opaque at 0.93, and dark is
+        # unchanged at 25/25 and 0.124 — byte-identical to what it rendered
+        # before, because for an opaque canvas the two agree on colour and
+        # only this pair also preserves alpha.
+        self._fns.glBlendFunc(_GL_ONE, _GL_ONE_MINUS_SRC_ALPHA)
         self._fns.glEnable(_GL_PROGRAM_POINT_SIZE)
 
         self._vbo.bind()
@@ -589,6 +647,10 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
         prog.bind()
         prog.setUniformValue(prog.uniformLocation("res"),
                              QVector2D(float(w), float(h)))
+        # `res` stays LOGICAL — star.xy is logical too, so the division is
+        # scale-free. `dpr` is separate because gl_PointSize is the one
+        # star quantity the rasteriser reads in device pixels.
+        prog.setUniformValue1f(prog.uniformLocation("dpr"), float(dpr))
         color = self.star_color()
         from PySide6.QtGui import QVector3D
         prog.setUniformValue(prog.uniformLocation("star_color"),

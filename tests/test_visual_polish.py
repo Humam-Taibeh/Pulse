@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from PySide6.QtCore import Qt
 
 from conftest import settle
 from frontend import theme as TH
@@ -314,6 +315,47 @@ class TestElidedCaption:
         cap.setFullText("Enterprise-Grade Windows Orchestration")
         assert cap.minimumSizeHint().width() == 0
 
+    @pytest.mark.parametrize("text", [
+        "Windows Orchestration Toolkit",            # advance 191, needs 192
+        "Enterprise-Grade Windows Orchestration",   # advance 255, needs 255
+        "Deploy · Tune · Repair · Report",
+        "Ran 3d ago · ~2m",
+        "A",
+        "iiiii",
+        "WWWWW",
+    ])
+    def test_the_hint_wins_a_width_the_text_actually_fits_in(self, qapp, text):
+        """sizeHint() measures with horizontalAdvance() but the caption
+        ELIDES with elidedText(), and the two disagree by up to a pixel on
+        the trailing glyph. A hint of exactly the advance therefore wins a
+        width elidedText then judges insufficient — so the caption elides
+        at every size and never renders in full.
+
+        Which side of the rounding a string lands on depends on its final
+        glyph, so this was a latent trap that any caption-text change could
+        spring. It did: 'Windows Orchestration Toolkit' has advance 191 but
+        needs 192, and the masthead tagline elided even on a 1500px window.
+        """
+        cap = ElidedCaption(max_width=4000)
+        cap.setFullText(text)
+        granted = cap.sizeHint().width()
+        painted = cap.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, granted)
+        assert painted == text, (
+            f"sizeHint() asks for {granted}px but elidedText() still "
+            f"truncates {text!r} at that width — the caption can never "
+            "render in full")
+
+    def test_the_hint_is_not_padded_beyond_what_is_needed(self, qapp):
+        """The slack above must stay a rounding allowance, not become a
+        margin — a caption that over-asks pushes its neighbours around."""
+        cap = ElidedCaption(max_width=4000)
+        text = "Windows Orchestration Toolkit"
+        cap.setFullText(text)
+        advance = cap.fontMetrics().horizontalAdvance(text)
+        assert cap.sizeHint().width() <= advance + 1, (
+            "the caption is asking for more than a pixel of slack")
+
 
 @pytest.mark.native
 class TestMastheadTagline:
@@ -334,21 +376,75 @@ class TestMastheadTagline:
             window.resize(original)
             settle(qapp, 150)
 
-    def test_it_elides_rather_than_clipping_at_the_minimum_width(
+    def test_the_shipped_tagline_fits_at_the_apps_minimum_width(
             self, window, qapp):
-        """MEASURED at the app's own minimum. A plain QLabel squeezed below
-        its text width does not elide — it clips mid-glyph with nothing to
-        say anything was lost. At 980px this lost 40px of
-        'Enterprise-Grade Windows Orchestration'."""
+        """The shipped copy must not need eliding at ANY size the app can
+        be at. 'Windows Orchestration Toolkit' is 192px, which the masthead
+        can afford even at the 980px minimum.
+
+        This is the guard on the copy itself: lengthen the tagline without
+        re-measuring WelcomePage._TAGLINE_W and it starts truncating on
+        real windows, which is what the previous, longer tagline did.
+        """
         original = window.size()
         try:
             window.go_home()
             window.resize(window.minimumWidth(), 800)
             settle(qapp, 300)
             tag = window.welcome._tag
-            from PySide6.QtGui import QFontMetrics
-            painted = QFontMetrics(tag.font()).horizontalAdvance(tag.text())
-            assert painted <= tag.width(), (
+            assert tag.text() == tag.fullText(), (
+                f"the shipped tagline {tag.fullText()!r} truncates at the "
+                f"app's own {window.minimumWidth()}px minimum — either "
+                "shorten it or re-measure WelcomePage._TAGLINE_W")
+        finally:
+            window.resize(original)
+            settle(qapp, 150)
+
+    # The two tests below drive the masthead with a deliberately overlong
+    # string rather than the shipped tagline. They are about the ELISION
+    # MACHINERY in the real layout — clip-vs-elide, and the size-hint
+    # ratchet — and tying them to the shipped copy meant they silently
+    # stopped exercising anything the moment that copy got short enough to
+    # always fit (which is exactly what happened when the tagline changed).
+    #
+    # The per-instance width cap is lifted with it, so the squeeze comes
+    # purely from the WINDOW. Left at _TAGLINE_W the cap alone would hold a
+    # long string elided at every size, and "it came back" could never be
+    # observed — the test would be measuring the cap, not the ratchet.
+    _LONG = ("A Deliberately Overlong Masthead Tagline Used Only To Force "
+             "The Squeeze In These Tests")
+
+    @staticmethod
+    def _drive_long(tag):
+        """Swap in the long text + an effectively unlimited cap; returns
+        the restore thunk."""
+        text, cap = tag.fullText(), tag._max_width
+        tag._max_width = 4000
+        tag.setFullText(TestMastheadTagline._LONG)
+
+        def restore():
+            tag._max_width = cap
+            tag.setFullText(text)
+        return restore
+
+    def test_it_elides_rather_than_clipping_when_squeezed(self, window, qapp):
+        """A plain QLabel squeezed below its text width does not elide — it
+        clips mid-glyph with nothing to say anything was lost."""
+        original = window.size()
+        tag = window.welcome._tag
+        restore = self._drive_long(tag)
+        try:
+            window.go_home()
+            window.resize(window.minimumWidth(), 800)
+            settle(qapp, 300)
+            painted = tag.fontMetrics().horizontalAdvance(tag.text())
+            # +1: elidedText() and horizontalAdvance() disagree by up to a
+            # pixel on the trailing glyph (the same Qt quirk ElidedCaption.
+            # sizeHint() allows for), so elidedText can return a string
+            # that measures one pixel over the budget it was handed.
+            # Tolerating that costs this guard nothing — the clipping it
+            # exists to catch dropped FORTY pixels, not one.
+            assert painted <= tag.width() + 1, (
                 f"the tagline paints {painted}px into a {tag.width()}px "
                 "label — it is being clipped, not elided")
             assert tag.text() != tag.fullText()
@@ -356,23 +452,26 @@ class TestMastheadTagline:
                 "truncated with no ellipsis — nothing tells the user text "
                 "was dropped")
         finally:
+            restore()
             window.resize(original)
             settle(qapp, 150)
 
     def test_it_comes_back_when_the_window_grows(self, window, qapp):
         original = window.size()
+        tag = window.welcome._tag
+        restore = self._drive_long(tag)
         try:
             window.go_home()
             window.resize(window.minimumWidth(), 800)
             settle(qapp, 300)
-            assert window.welcome._tag.text() != window.welcome._tag.fullText()
+            assert tag.text() != tag.fullText(), "test needs a real elision"
             window.resize(1400, 900)
             settle(qapp, 300)
-            tag = window.welcome._tag
             assert tag.text() == tag.fullText(), (
                 "the tagline stayed elided after the window grew — the "
                 "size-hint ratchet is back")
         finally:
+            restore()
             window.resize(original)
             settle(qapp, 150)
 

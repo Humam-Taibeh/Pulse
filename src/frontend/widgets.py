@@ -54,8 +54,10 @@ from frontend import menu_structure as MS
 # native (threading process ownership through main.py) would either block
 # the dialog's own loading UI or duplicate PowerShellTask's cancellation-
 # safe process/thread bookkeeping here.
-from utils import appicons, resources  # noqa: E402
-from utils.helpers import PowerShellTask, TaskResult  # noqa: E402
+from utils import appicons, resources, updater  # noqa: E402
+from utils.helpers import (  # noqa: E402
+    PowerShellTask, SelfUpdateInstallWorker, TaskResult,
+)
 
 
 class PulseDialog(QDialog):
@@ -1189,7 +1191,26 @@ class ElidedCaption(QLabel):
         """
         hint = super().sizeHint()
         if self._full:
-            hint.setWidth(self.fontMetrics().horizontalAdvance(self._full))
+            # +1 IS LOAD-BEARING, and it is not a fudge factor.
+            #
+            # This class measures with horizontalAdvance() but ELIDES with
+            # elidedText(), and the two disagree by up to a pixel on the
+            # trailing glyph — more readily once QSS letter-spacing is in
+            # the font, because the spacing after the final character is
+            # accumulated by one and rounded away by the other. Asking for
+            # exactly the advance therefore wins a width that elidedText
+            # then judges insufficient, so the caption elides at EVERY
+            # window size and never renders in full.
+            #
+            # MEASURED, at the masthead's own 12px + 1px letter-spacing:
+            #   "Enterprise-Grade Windows Orchestration" -> advance 255,
+            #        elidedText(255) returns the full string.
+            #   "Windows Orchestration Toolkit"          -> advance 191,
+            #        elidedText(191) ELIDES; it needs 192.
+            # Which side of the rounding a string lands on is a property of
+            # its final glyph, so this was a latent trap that any change of
+            # caption text could spring — and did.
+            hint.setWidth(self.fontMetrics().horizontalAdvance(self._full) + 1)
         hint.setWidth(min(hint.width(), self._max_width))
         return hint
 
@@ -8064,6 +8085,295 @@ class UpdateCenterDialog(PulseDialog):
             self.accept()
 
     def reject(self):
+        if self._worker is not None:
+            self._worker.cancel()
+        super().reject()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        _present_dialog(self)
+
+
+# ============================================================
+#  SELF-UPDATE — Pulse updating Pulse (utils/updater.py's GUI call site)
+# ============================================================
+class SelfUpdateDialog(PulseDialog):
+    """One release, from announcement to hand-off. NOT UpdateCenterDialog's
+    list-of-rows shape: a self-update is a single artifact, so this is a
+    small page stack (notes -> progress -> ready -> error) rather than a
+    selector.
+
+    Constructed with an Update already in hand (main.py's background/manual
+    check calls utils.updater.check() first) — this dialog owns only the
+    download() + verify() half of the pipeline, on its own worker/thread
+    exactly like UpdateCenterDialog owns its scan. apply() deliberately
+    stays out: it quits the app, which is the caller's call to make, not a
+    dialog's. After exec():
+
+      Accepted + installer_path set -> caller calls updater.apply(path)
+                                        and quits.
+      Rejected -> nothing to do; a partial download (if any) is left for
+                  prune() to clean up later.
+    """
+
+    def __init__(self, parent: QWidget, t: dict, update: "updater.Update"):
+        super().__init__(parent)
+        self._t = t
+        self._update = update
+        self._thread: QThread | None = None
+        self._worker: SelfUpdateInstallWorker | None = None
+        self._user_cancelled = False
+        self.installer_path: str | None = None
+        can_apply, self._apply_reason = updater.can_apply()
+        self._can_apply = can_apply
+        accent = t["accent"]
+
+        panel = _dialog_chrome(self, t, accent, width=480)
+        lay = dialog_body(panel, "md")
+
+        head = QLabel(f"🚀  Pulse v{update.version} is available")
+        head.setStyleSheet(TH.label_qss(t, "dialog"))
+        head.setWordWrap(True)
+        lay.addWidget(head)
+
+        meta_bits = [f"{update.size_mb:.1f} MB"]
+        if update.prerelease:
+            meta_bits.append("pre-release")
+        self._meta = QLabel("  ·  ".join(meta_bits))
+        self._meta.setStyleSheet(TH.label_qss(t, "caption"))
+        lay.addWidget(self._meta)
+
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet(TH.stack_qss())
+        lay.addWidget(self._stack, 1)
+        self._notes_page = self._build_notes_page()
+        self._stack.addWidget(self._notes_page)
+        self._progress_page = self._build_progress_page()
+        self._stack.addWidget(self._progress_page)
+        self._ready_page = self._build_ready_page()
+        self._stack.addWidget(self._ready_page)
+        self._error_page = self._build_error_page()
+        self._stack.addWidget(self._error_page)
+        self._stack.setCurrentWidget(self._notes_page)
+
+    # -- page builders ----------------------------------------------
+    def _build_notes_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(TH.SPACE["md"])
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFixedHeight(200)
+        scroll.setStyleSheet(TH.scroll_area_qss(t))
+        host = QWidget()
+        host.setStyleSheet("background: transparent;")
+        host_lay = scroll_host_layout(host, "sm")
+        notes = QLabel(self._update.notes or "No release notes were published.")
+        notes.setWordWrap(True)
+        notes.setStyleSheet(TH.label_qss(t, "body"))
+        host_lay.addWidget(notes)
+        host_lay.addStretch()
+        scroll.setWidget(host)
+        lay.addWidget(scroll, 1)
+
+        if not self._can_apply:
+            # Running from source, or some other build this updater refuses
+            # to hand an installer to (see updater.can_apply). The honest
+            # move is to say so and offer the release page, not a Download
+            # & Install button that would fail the moment it's clicked.
+            reason = QLabel(f"ℹ️  {self._apply_reason}")
+            reason.setWordWrap(True)
+            reason.setStyleSheet(TH.label_qss(t, "caption"))
+            lay.addWidget(reason)
+
+        lay.addSpacing(TH.SPACE["xs"])
+        row = QHBoxLayout()
+        row.addStretch()
+        later = QPushButton("Later")
+        later.setFixedSize(96, 36)
+        later.setCursor(Qt.CursorShape.PointingHandCursor)
+        later.setStyleSheet(TH.dialog_cancel_qss(t))
+        later.clicked.connect(self.reject)
+        row.addWidget(later)
+
+        if self._can_apply:
+            go = QPushButton("Download && Install")
+            go.setFixedSize(160, 36)
+            go.clicked.connect(self._start_download)
+        else:
+            go = QPushButton("View Release")
+            go.setFixedSize(120, 36)
+            go.clicked.connect(self._open_release_page)
+        go.setCursor(Qt.CursorShape.PointingHandCursor)
+        go.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
+        row.addWidget(go)
+        lay.addLayout(row)
+        return page
+
+    def _build_progress_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["lg"])
+        lay.addStretch()
+        self._shimmer = ShimmerBar(height=6)
+        self._shimmer.set_theme(t)
+        lay.addWidget(self._shimmer)
+        self._progress_label = QLabel("Downloading…")
+        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._progress_label.setWordWrap(True)
+        self._progress_label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._progress_label)
+        lay.addStretch()
+        row = QHBoxLayout()
+        row.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.setFixedSize(96, 36)
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.setStyleSheet(TH.dialog_cancel_qss(t))
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        lay.addLayout(row)
+        return page
+
+    def _build_ready_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+        icon = QLabel("✅")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
+        lay.addWidget(icon)
+        msg = QLabel(
+            f"Verified — v{self._update.version}'s SHA-256 matches the "
+            "published digest. Pulse will close and Setup will take over.")
+        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg.setWordWrap(True)
+        msg.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(msg)
+        lay.addStretch()
+        row = QHBoxLayout()
+        row.addStretch()
+        later = QPushButton("Later")
+        later.setFixedSize(96, 36)
+        later.setCursor(Qt.CursorShape.PointingHandCursor)
+        later.setStyleSheet(TH.dialog_cancel_qss(t))
+        later.clicked.connect(self.reject)
+        row.addWidget(later)
+        go = QPushButton("Restart && Update")
+        go.setFixedSize(140, 36)
+        go.setCursor(Qt.CursorShape.PointingHandCursor)
+        go.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
+        go.clicked.connect(self.accept)
+        row.addWidget(go)
+        lay.addLayout(row)
+        return page
+
+    def _build_error_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+        icon = QLabel("⚠️")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
+        lay.addWidget(icon)
+        self._error_label = QLabel("")
+        self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._error_label.setWordWrap(True)
+        self._error_label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._error_label)
+        lay.addStretch()
+        row = QHBoxLayout()
+        row.addStretch()
+        close = QPushButton("Close")
+        close.setFixedSize(96, 36)
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setStyleSheet(TH.dialog_cancel_qss(t))
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        retry = QPushButton("Retry")
+        retry.setFixedSize(96, 36)
+        retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
+        retry.clicked.connect(self._start_download)
+        row.addWidget(retry)
+        lay.addLayout(row)
+        return page
+
+    # -- release page (dev builds, and the error page's escape hatch) ----
+    def _open_release_page(self):
+        url = f"https://github.com/{updater.REPO}/releases/tag/{self._update.tag}"
+        QDesktopServices.openUrl(QUrl(url))
+
+    # -- download / verify --------------------------------------------
+    def _start_download(self):
+        if self._thread is not None:
+            return
+        self._user_cancelled = False
+        self._progress_label.setText("Downloading…")
+        self._shimmer.start()
+        self._stack.setCurrentWidget(self._progress_page)
+
+        thread = QThread(self)
+        worker = SelfUpdateInstallWorker(self._update)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_progress)
+        worker.verifying.connect(self._on_verifying)
+        worker.finished.connect(self._on_install_finished)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(self._on_thread_finished)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _on_progress(self, received: int, total: int):
+        mb = received / (1024 * 1024)
+        total_mb = (total / (1024 * 1024)) if total else self._update.size_mb
+        self._progress_label.setText(f"Downloading… {mb:.1f} / {total_mb:.1f} MB")
+
+    def _on_verifying(self):
+        self._progress_label.setText("Verifying SHA-256…")
+
+    def _on_install_finished(self, ok: bool, payload: str):
+        self._shimmer.stop()
+        if self._user_cancelled:
+            # reject() already fired (it's what set this flag) and the
+            # dialog is on its way down — nothing left to show.
+            return
+        if ok:
+            self.installer_path = payload
+            self._stack.setCurrentWidget(self._ready_page)
+        else:
+            self._error_label.setText(payload or "The update could not be installed.")
+            self._stack.setCurrentWidget(self._error_page)
+
+    def _on_thread_finished(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+        if self._thread is not None:
+            self._thread.deleteLater()
+            self._thread = None
+
+    def reject(self):
+        # Set BEFORE cancelling: worker.finished can be delivered the
+        # instant cancel() unblocks the download loop, and _on_install_
+        # finished must already see this dialog as closing rather than
+        # switch it to the error page for a download that only stopped
+        # because the user closed it.
+        self._user_cancelled = True
         if self._worker is not None:
             self._worker.cancel()
         super().reject()

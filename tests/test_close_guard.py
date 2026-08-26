@@ -22,17 +22,30 @@ from frontend.widgets import CloseConfirmDialog
 
 class _FakeThread:
     """Stands in for the QThread a live task owns. Constructing a real one
-    would mean spawning real PowerShell for a UI-decision test."""
+    would mean spawning real PowerShell for a UI-decision test.
+
+    Implements the whole slice of QThread that
+    main.PulseApp._settle_background_threads actually calls — isRunning,
+    quit, wait — and a successful `wait` STOPS it, the way joining a real
+    thread does. A double that stayed "running" forever would drive the
+    settle path into its last-resort branch (disconnect + un-parent), which
+    is not the behaviour these tests are about.
+    """
 
     def __init__(self, running: bool):
         self._running = running
         self.waited = False
+        self.quit_called = False
 
     def isRunning(self):        # noqa: N802 - Qt casing
         return self._running
 
+    def quit(self):
+        self.quit_called = True
+
     def wait(self, _ms=0):
         self.waited = True
+        self._running = False   # joined
         return True
 
 

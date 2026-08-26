@@ -6,20 +6,23 @@
 
 # ⚡ PULSE
 
-**Enterprise-grade Windows orchestration — a data-driven PowerShell engine wrapped in a GPU-accelerated, glass-morphism PySide6 command center, with a real-time operations console, declarative playbooks, and a global kill switch.**
+**A Windows orchestration toolkit — a data-driven PowerShell engine wrapped in a GPU-accelerated, glass-morphism PySide6 command center, with a real-time operations console, declarative playbooks, and a global kill switch.**
+
+> ### 🧪 Beta software
+> **v10.3 is a pre-release.** It is unsigned, has had no third-party security review, and modifies the registry, services and installed software on the machine it runs on. The safety layers described below are real and tested, but they are not a substitute for your own backup. Run it on a machine you can afford to restore.
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-prerequisites)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](#-prerequisites)
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![Release](https://img.shields.io/badge/release-v10.3.0-blueviolet)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-493%20pytest%20%2B%2091%20Pester-success)](#-testing--continuous-integration)
+[![Release](https://img.shields.io/badge/release-v10.3%20beta-blueviolet)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-713%20pytest%20%2B%20101%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://img.shields.io/badge/CI-windows--latest-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-*Built for power users, IT technicians, and developers who need a repeatable, safe, auditable way to deploy, tune, repair, and report on a Windows machine — from a single launcher.*
+*Built for power users, IT technicians, and developers who need a repeatable and auditable way to deploy, tune, repair, and report on a Windows machine — from a single launcher.*
 
 [Features](#-key-features) · [Console](#-the-live-operations-console) · [Quick Start](#-quick-start) · [Architecture](#-architecture--tech-stack) · [Structure](#-repository-structure) · [Task API](#-task-api--core-modules) · [Safety](#-safety-model) · [Roadmap](#-roadmap)
 
@@ -40,16 +43,18 @@ Setting up or rescuing a Windows machine is a long tail of manual work: install 
 
 **The GUI never touches the system itself.** Every card dispatches a *named task* to `core.ps1` on a background `QThread`; the engine executes it, streams progress to the UI as it happens, and closes with exactly one machine-parseable verdict line. The same engine also runs **fully standalone** as a self-elevating terminal application with a hierarchical menu — no Python required.
 
+> **Two different "module" counts, both correct.** The release notes describe a **4-module core architecture**; this README counts **19 backend modules**. They are not in conflict — they count different layers. The **4** are the top-level modules a *user* navigates in the sidebar: Software Management, System & Tweaks, Maintenance & Security, and Utilities & Tools (defined as the four top-level entries in [menu_structure.py](src/frontend/menu_structure.py), each with its own semantic accent token). The **19** are the numbered PowerShell engine files under [src/backend/modules/](src/backend/modules/) that those four surfaces dispatch into — `00-Foundation` through `30-GuiDispatcher`. One user-facing module is served by many engine files: *Maintenance & Security*, for instance, draws on `02-Safety`, `07-Maintenance`, `08-Privacy` and `14-Inspectors`.
+
 Every module follows the same lifecycle:
 
 > **preview → confirm → snapshot → apply → log**
 
 ### Why it's different
 
-- **Nothing is guessed.** Card state (`APPLIED` chips, the Health & Drift report) comes from a strictly read-only probe that queries the live system — never a cache the GUI could disagree with reality about.
-- **Nothing is unrecoverable.** A restore point, per-tweak registry snapshots and per-service state snapshots are captured *before* the first mutation of a session. *Reset All Tweaks* restores **your** prior values, not Microsoft's defaults.
+- **Little is guessed.** Card state (`APPLIED` chips, the Health & Drift report) comes from a strictly read-only probe that queries the live system — not a cache the GUI could disagree with reality about.
+- **Designed to be recoverable.** A restore point, per-tweak registry snapshots and per-service state snapshots are captured *before* the first mutation of a session. *Reset All Tweaks* restores **your** prior values, not Microsoft's defaults.
 - **Nothing is opaque.** Every action streams live, ends with a verdict plus a structured metrics envelope, and is appended to a rotated session log you can open from inside the app.
-- **Nothing downloaded is trusted.** The self-updater refuses to execute any installer whose SHA-256 is not published in the release's `SHA256SUMS`.
+- **Nothing downloaded is trusted.** The self-updater refuses to execute any installer whose SHA-256 is not published in the release's `SHA256SUMS` — which also means it declines a release that ships without one, as the v10.3 beta does. See [Safety Model](#-safety-model).
 
 > **On authorship.** This project is built through **Advanced GenAI System Orchestration**: every module boundary, thread-safety contract, security anchor and rendering budget below was specified through detailed architectural prompting, then implemented, audited and iterated with AI coding assistants. The architecture discipline — module decomposition, concurrency contracts, event-loop boundaries — is mine; the code generation is delegated and rigorously reviewed. The strict orchestration contract between the Qt event loop and the isolated PowerShell modules — *one dispatch call in, one verdict out, no shared state* — is what keeps both layers decoupled and independently testable.
 
@@ -103,11 +108,11 @@ The execution engine is built for **observability and control**, not fire-and-fo
 - **Session log** at `%LOCALAPPDATA%\Pulse\logs\` (5 MB rotation, 5 archives), viewable in-app
 
 ### 🎛️ Experience
-- **GPU-accelerated ambient field** — five parallax orbs and 126 depth-tiered stars rendered by an OpenGL 3.3 shader at 60 fps for ~10.9% of one core, against 40.2% for the equivalent raster path; falls back to raster automatically on software-emulated GL
+- **GPU-accelerated ambient field** — five parallax orbs and 126 depth-tiered stars rendered by an OpenGL 3.3 shader at 60 fps, measured at ~10.9% of one core against 40.2% for the equivalent raster path;<sup>[†](#-a-note-on-the-gpu-measurement)</sup> falls back to raster automatically on software-emulated GL
 - **Dual themes** (Premium Dark / Clean Light) with semantic per-module accent tokens that resolve differently per theme, so light mode clears its contrast floors
 - **`Ctrl+K` command palette** over the whole catalog, plus a full keyboard layer (grid navigation, module jumps, filter, shortcut sheet)
 - **Durable preferences** — theme, window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
-- **Self-updater** with SHA-256 verification and a silent-on-failure network policy
+- **Self-updater** ([utils/updater.py](src/utils/updater.py)) with SHA-256 verification and a silent-on-failure network policy, wired into the GUI via a background check on launch plus the sidebar footer's version label ("Check for updates" on click). Still moot for the shipped v10.3 asset, since it publishes no `SHA256SUMS` — see [Safety Model](#-safety-model).
 
 ---
 
@@ -124,10 +129,10 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Engine | **PowerShell 5.1+** | 19 numbered modules dot-sourced into one shared script scope |
 | Package manager | **`winget`** (lazy-bootstrapped) | Chocolatey fallback inside the software engine |
 | Persistence | **`QSettings`** → `HKCU\Software\HumamTaibeh\Pulse` | No file format to corrupt; every getter degrades to a default |
-| Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task |
-| Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent |
+| Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task. The current v10.3 release asset was **not** built by this pipeline — see [Building](#-building). |
+| Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (493) + **Pester 5** (91) | 57 tests marked `native` need a real window station |
+| Tests | **pytest 8** (713) + **Pester 5+** (101) | 100 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -159,7 +164,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 
 ### Design contracts
 
-These are enforced by tests, not by convention:
+These are intended to be enforced by tests rather than by convention — coverage is real but not exhaustive:
 
 - **`menu_structure.py` is the single source of truth.** Adding a button means adding *one dict* — `main.py` renders whatever is defined there, with zero UI code changes.
 - **Every GUI task maps 1:1** to a `switch ($TaskName)` case in `Invoke-GuiTask`, which must emit exactly one sentinel-prefixed verdict line. The `##PULSE##` sentinel exists so no external tool's stray output can spoof a result; the frontend scans **backwards** for it.
@@ -244,9 +249,9 @@ Pulse/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
 │   └── fetch_app_icons.py           # Build-time vendor icon fetcher
 │
-├── tests/                           # 493 pytest tests
+├── tests/                           # 713 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
-│   ├── backend/                     # 91 Pester tests (safety, startup, hardening, …)
+│   ├── backend/                     # 101 Pester tests (safety, startup, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
 │
 └── .github/workflows/ci.yml         # Four gates, ordered cheapest-first
@@ -278,7 +283,7 @@ Set these only to override a decision Pulse makes for itself.
 | Variable | Values | Purpose |
 |---|---|---|
 | `PULSE_AMBIENT` | `auto` *(default)* · `gl` · `raster` | Forces the ambient field's render path. `raster` never uses the GPU; `gl` uses it even when the renderer looks software-emulated; `auto` lets the capability probe decide. |
-| `QT_QPA_PLATFORM` | `offscreen` | Standard Qt switch. Under it the 57 `native` tests auto-skip — useful for headless experimentation, **not** supported for CI (see [Testing](#-testing--continuous-integration)). |
+| `QT_QPA_PLATFORM` | `offscreen` | Standard Qt switch. Under it the 100 `native` tests auto-skip — useful for headless experimentation, **not** supported for CI (see [Testing](#-testing--continuous-integration)). |
 
 ```powershell
 # Example: force the raster field on a machine with a flaky GL driver
@@ -304,19 +309,22 @@ python src\frontend\main.py
 
 ### Option A — Install the release *(recommended for use)*
 
-Download `PULSE_Setup_v10.3.0.exe` from [Releases](https://github.com/Humam-Taibeh/Humam-Windows-Architecture/releases), verify it against the published `SHA256SUMS`, and run it. Setup installs to Program Files (a deliberate security boundary — see [Building](#-building)), creates Start Menu and optional Desktop shortcuts, and registers with Windows for clean upgrades and uninstall.
+Download `Pulse.exe` from [Releases](https://github.com/Humam-Taibeh/Pulse/releases) and run it.
 
-```powershell
-# Verify before you run it
-Get-FileHash .\PULSE_Setup_v10.3.0.exe -Algorithm SHA256
-```
+> **v10.3 is a pre-release beta.** It ships as a single unsigned `Pulse.exe` with no checksum file and no code signature, so there is nothing to verify it against and SmartScreen will warn on first run. Record the digest yourself if you plan to redistribute it or check it later:
+>
+> ```powershell
+> Get-FileHash .\Pulse.exe -Algorithm SHA256
+> ```
+>
+> Signed builds and a published `SHA256SUMS` are [roadmap](#-roadmap) items, not current guarantees.
 
 ### Option B — Run from source *(development)*
 
 **1 · Clone**
 
 ```powershell
-git clone https://github.com/Humam-Taibeh/Humam-Windows-Architecture.git Pulse
+git clone https://github.com/Humam-Taibeh/Pulse.git
 cd Pulse
 ```
 
@@ -371,7 +379,9 @@ One command produces all three release artifacts:
 | `dist\PULSE_Setup_v<VERSION>.exe` | The Inno Setup wizard |
 | `dist\SHA256SUMS` | Digests for both |
 
-**`SHA256SUMS` is not optional.** `src/utils/updater.py` refuses to execute a downloaded installer whose digest does not appear in it, so a release published without this file is a release the updater declines — silently and correctly.
+**`SHA256SUMS` is not optional.** `verify()` in `src/utils/updater.py` refuses to hand a downloaded installer to the installer step unless its digest appears in this file — that refusal is a loud `UpdateError`, not a silent one. As of v10.3 the GUI does call `check()`/`download()`/`verify()` (see [Safety Model](#-safety-model)), so a release published without `SHA256SUMS` now fails loudly in `SelfUpdateDialog`'s error page — rather than harmlessly, as it did before the GUI had a call site at all. Publish it with every release.
+
+> **The live v10.3 release asset does not match this pipeline.** `Pulse.exe`, the file currently published on [Releases](https://github.com/Humam-Taibeh/Pulse/releases), is a single ~46 MB executable — not the onedir bundle plus Inno Setup wizard this section documents. Whatever produced it was not `tools\build_release.ps1`. Treat the instructions below as the intended, tested pipeline, not as a description of what shipped in v10.3.
 
 Everything is stamped from the repo's `VERSION` file: the GUI imports it, PowerShell reads it, the PyInstaller spec writes it into the Windows version resource, Inno Setup preprocesses it into the output filename, and CI tags from it. Nothing computes the version; everything quotes it.
 
@@ -394,10 +404,10 @@ pyinstaller main.spec                      # the bundle step on its own
 | `powershell -File src\backend\core.ps1` | Interactive terminal engine (self-elevating) |
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 493-test regression suite |
+| `python -m pytest tests` | The full 713-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
-| `Invoke-Pester -Path tests\backend` | The 91-test Pester suite (backup/restore, startup, hardening) |
+| `Invoke-Pester -Path tests\backend` | The 101-test Pester suite (backup/restore, startup, hardening) |
 | `Invoke-ScriptAnalyzer -Path src\backend -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` | Lint the engine — must report **zero** findings |
 | `pyinstaller main.spec` | Build `dist\PULSE\` |
 | `.\tools\build_release.ps1` | Build bundle + installer + `SHA256SUMS` |
@@ -474,7 +484,7 @@ A step is *just* a task name, dispatched through exactly the same contract a car
 
 ## 🔐 Safety Model
 
-Every destructive path is guarded by four independent layers:
+Destructive paths are guarded by up to four independent layers:
 
 1. **🛟 System Restore Point** — `Pulse Restore Point`, created automatically before the first system change of any session, across *all* modules.
 2. **📸 Registry snapshots** — every tweak captures its original value under `HKCU:\Software\Pulse` before modification, with **first-write-wins** semantics and a `__NOTSET__` sentinel for values that did not previously exist. *Reset All Tweaks* restores your real prior settings, not Microsoft's defaults.
@@ -485,7 +495,11 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 
 **Kill-switch semantics.** Stopping a task is a *hard* process-tree termination — deliberate, immediate and honest. Interrupted work (a half-finished scan, a partial install batch) is left incomplete but recoverable: re-run the task. Nothing bypasses the snapshot layers above. The success path deliberately **disarms** kill-on-close first, because several tasks end by launching something for the user (`cleanmgr.exe`, a restarted `explorer.exe`).
 
-**Supply-chain posture.** The updater treats HTTPS as authenticating the *host*, not the *artifact*: it downloads nothing it will not hash, and executes nothing whose SHA-256 is absent from the release's `SHA256SUMS`. Every network failure — offline, DNS, timeout, HTTP 403 from GitHub's unauthenticated rate limit, malformed JSON — resolves silently, because Pulse routinely runs on machines that are broken, freshly imaged or deliberately offline, and an update check that demanded a dismissal would be a worse bug than never checking.
+**Supply-chain posture — as designed.** The updater's `verify()` treats HTTPS as authenticating the *host*, not the *artifact*: it downloads the release's `SHA256SUMS`, looks up the asset by filename, hashes the downloaded file and refuses to hand it to the installer unless the digests match. All three failure modes — no `SHA256SUMS` asset, an unreachable checksum file, an asset absent from the list — raise fatally (a loud `UpdateError`) and delete the download, rather than falling back to "verify what we can". Every *check* failure, by contrast — offline, DNS, timeout, HTTP 403 from GitHub's unauthenticated rate limit, malformed JSON — resolves silently, because Pulse routinely runs on machines that are broken, freshly imaged or deliberately offline, and an update check that demanded a dismissal would be a worse bug than never checking.
+
+> **Wired into the GUI as of v10.3.** `src/frontend/main.py` runs a silent background check (`updater.check()`) shortly after launch, and the sidebar footer's version label is the manual "Check for updates" call site — click it to check on demand, or to reopen a result the background check already found. Either path opens `widgets.SelfUpdateDialog`, which owns `download()` and `verify()` on its own worker thread and hands a verified installer back to `main.py`, which calls `apply()` and quits. The unrelated Update Center still only audits *installed third-party apps* via `winget`, not Pulse itself.
+>
+> This still does not make in-app updating usable end-to-end for the current release: the live v10.3 asset publishes no `SHA256SUMS` (see the note above), so `verify()` refuses it and the dialog surfaces a loud error rather than installing anything. Publishing `SHA256SUMS` with the next release is what closes that last gap. See [Roadmap](#-roadmap).
 
 **Upgrading from v5.x** (*Humam Windows Architecture*): Pulse migrates your safety net automatically — legacy registry snapshots are copied to the `HKCU:\Software\Pulse` root on first run, and restores fall back to the old `HTCore_*` artifact names when the new ones do not exist yet.
 
@@ -494,11 +508,11 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 493 tests
-Invoke-Pester -Path tests\backend  # 91 tests
+python -m pytest tests -v          # 713 collected tests
+Invoke-Pester -Path tests\backend  # 101 tests
 ```
 
-The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **57 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
+The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
 
 The Pester suite does **real registry I/O**, deliberately — mocking the registry would test the mock, and invariants like first-write-wins and the `__NOTSET__` sentinel only bite against a real hive. Everything is confined to a throwaway key and removed in `AfterAll`; nothing needs elevation.
 
@@ -512,6 +526,12 @@ CI runs four gates on `windows-latest`, ordered cheapest-first so an obvious bre
 | 4 | pytest — with a **floor assertion** that the native tests really ran | ~3 m |
 
 Gate 4's floor exists because a runner that lost its desktop session would still report green while silently testing a quarter of the suite. It fails loudly instead.
+
+### † A note on the GPU measurement
+
+The ambient-field figures quoted above — ~10.9% of one core on the GPU path against 40.2% for raster at 60 fps — are **a one-off measurement taken by the author on a single personal reference machine**, at 1300×860, in a real event loop with real idle between frames. They are recorded in the [ambient_gl.py](src/frontend/ambient_gl.py) module docstring, which also documents the discarded first attempt: a tight `update`/`processEvents` loop returned exactly 5.556 ms for every arm, i.e. it measured the vsync swap interval rather than any actual work.
+
+**There is no committed benchmark harness, and these numbers are not reproducible from this repository.** No hardware, OS or driver version was recorded. The performance tests that *are* in the suite ([test_ambient.py](tests/test_ambient.py), [test_shell_budget.py](tests/test_shell_budget.py)) measure per-paint cost in milliseconds against a frame budget — a different metric, which does not corroborate a CPU-percentage claim. Treat the ratio as directionally indicative of the author's hardware, not as a benchmark. The same caveat applies to the "0.000 card repaints per frame" figure in that docstring.
 
 ---
 
@@ -529,8 +549,9 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Playbooks — declarative, validated, previewable machine baselines
 - [x] Health & Drift Report with a self-contained HTML export
 - [x] GPU ambient field — 60 fps at a quarter of the raster cost
-- [x] Onedir bundle, Inno Setup installer and a digest-verified self-updater
+- [x] Onedir bundle and Inno Setup installer (see [Building](#-building) for a caveat on the current release asset)
 - [x] CI: parse, lint at zero, Pester, pytest with a coverage floor
+- [x] Self-updater wired into the GUI — background check on launch, sidebar-footer manual check, `SelfUpdateDialog` owning download/verify/apply (still needs `SHA256SUMS` published on a release to be usable end-to-end — see [Safety Model](#-safety-model))
 
 **Planned**
 
@@ -545,7 +566,7 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 
 ## 🤝 Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, commit conventions, and the architectural contracts you must preserve — particularly the dispatcher contract, the thread-safety rules and the rendering doctrine, all of which are enforced by tests that will fail if you break them.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, commit conventions, and the architectural contracts you must preserve — particularly the dispatcher contract, the thread-safety rules and the rendering doctrine, which are covered by tests, though not exhaustively.
 
 Security issues go through [SECURITY.md](SECURITY.md), not the public tracker.
 
