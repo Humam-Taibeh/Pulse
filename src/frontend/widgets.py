@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QPlainTextEdit, QPushButton, QScrollArea, QSizeGrip, QSizePolicy,
+    QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -652,9 +652,19 @@ class PulseDialog(QDialog):
 # to 1100px on a 4K screen would trade clutter for empty space, not fix it.
 _SELECTOR_WIDTH_FRACTION = 0.675   # ~65-70% of host width
 _SELECTOR_WIDTH_MIN = 800
-_SELECTOR_WIDTH_MAX = 1100
+_SELECTOR_WIDTH_MAX = 1280
 _SELECTOR_HEIGHT_FRACTION = 0.775  # ~75-80% of host height
 _SELECTOR_HEIGHT_MIN = 460
+#: HEIGHT NEEDS A CEILING FOR THE SAME REASON WIDTH ALWAYS HAD ONE, and it
+#: was missing. The width band stops a panel going pocket-sized or ultrawide;
+#: height was an unbounded fraction, so on a 2160px-tall display the same
+#: dialog opened 1674px tall — a list of eight rows and a button bar,
+#: stretched down a panel two-thirds of which is empty. That is the
+#: "massive dead space when maximized" complaint in its purest form, and it
+#: only appears on the displays nobody develops on. 900 is the height at
+#: which the tallest responsive dialog (the Startup Manager) shows its full
+#: list without scrolling; past that a panel is only buying margin.
+_SELECTOR_HEIGHT_MAX = 900
 
 
 def _resolve_host_window(dialog: QDialog) -> QWidget | None:
@@ -703,14 +713,20 @@ def _selector_panel_size(dialog: QDialog) -> tuple[int, int]:
     The content floor wins over BOTH ends of the band: over the minimum for
     the reason in _content_width_floor, and over the maximum because a
     ceiling that clipped content would be choosing empty margins over
-    legibility."""
+    legibility.
+
+    BOTH dimensions are banded. Height used to be a bare fraction with only
+    a floor, which is fine up to about 1440p and turns into a half-empty
+    2/3-screen panel on a 4K display — see _SELECTOR_HEIGHT_MAX."""
     floor = max(_SELECTOR_WIDTH_MIN, _content_width_floor(dialog))
     host = _resolve_host_window(dialog)
     if host is None:
         return (floor, _SELECTOR_HEIGHT_MIN)
     width = max(floor,
                 min(_SELECTOR_WIDTH_MAX, round(host.width() * _SELECTOR_WIDTH_FRACTION)))
-    height = max(_SELECTOR_HEIGHT_MIN, round(host.height() * _SELECTOR_HEIGHT_FRACTION))
+    height = max(_SELECTOR_HEIGHT_MIN,
+                 min(_SELECTOR_HEIGHT_MAX,
+                     round(host.height() * _SELECTOR_HEIGHT_FRACTION)))
     return (width, height)
 
 
@@ -1136,7 +1152,9 @@ class NavButton(QPushButton):
     glyph comes from theme.GLYPHS via a semantic key, so the whole sidebar
     reads as one coherent line-icon system instead of mismatched emoji."""
 
-    _PLAQUE = 30       # plaque edge (px)
+    #: Plaque edge, from the app-wide scale — the card's icon well is the
+    #: same object at the same size (see theme.PLAQUE_SIZE).
+    _PLAQUE = TH.PLAQUE_SIZE
     _PLAQUE_X = 12     # left inset — must stay in sync with nav_button_qss padding
 
     def __init__(self, glyph_key: str, title: str, accent_key: str, t: dict):
@@ -1209,8 +1227,8 @@ class NavButton(QPushButton):
         object seen twice, which is most of what "cohesion" means here.
 
         The nav plaque keeps its own SELECTED state (the card has no such
-        thing), and its own lighter tint: at 30px on the rail's panel tier
-        the card's 0.24 wash reads as a solid colour chip.
+        thing), and its own lighter tint: on the rail's panel tier the
+        card's 0.24 wash reads as a solid colour chip.
         """
         selected = bool(self.property("selected"))
         y = (self.height() - self._PLAQUE) / 2.0
@@ -1860,7 +1878,11 @@ class GlassCard(QFrame):
 
     _ICON_BASE_PX = 21
     _ICON_GROW_PX = 2   # subtle hover "pop" — see _sync_icon_scale()
-    _PLAQUE = 42        # icon plaque footprint (v9.1: tighter, denser card)
+    #: Icon plaque FOOTPRINT — the widget, not the well. IconPlaque
+    #: reserves _PAD on each side for its halo to bleed into, so the well
+    #: it actually paints measures theme.PLAQUE_SIZE, which is what the
+    #: sidebar entry for the same module paints too.
+    _PLAQUE = TH.PLAQUE_SIZE + 2 * IconPlaque._PAD
 
     # Height envelope, DERIVED from the card's anatomy rather than guessed.
     # With the v11 SYMMETRIC padding (16 on all four sides — see the layout
@@ -2656,14 +2678,31 @@ class _AmbientSimulation:
     #: maximum is GAIN/2 ~ 2%). Set to 0.0 to neuter the behaviour.
     _POINTER_GAIN = 0.04
 
-    #: Orb peak alpha, per theme. LIGHT IS A WHISPER and must stay one:
-    #: measured off a real render, the v10 peaks dragged the canvas to a
-    #: visible lavender (#ECEAF4) where the palette specifies the neutral
-    #: system grey #F2F2F7. tests/test_ambient.py pins this at <= 6.0 mean
-    #: channel spread; the regression that shipped twice measures ~10.4.
+    #: Orb peak alpha, per theme. NEITHER MODE MAY DYE ITS CANVAS: the
+    #: wash shades the base colour, it does not replace it.
+    #:
+    #: LIGHT IS A WHISPER and must stay one — measured off a real render,
+    #: the v10 peaks dragged the page to a visible lavender (#ECEAF4) where
+    #: the palette specifies a neutral system grey.
+    #:
+    #: DARK COMES DOWN 40% IN v14, and the reason is that the surfaces
+    #: underneath it moved. The old peaks were solved against a content
+    #: well that was 45% NEAR-BLACK, so the frame the wash showed through
+    #: subtracted from it; the obsidian palette raises that well to a
+    #: #121417 container and the same wash now lands on a base ~11 levels
+    #: lighter, over the whole content area. Measured on a real render, the
+    #: v13 peaks took the jet #090A0B canvas to #1A1D25 in the orb cores —
+    #: which is precisely the "muddy navy-tinted grey" the obsidian pass
+    #: exists to remove, arrived at from the ambient layer rather than from
+    #: the palette. At 0.6x the field is still unmistakably alive (peak
+    #: channel 32 against the canvas's 11) and the base reads as jet.
+    #:
+    #: Both modes are pinned by test_ambient's wash-neutrality test at
+    #: <= 6.0 mean channel spread: light measures ~3.9, dark ~3.2, and the
+    #: regression that shipped the lavender canvas twice measures ~10.4.
     _ORB_PEAKS = {
         "light": (0.055, 0.05, 0.045, 0.035, 0.03),
-        "dark":  (0.17, 0.12, 0.11, 0.095, 0.085),
+        "dark":  (0.102, 0.072, 0.066, 0.057, 0.051),
     }
 
     def __init__(self, gl: bool = False):
@@ -6180,107 +6219,95 @@ class StatePill(QLabel):
 
 
 # ============================================================
-#  UPDATE PILL — self-update status chip (Activity rail)
+#  UPDATE BADGE — self-update status chip (sidebar footer)
 # ============================================================
-class UpdatePill(QPushButton):
+class UpdateBadge(QPushButton):
     """CHECKING / UP TO DATE / UPDATE READY — the self-updater's status,
     and its manual entry point.
 
-    A QPushButton because it is CLICKABLE in every state: 'available'
-    opens the update dialog, anything else re-checks. Styled entirely by
-    theme.update_pill_qss through the dynamic `state` property — the same
-    repolish mechanic StatePill uses, so a transition never rebuilds QSS
-    and nothing here runs off a timer.
+    A QPushButton because it is CLICKABLE in every state it shows in:
+    'available' opens the update dialog, anything else re-checks. Styled
+    entirely by theme.update_badge_qss through the dynamic `state`
+    property — the same repolish mechanic StatePill uses, so a transition
+    never rebuilds QSS and nothing here runs off a timer.
 
-    Before this the updater's only persistent surface was the sidebar
-    footer, which appended '· Update available' to its own identity line at
-    the app's quietest type role. See update_pill_qss for the measurement
-    that motivated moving it.
+    IT SHOWS ONLY WHEN IT HAS SOMETHING ACTIONABLE TO SAY. v14 moved this
+    off the Activity rail (where it was one of seven controls competing
+    with the running task the rail exists to report) and into the sidebar
+    footer, directly above the identity line that was already the manual
+    "check for updates" trigger — so the answer and the control are one
+    place instead of two that have to agree.
 
-    TWO LAYOUT PROPERTIES, both deliberate, because this lands in a rail
-    that already carries six other controls:
+    The visibility rule is the whole point of the move, and it is a rule
+    about WHAT IS WORTH A PERMANENT SURFACE:
 
-      * It is the LEFTMOST item of the rail's right-packed cluster (it goes
-        in directly after the stretch). Items to the right of a stretch
-        keep their distance from the right edge, so this appearing for the
-        first time grows the cluster leftward into the stretch and moves
-        'LIVE OUTPUT', the state pill, the tools and the chevron by zero
-        pixels.
+      * `available` — shown. This is the app's most actionable
+        notification and it must stay findable after its toast has gone.
+      * `checking`  — shown only for a check the USER asked for. A silent
+        launch check that pops a chip into the rail is the app talking
+        about itself for no reason.
+      * `current`   — hidden. "Nothing is wrong" is reported by a toast on
+        the manual path and by silence otherwise; a chip that permanently
+        says nothing is happening is chrome, which is exactly what this
+        pass is removing.
 
-      * Its width is LOCKED to the widest label it can ever show, so the
-        three states cannot jitter its own left edge either. Derived from
-        fontMetrics() rather than hardcoded: the QSS sets 9px on Segoe UI,
-        but the real advance depends on DPI scaling and on what the font
-        actually falls back to, and a literal here would clip on the first
-        machine that disagreed. Recomputed once per theme apply.
-
-    AND IT STANDS DOWN WHILE A TASK IS RUNNING (set_busy, driven by
-    ActivityDrawer.set_running). That is a measurement before it is a
-    preference. At the window's minimum width the rail is handed ~608px
-    and its six existing controls need ~509; this chip fits in what is
-    left, but a running task also reveals the 112px Stop button, and the
-    three together do not. Something would have to be squeezed, and a
-    QLabel squeezed below its hint does not elide, it CLIPS.
-
-    The pill is the right thing to yield, not the loser of an arbitrary
-    tiebreak: while a task runs, the rail's whole job is reporting THAT
-    task, and this chip is not even actionable — main._open_update_dialog
-    already refuses to start an install mid-run (the _busy() guard) and
-    tells the user to wait. Suppressing it removes a control that could
-    not have been used anyway, and hands the rail back the width its
-    actual job needs.
+    AND IT STANDS DOWN WHILE A TASK RUNS (set_busy, driven by
+    main.PulseApp._set_busy_ui). Not for width now that it has left the
+    rail, but because it is not actionable mid-run:
+    main._open_update_dialog already refuses to start an install while the
+    engine is mutating the machine (the _busy() guard) and tells the user
+    to wait. Suppressing it removes a control that could not have been
+    used anyway.
     """
 
-    #: Terse on purpose, and the terseness is a MEASUREMENT. The rail is
-    #: handed ~608px at the window's minimum width and the six controls
-    #: already there need ~509 of it, so this chip has under 100px to live
-    #: in. "↑ UPDATE READY" locked the width at 114 and overflowed;
-    #: single-spaced, with the CTA cut to one word, it locks at 95. The
-    #: sentence-length version of each answer lives in the tooltip, which
-    #: costs no rail.
+    #: Terse on purpose. The badge is a full-width chip in a ~200px rail,
+    #: so it has room the rail never had — but the sentence-length version
+    #: of each answer still lives in the tooltip, which costs no layout.
     TEXTS = {
         "idle":      "—",
         "checking":  "● CHECKING…",
         "current":   "✓ UP TO DATE",
-        "available": "↑ UPDATE",
+        "available": "↑ UPDATE READY",
     }
+
+    #: The states that earn a permanent surface — see the class docstring.
+    #: 'checking' is conditional on the check being user-initiated, which
+    #: set_state is told; 'current' never shows.
+    _VISIBLE_STATES = ("available", "checking")
 
     #: Horizontal padding + the 1px ring, both from the QSS, plus 2px of
     #: slack so the last glyph's letter-spacing cannot clip. Derived from
-    #: TH.CHIP_PAD_H rather than restating it: this constant carried a bare
-    #: `8` that nothing tied back to the sheet, so a padding change in
-    #: theme.py would have silently clipped the rail's only status control.
+    #: TH.CHIP_PAD_H rather than restating it, so a padding change in
+    #: theme.py cannot silently clip the badge.
     _WIDTH_CHROME = 2 * TH.CHIP_PAD_H + 2 * 1 + 2
 
     def __init__(self, t: dict, parent: QWidget | None = None):
         super().__init__(self.TEXTS["checking"], parent)
-        self.setObjectName("updatePill")
+        self.setObjectName("updateBadge")
         self.setProperty("state", "checking")
-        self.setFixedHeight(22)          # StatePill's height — one rail, one chip
+        self.setFixedHeight(24)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Chrome, not content: the rail's chips must not join a page's
-        # arrow-key traversal or pull focus off it — the same call the
-        # drawer's own toolbar buttons and the sidebar footer make.
+        # Chrome, not content: the sidebar's footer controls must not join
+        # a page's arrow-key traversal or pull focus off it — the same call
+        # the identity line beneath it makes.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # Hidden until the first check has something to say. Showing it
-        # costs no reflow (see the class docstring), so there is no reason
-        # to park a placeholder in the rail before then.
-        self._reported = False   # a check has resolved at least once
+        self._state = "idle"
+        self._loud = False       # this state has earned the surface
         self._busy = False       # a task is running; stand down
         self._sheen: tuple[int, float] | None = None
         self.hide()
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
-        self.setStyleSheet(TH.update_pill_qss(t))
+        self.setStyleSheet(TH.update_badge_qss(t))
         self._sheen = TH.chip_sheen(t)
         self._lock_width()
         self.update()
 
     def paintEvent(self, e):
         """The same frosted rim StatusChip wears, for the same reason: this
-        pill and a card's verdict badge are one object on two surfaces (see
-        update_pill_qss), so they have to catch light identically. Painted
+        badge and a card's verdict badge are one object on two surfaces (see
+        update_badge_qss), so they have to catch light identically. Painted
         rather than declared because a QSS border is one flat colour on all
         four sides."""
         super().paintEvent(e)
@@ -6293,32 +6320,36 @@ class UpdatePill(QPushButton):
         p.end()
 
     def _lock_width(self):
-        """Pin the width to the widest label. ensurePolished() first: the
+        """Pin the MINIMUM width to the widest label, so the three states
+        cannot jitter the sidebar's width. ensurePolished() first: the
         font-size lives in the stylesheet, so fontMetrics() reports the
         default UI font until the style has been applied."""
         self.ensurePolished()
         fm = self.fontMetrics()
         widest = max(fm.horizontalAdvance(text) for text in self.TEXTS.values())
-        self.setFixedWidth(widest + self._WIDTH_CHROME)
+        self.setMinimumWidth(widest + self._WIDTH_CHROME)
 
-    def set_state(self, state: str, tooltip: str = ""):
+    def set_state(self, state: str, tooltip: str = "", loud: bool = True):
+        """`loud=False` marks a check the user did not ask for — the silent
+        launch probe — so a 'checking' it produces stays off screen. The
+        answer it eventually reports is judged on its own merits."""
         self.setText(self.TEXTS.get(state, state.upper()))
         self.setProperty("state", state)
         self.setToolTip(tooltip)
         self.style().unpolish(self)
         self.style().polish(self)
-        self._reported = True
+        self._state = state
+        self._loud = loud or state == "available"
         self._sync_visibility()
 
     def set_busy(self, busy: bool):
-        """Stand down while a task runs — see the class docstring for the
-        width measurement that forces this, and why this is the control
-        that yields."""
+        """Stand down while a task runs — see the class docstring."""
         self._busy = busy
         self._sync_visibility()
 
     def _sync_visibility(self):
-        self.setVisible(self._reported and not self._busy)
+        self.setVisible(self._state in self._VISIBLE_STATES
+                        and self._loud and not self._busy)
 
 
 # ============================================================
@@ -6448,8 +6479,8 @@ class ActivityDrawer(QWidget):
     """The v7 replacement for the always-open 170px console block — the
     single biggest spatial win of the redesign.
 
-    A slim 44px 'rail' (status dot · LIVE OUTPUT · state pill · Stop · a
-    pin/expand chevron) is always visible; the heavy console + shimmer live
+    A slim 44px 'rail' (status dot · status text · Stop · a pin/expand
+    chevron) is always visible; the heavy console + shimmer live
     in a BODY that is collapsed to zero height while idle and animates open
     the instant a task runs (set_running(True)), then animates shut again
     when it finishes — handing ~140px of vertical canvas back to the card
@@ -6461,7 +6492,19 @@ class ActivityDrawer(QWidget):
     reaches the console / state pill / stop button / shimmer / status dot as
     plain attributes, so the existing task pipeline wires to them unchanged."""
 
-    BODY_H = 186   # console (172) + spacing (8) + shimmer (6)
+    #: OPENING HEIGHT OF LAST RESORT. The drawer animates to whatever its
+    #: body's own layout asks for (see _body_height); this is only what it
+    #: falls back to before that layout has resolved — at construction, for
+    #: a drawer restored pinned.
+    #:
+    #: It used to be the real number, and the v14 declutter is what made
+    #: that untenable: moving the console's header row down off the rail
+    #: changed the body's true height, and a literal that no longer matches
+    #: does not fail, it opens the drawer 18px taller than its contents and
+    #: leaves an empty strip under the shimmer — an "empty dead zone" of
+    #: exactly the kind this pass exists to remove, produced by the pass
+    #: itself. Derived, it cannot drift again.
+    BODY_H = 224
     ANIM_MS = 200
 
     # Emitted on every frame of the open/close animation so anything
@@ -6489,30 +6532,46 @@ class ActivityDrawer(QWidget):
         outer.setSpacing(TH.SPACE["sm"])
 
         # -- always-visible rail ------------------------------
+        # v14 STRIPPED IT TO TWO THINGS. The rail shipped carrying seven
+        # controls — status dot, status text, update chip, "LIVE OUTPUT",
+        # the state pill, four icon tools, the pin chevron and a size grip
+        # — every one of them permanently on screen so that the collapsed
+        # drawer, whose entire purpose is handing canvas back to the grid,
+        # was itself the busiest strip in the window.
+        #
+        # What stays is what a COLLAPSED drawer can honestly report: the
+        # system's own state, and the way in. Everything that describes the
+        # OUTPUT moved into the body (below), where the output is; the
+        # update chip moved to the sidebar footer beside the control that
+        # triggers it (see UpdateBadge); the size grip went entirely, since
+        # the window owns a real Win32 sizing frame on every edge and
+        # corner (theme.enable_native_sizing_frame).
         self._rail = QFrame()
         self._rail.setObjectName("activityRail")
         self._rail.setFixedHeight(44)
         rail = QHBoxLayout(self._rail)
-        rail.setContentsMargins(TH.SPACE["lg"], 0, TH.SPACE["sm"], 0)
-        rail.setSpacing(TH.SPACE["md"])
+        rail.setContentsMargins(TH.SPACE["lg"], 0, TH.SPACE["md"], 0)
+        rail.setSpacing(TH.SPACE["sm"])
 
         self.status_dot = StatusDot("●")
         self.status_dot.setFixedWidth(12)
         rail.addWidget(self.status_dot)
-        self.status_text = QLabel("System Ready")
-        rail.addWidget(self.status_text)
-        rail.addStretch()
-
-        # Directly after the stretch, so it is the LEFTMOST item of the
-        # right-packed cluster: it can appear, and change label, without
-        # moving anything already standing to its right. See UpdatePill.
-        self.update_pill = UpdatePill(t)
-        rail.addWidget(self.update_pill)
-
-        self._console_label = QLabel("LIVE OUTPUT")
-        rail.addWidget(self._console_label)
-        self.state_pill = StatePill(t)
-        rail.addWidget(self.state_pill)
+        # The rail's one elastic item, and an ElidedCaption rather than a
+        # QLabel for the reason that class exists: a long status line
+        # ("Playbook: Full Machine Baseline …") must degrade to an ellipsis
+        # in the room it actually has, not become a floor the rail is
+        # obliged to honour. A plain QLabel adds its full text width to the
+        # rail's minimum, which is half of why the old nine-control rail
+        # needed 621px at a window that hands it ~608 — and a QLabel
+        # squeezed below its hint does not elide, it CLIPS.
+        #
+        # The ceiling is generous (this is the widest thing on the rail, not
+        # a card-footer pill); main._set_status puts the untruncated line in
+        # the tooltip, which is the contract every ElidedCaption caller
+        # owes its own text.
+        self.status_text = ElidedCaption(max_width=420)
+        self.status_text.setFullText("System Ready")
+        rail.addWidget(self.status_text, 1)
 
         self.stop_btn = QPushButton("■  Stop Task")
         self.stop_btn.setFixedSize(112, 26)
@@ -6524,13 +6583,46 @@ class ActivityDrawer(QWidget):
         self.stop_btn.hide()
         rail.addWidget(self.stop_btn)
 
+        self._toggle = QPushButton(TH.glyph("chevron")[0])
+        self._toggle.setCheckable(True)
+        self._toggle.setFixedSize(28, 28)
+        self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._toggle.setToolTip("Pin the live output open")
+        tf = TH.icon_font(13) if TH.glyph("chevron")[1] else None
+        if tf is not None:
+            self._toggle.setFont(tf)
+        self._toggle.toggled.connect(self._on_toggle)
+        rail.addWidget(self._toggle)
+        outer.addWidget(self._rail)
+
+        # -- collapsible body ---------------------------------
+        self._body = QWidget()
+        body = QVBoxLayout(self._body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(TH.SPACE["sm"])
+
+        # Body header: what the output IS, what state it is in, and what
+        # can be done with it. All three describe the console, so all three
+        # live with the console rather than on the rail that survives it
+        # being closed — a "clear the output" button beside a collapsed
+        # drawer acts on something the user cannot see.
+        head = QHBoxLayout()
+        head.setContentsMargins(TH.SPACE["xs"], 0, TH.SPACE["xs"], 0)
+        head.setSpacing(TH.SPACE["sm"])
+        self._console_label = QLabel("LIVE OUTPUT")
+        head.addWidget(self._console_label)
+        self.state_pill = StatePill(t)
+        head.addWidget(self.state_pill)
+        head.addStretch()
+
         # -- v10 output actions -------------------------------
         # Live output was previously a dead end: you could watch it scroll
         # past and nothing else. These four turn it into something you can
         # actually take away — copy it into a bug report, save it beside a
         # failed run, clear it before a fresh attempt, or drop the
         # timestamp gutter when pasting somewhere narrow. Icon-only ghost
-        # buttons so the rail stays quiet.
+        # buttons so the header stays quiet.
         self._tools: list[QPushButton] = []
 
         def tool(glyph_key: str, tip: str, slot, checkable: bool = False):
@@ -6545,7 +6637,7 @@ class ActivityDrawer(QWidget):
             if font is not None:
                 btn.setFont(font)
             btn.clicked.connect(slot)
-            rail.addWidget(btn)
+            head.addWidget(btn)
             self._tools.append(btn)
             return btn
 
@@ -6555,28 +6647,8 @@ class ActivityDrawer(QWidget):
         tool("copy", "Copy all output to the clipboard", self._copy_output)
         tool("export", "Save the output to a file…", self._export_output)
         tool("clear", "Clear the output", self._clear_output)
+        body.addLayout(head)
 
-        self._toggle = QPushButton(TH.glyph("chevron")[0])
-        self._toggle.setCheckable(True)
-        self._toggle.setFixedSize(28, 28)
-        self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._toggle.setToolTip("Pin the live output open")
-        tf = TH.icon_font(13) if TH.glyph("chevron")[1] else None
-        if tf is not None:
-            self._toggle.setFont(tf)
-        self._toggle.toggled.connect(self._on_toggle)
-        rail.addWidget(self._toggle)
-
-        self._grip = QSizeGrip(self._rail)
-        self._grip.setFixedSize(14, 14)
-        rail.addWidget(self._grip, 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
-        outer.addWidget(self._rail)
-
-        # -- collapsible body ---------------------------------
-        self._body = QWidget()
-        body = QVBoxLayout(self._body)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(TH.SPACE["sm"])
         self.console = LiveConsole(t)
         self.console.setFixedHeight(172)
         body.addWidget(self.console)
@@ -6586,7 +6658,7 @@ class ActivityDrawer(QWidget):
 
         # Start collapsed (idle) — the whole point of the drawer — unless
         # the user pinned it open in a previous session (v10 persistence).
-        self._body.setMaximumHeight(self.BODY_H if pinned else 0)
+        self._body.setMaximumHeight(self._body_height() if pinned else 0)
         self._body.setVisible(pinned)
         if pinned:
             self._toggle.setChecked(True)
@@ -6657,7 +6729,6 @@ class ActivityDrawer(QWidget):
             btn.setStyleSheet(TH.activity_toggle_qss(t))
         self.status_text.setStyleSheet(TH.label_qss(t, "status"))
         self.state_pill.apply_theme(t)
-        self.update_pill.apply_theme(t)
         self.stop_btn.setStyleSheet(TH.stop_button_qss(t))
         self._toggle.setStyleSheet(TH.activity_toggle_qss(t))
         self.console.apply_theme(t)
@@ -6677,8 +6748,19 @@ class ActivityDrawer(QWidget):
         if self._body.maximumHeight() == 0:
             self._body.setVisible(False)
 
+    def _body_height(self) -> int:
+        """Exactly as tall as the console block wants to be.
+
+        Asked fresh on every open rather than cached: the body's contents
+        are fixed-height, but the header row's own hint depends on the
+        icon font Qt actually resolved and on the DPI it resolved it at,
+        neither of which is known when the class is defined.
+        """
+        hint = self._body.sizeHint().height()
+        return hint if hint > 0 else self.BODY_H
+
     def _open(self):
-        self._animate_to(self.BODY_H)
+        self._animate_to(self._body_height())
 
     def _close(self):
         self._animate_to(0)
@@ -6717,10 +6799,6 @@ class ActivityDrawer(QWidget):
         is the complaint this whole pairing answers.
         """
         self._active = running
-        # The rail cannot carry the update chip AND the Stop button at the
-        # window's minimum width (see UpdatePill's docstring for the
-        # measurement); while a task owns the rail, the chip stands down.
-        self.update_pill.set_busy(running)
         if running:
             self._open()
             return
@@ -9327,7 +9405,7 @@ class StartupManagerDialog(PulseDialog):
         lay.addWidget(self._filter_note)
 
         self._optimize_btn = QPushButton("⚡  Optimize Startup")
-        self._optimize_btn.setFixedHeight(38)
+        self._optimize_btn.setFixedHeight(TH.CONTROL_H)
         self._optimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._optimize_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._optimize_btn.setToolTip(

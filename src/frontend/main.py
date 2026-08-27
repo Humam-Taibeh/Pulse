@@ -37,12 +37,12 @@ from PySide6.QtCore import (
     QTimer, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QKeySequence, QPalette, QShortcut,
+    QFont, QIcon, QKeySequence, QPalette, QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect,
     QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 # Allow "from utils.helpers import ..." / "from frontend import ..." when
@@ -79,7 +79,7 @@ from frontend.widgets import (  # noqa: E402
     ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
     SoftwareCatalogDialog,
     StartupManagerDialog, StorageAnalyzerDialog, TitleBar,
-    ToolInstallWizardDialog, UpdateCenterDialog,
+    ToolInstallWizardDialog, UpdateBadge, UpdateCenterDialog,
     refit_dialog,
 )
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
@@ -341,7 +341,20 @@ class WelcomePage(QWidget):
     #: resolves to two columns and scrolls, which is correct: at 620px tall
     #: no arrangement of six cards fits, and scrolling beats crushing.
     ACTION_MIN_W = 224
-    ACTION_MAX_COLS = 3
+    #: v14: 3 -> 6, GOVERNED BY THE EVEN-SPLIT RULE BELOW rather than used
+    #: raw. A fixed 3 is the right composition for six actions at any width
+    #: the app is normally opened at, and the wrong one from about 1440p
+    #: up, where three columns stretch each quick action past 500px and the
+    #: dashboard reads as six placards instead of a launcher. Six is the
+    #: other composition that is actually balanced — one full row.
+    ACTION_MAX_COLS = 6
+
+    #: Ceiling on the air between the masthead and the QUICK ACTIONS header
+    #: — see the note where it is spent. One section break (SPACE["xxl"])
+    #: plus a card gutter: enough that the block is not welded to the
+    #: banner, short enough that the header still reads as belonging to the
+    #: page rather than floating in the middle of it.
+    ACTION_TOP_AIR = TH.SPACE["xxl"] + TH.SPACE["xl"]
 
     #: Width the masthead tagline may ask for before it starts eliding.
     #: MEASURED as the natural width of the tagline set below, at the
@@ -489,13 +502,35 @@ class WelcomePage(QWidget):
         host = QVBoxLayout(grid_host)
         host.setContentsMargins(0, 0, 0, 0)
         host.setSpacing(0)
-        # 1:2, not 1:1. True centring puts ~200px between the masthead and
-        # the section it introduces, and a gap that size reads as a missing
-        # element rather than as margin — the eye looks for what used to be
-        # there. Slack below the last card has no such problem: it is the
-        # page's bottom margin, closed by the footer rule. So the block
-        # sits high, with a third of the air above it and two thirds below.
-        host.addStretch(1)
+        # A STRETCH WITH A CEILING, which is the only shape that holds at
+        # every canvas height.
+        #
+        # The rule this replaces was 1:2 — a third of the air above the
+        # block, two thirds below — chosen because true centring puts ~200px
+        # between the masthead and the section it introduces, and a gap that
+        # size reads as a missing element rather than as margin: the eye
+        # looks for what used to be there. But a PROPORTION cannot hold a
+        # gap; it only holds a ratio. The moment v14's column ceiling let
+        # the six actions collapse from two rows to one, the block lost
+        # ~180px of its own height, a third of that went straight back into
+        # the top gap, and the ratio dutifully reproduced the exact ~190px
+        # void it was introduced to prevent.
+        #
+        # Stated as a bound instead, it cannot drift: the air above grows
+        # with the canvas up to a section break's worth and then stops, so
+        # the header stays with the masthead at every size, and everything
+        # left over falls below the last card — where it is the page's
+        # bottom margin, closed by the footer rule.
+        top_air = QWidget()
+        top_air.setSizePolicy(QSizePolicy.Policy.Minimum,
+                              QSizePolicy.Policy.Expanding)
+        top_air.setMaximumHeight(self.ACTION_TOP_AIR)
+        # Stretch factor 1, NOT the default 0. An Expanding size policy only
+        # says a widget is WILLING to grow; a QBoxLayout hands its surplus
+        # to items with a stretch factor first, so next to the addStretch
+        # below this stayed at its zero sizeHint and welded the header to
+        # the masthead — the opposite failure, reached in one line.
+        host.addWidget(top_air, 1)
 
         head = QHBoxLayout()
         head.setSpacing(TH.SPACE["lg"])
@@ -514,7 +549,7 @@ class WelcomePage(QWidget):
         self._grid.setContentsMargins(0, TH.SPACE["xl"], 0, 0)
         self._grid.setSpacing(TH.SPACE["xl"])
         host.addLayout(self._grid)
-        host.addStretch(2)
+        host.addStretch(1)
         # the grid re-columns off its OWN width — see ResponsiveGridHost
         grid_host.resized.connect(
             lambda w: self._relayout_actions(self._columns_for(w)))
@@ -645,7 +680,27 @@ class WelcomePage(QWidget):
         widest = max((c.minimumSizeHint().width() for c in self._action_cards),
                      default=self.ACTION_MIN_W)
         unit = max(self.ACTION_MIN_W, widest)
-        return max(1, min(self.ACTION_MAX_COLS, (width + gap) // (unit + gap)))
+        fits = max(1, min(self.ACTION_MAX_COLS, (width + gap) // (unit + gap)))
+        return self._even_split(fits)
+
+    def _even_split(self, fits: int) -> int:
+        """The largest column count <= `fits` that divides the action count
+        exactly — so the launcher is always a full rectangle.
+
+        A category grid can end a row short without anyone noticing; six
+        cards is a COMPOSITION, and 4 columns leaves 4 + 2 with two orphans
+        sitting under a full row, which reads as a layout that ran out
+        rather than one that was designed. Six actions therefore lay out at
+        1, 2, 3 or 6 across and never at 4 or 5 — the widths between those
+        steps buy air around the cards instead of a broken last row.
+        """
+        n = len(self._action_cards)
+        if n <= 0:
+            return max(1, fits)
+        for cols in range(min(fits, n), 0, -1):
+            if n % cols == 0:
+                return cols
+        return 1
 
     def _relayout_actions(self, cols: int):
         if cols == self._cols:
@@ -709,7 +764,18 @@ class CategoryPage(QWidget):
     gets 3 columns; a small floating window falls back to a single,
     fully-readable column."""
 
-    MAX_COLUMNS = 4
+    #: v14: 4 -> 6, and the number is a measurement of the displays this
+    #: app actually runs on rather than a preference. The grid stretches
+    #: its columns equally, so the ceiling is what decides how wide a card
+    #: gets on a big screen — and at 4 columns a maximised 4K window handed
+    #: every card ~860px. A 156px-tall card 860px wide is not a denser
+    #: layout, it is the same 14 cards with 500px of empty plate each,
+    #: which is exactly the "massive dead space when maximized" the
+    #: redesign calls out. Six columns land those same cards at ~570px, and
+    #: nothing below 1440p is affected at all: the width floor still
+    #: decides everywhere else (1080p maximised resolves to 5, the default
+    #: window to 3, the minimum window to 2).
+    MAX_COLUMNS = 6
     MIN_CARD_W = 288   # v9.1: tighter cards → more columns, higher density
 
     # SPARSE MODE — pages with this many cards or fewer trade the
@@ -1591,7 +1657,7 @@ class PulseApp(QMainWindow):
         # discoverability (a keyboard-only affordance is invisible to
         # anyone who hasn't read the shortcut sheet).
         self._search_btn = QPushButton("🔍  Search everything…")
-        self._search_btn.setFixedHeight(36)
+        self._search_btn.setFixedHeight(TH.CONTROL_H)
         self._search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._search_btn.setToolTip(
             "Search every app, tweak and tool  (Ctrl+K)")
@@ -1640,12 +1706,12 @@ class PulseApp(QMainWindow):
         self._admin_chip: QLabel | None = None
         if self.is_admin:
             self._admin_chip = QLabel("🛡  Administrator")
-            self._admin_chip.setFixedHeight(42)
+            self._admin_chip.setFixedHeight(TH.CONTROL_H)
             self._admin_chip.setAlignment(Qt.AlignmentFlag.AlignVCenter)
             side.addWidget(self._admin_chip)
         else:
             self._elevate_btn = QPushButton("🛡  Run as Administrator")
-            self._elevate_btn.setFixedHeight(42)
+            self._elevate_btn.setFixedHeight(TH.CONTROL_H)
             self._elevate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._elevate_btn.setToolTip(
                 "Some system-level actions need Administrator rights. "
@@ -1661,10 +1727,15 @@ class PulseApp(QMainWindow):
         # background check already found. setFlat + sidebar_version_qss
         # keep it looking exactly like the plain caption it replaced.
         #
-        # v12.1: it no longer REPORTS the answer. Update status moved to
-        # the Activity rail's UpdatePill, which is toned and legible at
-        # rest; this line is identity plus a second way in. The two share
-        # _on_footer_clicked, so both honour the same in-flight guards.
+        # v12.1: it no longer REPORTS the answer, and v14 brought the
+        # surface that does back to sit directly on top of it. The badge
+        # (widgets.UpdateBadge) is toned and legible at rest, and shows only
+        # when it has something actionable to say; this line is identity
+        # plus the way in. Both share _on_footer_clicked, so they honour the
+        # same in-flight and pending-update guards.
+        self.update_badge = UpdateBadge(t)
+        self.update_badge.clicked.connect(self._on_footer_clicked)
+        side.addWidget(self.update_badge)
         self._side_footer = QPushButton(f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}")
         self._side_footer.setFlat(True)
         self._side_footer.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1716,13 +1787,6 @@ class PulseApp(QMainWindow):
         self.shimmer = self.activity.shimmer
         self.status_dot = self.activity.status_dot
         self.status_text = self.activity.status_text
-        # The self-updater's status surface and its manual entry point.
-        # Shares _on_footer_clicked with the sidebar footer rather than
-        # carrying a second copy of that logic: the "already checking" and
-        # "already have an update in hand" guards must hold no matter which
-        # of the two the user reaches for.
-        self.update_pill = self.activity.update_pill
-        self.update_pill.clicked.connect(self._on_footer_clicked)
 
         body.addWidget(self._content, 1)
         self.toasts = ToastManager(self._shell, t)
@@ -1740,13 +1804,22 @@ class PulseApp(QMainWindow):
     #  LIVE THEME PIPELINE
     # ============================================================
     def _apply_theme(self, t: dict):
-        # Paint the window's own background in the theme's canvas colour.
+        # Paint the window's own background with the SHELL'S OWN GRADIENT.
         # During a live resize Windows exposes the newly-revealed strip
-        # before Qt has repainted the shell into it; without an opaque
-        # themed base that strip flashes the default palette grey, which
-        # reads as tearing along the edge being dragged.
+        # before Qt has repainted the shell into it, and what sits there in
+        # the meantime is what tears along the edge being dragged: raw
+        # black, because Qt registers its window class with a NULL
+        # background brush.
+        #
+        # A flat `bg_grad_bottom` fill fixed the black and left a
+        # MISMATCHED BAND in its place — a solid colour cannot follow a
+        # gradient, so the strip read as a broken border instead of as lag.
+        # theme.canvas_brush hands back an object-bounding gradient, which
+        # rescales to whatever rect it fills, so the window underneath and
+        # the shell on top are painting the same ramp at every size the
+        # drag passes through and there is nothing left to mismatch.
         pal = self.palette()
-        pal.setColor(QPalette.ColorRole.Window, QColor(t["bg_grad_bottom"]))
+        pal.setBrush(QPalette.ColorRole.Window, TH.canvas_brush(t))
         self.setPalette(pal)
         self.setAutoFillBackground(True)
         self._shell.setStyleSheet(TH.shell_qss(t))
@@ -1760,6 +1833,7 @@ class PulseApp(QMainWindow):
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
         self._side_footer.setStyleSheet(TH.sidebar_version_qss(t))
+        self.update_badge.apply_theme(t)
         if self._elevate_btn is not None:
             self._elevate_btn.setStyleSheet(TH.elevate_button_qss(t))
         if self._admin_chip is not None:
@@ -1772,7 +1846,7 @@ class PulseApp(QMainWindow):
             page.apply_theme(t)
         self.activity.apply_theme(t)
         self.toasts.apply_theme(t)
-        self._set_status(self._status_state, self.status_text.text())
+        self._set_status(self._status_state, self.status_text.fullText())
 
     def _toggle_theme_animated(self):
         """Theme switch with a 220ms cross-fade: a snapshot of the old look
@@ -1812,7 +1886,12 @@ class PulseApp(QMainWindow):
         else:
             self.status_dot.stop_pulse()
         if text is not None:
-            self.status_text.setText(text)
+            # The rail's status line elides (widgets.ElidedCaption), so the
+            # untruncated sentence has to live somewhere — a squeezed rail
+            # otherwise reports "Executing: Remove Pre-installed Blo…" with
+            # no way to read the rest.
+            self.status_text.setFullText(text)
+            self.status_text.setToolTip(text)
 
     # ============================================================
     #  NAVIGATION (cascade on category open, fade on home)
@@ -1978,9 +2057,9 @@ class PulseApp(QMainWindow):
             self._probe_thread = None
 
     # ============================================================
-    #  SELF-UPDATE (v10.3) — two manual entry points (the Activity
-    #  rail's UpdatePill and the sidebar footer, both landing on
-    #  _on_footer_clicked) plus one silent background check on launch.
+    #  SELF-UPDATE (v10.3) — two manual entry points (the sidebar
+    #  footer's identity line and the UpdateBadge above it, both landing
+    #  on _on_footer_clicked) plus one silent background check on launch.
     #  This is updater.py's ONLY GUI call site: everything else
     #  (download/verify progress, the SHA-256 hand-off) lives in
     #  SelfUpdateDialog, which this only opens.
@@ -2022,7 +2101,10 @@ class PulseApp(QMainWindow):
         # write here and the read in the slot happen on the GUI thread, so
         # the companion field cannot race or desync from its request.
         self._update_check_silent = silent
-        self.update_pill.set_state("checking", "Checking for updates…")
+        # A silent launch probe stays off screen (loud=False); a check the
+        # user asked for reports that it is running.
+        self.update_badge.set_state("checking", "Checking for updates…",
+                                    loud=not silent)
         thread = QThread(self)
         worker = SelfUpdateCheckWorker(version.VERSION, version.CHANNEL)
         worker.moveToThread(thread)
@@ -2050,30 +2132,33 @@ class PulseApp(QMainWindow):
         silent = self._update_check_silent
         self._pending_update = update
         if update is None:
-            self.update_pill.set_state(
+            # 'current' never takes a permanent surface (see UpdateBadge) —
+            # this sets the state so the badge stops reporting a check, and
+            # the toast below carries the answer on the manual path.
+            self.update_badge.set_state(
                 "current", f"Pulse v{version.VERSION} is the latest release. "
                            "Click to check again.")
             if not silent:
                 self.toasts.show(
                     "success", f"You're up to date — v{version.VERSION}.", 3500)
             return
-        # The pill says so even for a silent check — a toast alone
-        # disappears; the rail is where the answer stays findable.
+        # The badge says so even for a silent check — a toast alone
+        # disappears; the sidebar is where the answer stays findable.
         #
         # This used to be appended to the sidebar footer's own identity
         # line ("… · Update available") at the `caption` role: 10px,
         # weight 500, on text_faint. The app's most actionable
         # notification was rendered in its faintest type and only became
         # emphatic on hover. It is now a toned, plated, AA-at-rest chip
-        # in the Activity rail — see theme.update_pill_qss.
-        self.update_pill.set_state(
+        # sitting on top of that line — see theme.update_badge_qss.
+        self.update_badge.set_state(
             "available", f"Pulse v{update.version} is available — "
                          "click to install.")
         if silent:
             self.toasts.show(
                 "info",
                 f"Pulse v{update.version} is available — click "
-                "UPDATE in the status bar to install.", 6000)
+                "UPDATE READY in the sidebar to install.", 6000)
         else:
             # Deferred one turn rather than opened inline. This slot runs
             # while worker.finished is still being delivered: thread.quit
@@ -2222,6 +2307,7 @@ class PulseApp(QMainWindow):
             lambda run: self._on_playbook_finished(run, dialog))
 
         self.activity.set_running(True)
+        self.update_badge.set_busy(True)
         self.console.clear_console()
         self.state_pill.set_state("running")
         self._set_status("busy", f"Playbook: {playbook.name} …")
@@ -2267,6 +2353,7 @@ class PulseApp(QMainWindow):
         self._set_status("ok" if kind != "error" else "err", "System Ready")
         self.state_pill.set_state("ok" if kind != "error" else "err")
         self.activity.set_running(False)
+        self.update_badge.set_busy(False)
         # A playbook changes several probed settings at once.
         QTimer.singleShot(400, self._refresh_tweak_state)
         self._refresh_task_history()
@@ -2575,6 +2662,9 @@ class PulseApp(QMainWindow):
         if card is not None:
             card.set_running(True)
         self.activity.set_running(True)   # expand the drawer for live output
+        # Not actionable mid-run: _open_update_dialog refuses to install
+        # while the engine is mutating the machine. See UpdateBadge.
+        self.update_badge.set_busy(True)
         self._set_status("busy", f"Executing: {item['title']} …")
         self.state_pill.set_state("running")
         self.stop_btn.setText("■  Stop Task")
@@ -2673,6 +2763,7 @@ class PulseApp(QMainWindow):
             self._running_card = None
         self.shimmer.stop()
         self.stop_btn.hide()
+        self.update_badge.set_busy(False)
         # Collapse the drawer after a brief hold so the final verdict stays
         # readable; a pinned drawer (or one still running) stays open.
         self.activity.set_running(False)
@@ -3208,6 +3299,9 @@ class PulseApp(QMainWindow):
     _WM_NCLBUTTONDOWN = 0x00A1
     _WM_NCLBUTTONUP = 0x00A2
     _WM_NCMOUSELEAVE = 0x02A2
+    # Answered so DefWindowProc never fills the client area with the window
+    # class brush — see the handler in nativeEvent.
+    _WM_ERASEBKGND = 0x0014
     # Windows brackets every OS-driven move/resize (title-bar drag, edge
     # drag, Aero Snap) with this pair.
     _WM_ENTERSIZEMOVE = 0x0231
@@ -3378,6 +3472,16 @@ class PulseApp(QMainWindow):
                             widget.reject()
                     self.close()
                     return True, 0
+
+            elif msg.message == self._WM_ERASEBKGND:
+                # "Already erased." The window autofills its own canvas
+                # gradient (see _apply_theme) and the shell paints over
+                # every pixel of it, so anything DefWindowProc does here is
+                # a wasted full-window fill that lands BETWEEN the two —
+                # visible during a drag-resize as a flicker in the strip
+                # being revealed. Returning non-zero is the documented way
+                # to tell Windows the background is the app's business.
+                return True, 1
 
             elif msg.message == self._WM_NCMOUSELEAVE:
                 titlebar.set_nc_hover(None)

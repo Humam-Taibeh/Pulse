@@ -952,19 +952,39 @@ class TestThemes:
     #: The floors are LOW on purpose, and are not WCAG numbers. WCAG 1.4.11
     #: asks 3:1 of a UI boundary, which neither theme can reach without
     #: abandoning its register — a white-on-grey macOS light mode and a
-    #: near-black dark mode both separate their surfaces by a whisker of
+    #: jet-obsidian dark mode both separate their surfaces by a whisker of
     #: luminance plus a hairline. These are regression floors: they pin the
     #: separation the palette was deliberately solved to, so a future edit
     #: that flattens a card back into its well fails loudly instead of
     #: shipping. Each sits just under its measured value.
+    #:
+    #: v14 RE-SOLVES THEM DOWN (1.25 -> 1.05), and the reason is that the
+    #: JOB MOVED rather than that the bar was inconvenient. Through v13 the
+    #: content well RECESSED below the canvas and the card had to
+    #: out-brighten it, so tone was doing the lifting and 1.25 was a fair
+    #: description of it. The obsidian/clean-minimal palette gives that up
+    #: on purpose: both modes now run canvas -> raised container -> card,
+    #: each a whisper apart, and hand elevation to the hairline and the cast
+    #: shadow instead (see theme.card_line, theme.shadow_alphas, and
+    #: test_elevation, which measures both).
+    #:
+    #: 1.25 IS NOT REACHABLE AT THESE SURFACES — it is arithmetically out of
+    #: range, not merely missed. WCAG's ratio is (Lhi+0.05)/(Llo+0.05), and
+    #: down at obsidian luminances the +0.05 floor dominates both terms:
+    #: #181A1F measures 1.218:1 against PURE BLACK, so no choice of well can
+    #: buy 1.25 while the card stays the colour the redesign specifies.
+    #: Light is the mirror image — #FFFFFF on the #F3F4F6 canvas is 1.113:1
+    #: and the canvas cannot be darkened without breaking the filter chip
+    #: (see the note on _LIGHT's bg_solid). Measured today: dark 1.060,
+    #: light 1.101. The floor sits just under the pair.
+    #:
     #: `dialog_bg` is deliberately ABSENT. A dialog never sits on the
     #: content well — PulseDialog covers the body with a dense scrim and
     #: centres the panel on that, so its separation is from the scrim, and
     #: measuring it against the well pins a relationship no one ever sees.
-    #: (It measures 1.14:1 there, which looks like a defect and is not.)
     _SURFACE_PAIRS = [
-        ("card",      "overlay",  1.25),   # the card in its content well
-        ("card_hi",   "overlay",  1.25),   # the hero tier, ditto
+        ("card",      "overlay",  1.05),   # the card in its content well
+        ("card_hi",   "overlay",  1.05),   # the hero tier, ditto
     ]
 
     #: (border, surface, floor). If the fill barely separates, the hairline

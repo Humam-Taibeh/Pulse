@@ -30,7 +30,9 @@ import math
 import sys
 
 from PySide6.QtCore import QObject, QRect, Signal
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QFontDatabase, QGradient, QLinearGradient,
+)
 
 # ============================================================
 #  COLOR UTILITIES
@@ -292,6 +294,27 @@ RADIUS = {
 }
 
 
+#: THE ONE ICON-PLAQUE EDGE, and the one primary-control height.
+#:
+#: The fourth scale, and it exists for the reason the first three did: the
+#: app was building the SAME element at two sizes in two places. A card's
+#: icon well painted at 36px (a 42px widget less IconPlaque's 3px halo
+#: reserve on each side) while the sidebar entry that opens that very card
+#: painted its own at 30 — two views of one object, differing by six
+#: pixels for no reason anybody could point at. Everything that is "a
+#: glyph in a tinted well" now measures PLAQUE_SIZE across.
+#:
+#: CONTROL_H is the same discipline one element over: dialog action bars
+#: had settled on 36 by convention, and the two controls that had not
+#: (a 38px "Optimize Startup", a 42px "Run as Administrator") were the
+#: only ones that looked hand-placed. A convention nothing names is a
+#: convention that drifts.
+#:
+#: Both are enforced by test_layout_contract.
+PLAQUE_SIZE = 36
+CONTROL_H = 36
+
+
 def inner_radius(outer: int, inset: int = 1) -> int:
     """The radius a child painted `inset` pixels inside a rounded surface
     needs for the two curves to stay CONCENTRIC.
@@ -365,8 +388,8 @@ CHIP_TONE_WHISPER = 0.08
 
 #: The padding every micro status pill in the app shares, as (vertical,
 #: horizontal). Named because THREE things have to agree on it and two of
-#: them are not QSS: state_chip_qss and update_pill_qss both claim to be
-#: "the same object one surface apart" (update_pill_qss says so in as many
+#: them are not QSS: state_chip_qss and update_badge_qss both claim to be
+#: "the same object one surface apart" (update_badge_qss says so in as many
 #: words), and widgets.UpdatePill measures its own fixed width from the
 #: horizontal value. They did not agree — the chip ran 2px vertical and the
 #: pill 3px, so the documented invariant had been false since the pill
@@ -487,7 +510,15 @@ def shadow_alphas(t: dict) -> tuple[float, int]:
     see.
     """
     if t["name"] == "light":
-        return (0.080, 6)
+        # v14 RAISES IT AGAIN, 0.080 -> 0.105, because light mode just sold
+        # its other elevation cue. The v11-v13 well was tinted to a real
+        # grey (~#DADCE3) so a white card had somewhere to rise from; the
+        # clean-minimal palette returns the well to the canvas tone and the
+        # card/well pair falls from 1.38:1 to 1.10:1. The hairline took part
+        # of that job (see _LIGHT's card_line) and the cast shadow takes the
+        # rest — a sheet of paper on a page is read from the shadow under
+        # its lower edge, which is now the only cue with any weight left.
+        return (0.105, 6)
     # Obsidian needs a firmer cast: a black shadow on a near-black canvas
     # has far less room to register than one on porcelain.
     return (0.34, 6)
@@ -817,10 +848,6 @@ _DARK = {
     # a vignette artifact rather than as light.
     "bg_grad_top":    "#0c0d10",
     "bg_grad_bottom": "#08090a",
-    # The content well still recesses below the canvas — depth is cheaper to
-    # buy by digging than by lifting — but it no longer has to do the whole
-    # job alone, so it can be gentler (0.55 -> 0.45) and keep the floor a
-    # true obsidian rather than crushing it to black.
     # v14 INVERTS THE WELL. Through v13 the content frame RECESSED below the
     # canvas (a near-black wash) and elevation was bought by digging; the
     # jet-obsidian base has nowhere left to dig, and a well darker than
@@ -872,10 +899,14 @@ _DARK = {
     # asks for, kept low so a pointer sweep lights the grid rather than
     # flashing it.
     "card_hover":  "rgba(150, 168, 224, 0.085)",
-    # The delicate border highlight. Lifted 0.088 -> 0.13 along with the
-    # card: the hairline's job is to define the card's edge, and against a
-    # LIGHTER card the old alpha no longer separated it from its own fill
-    # (1.27:1 before, 1.50:1 now).
+    # THE CONTENT HAIRLINE, and the one place the v14 spec's flat 0.08 is
+    # not taken literally. A card's edge has to separate from the card's OWN
+    # FILL, which is a different question from a container's edge separating
+    # from the canvas, and the app holds it to 1.45:1
+    # (test_contract.test_a_card_border_separates_from_its_own_fill).
+    # Measured on the new #181A1F plate: 0.08 lands at 1.23:1 — a hairline
+    # you can only find by looking for it — while 0.13 holds 1.47:1. Chrome
+    # containers do carry the spec value; see `panel_line` above.
     "card_line":   "rgba(255, 255, 255, 0.13)",
     "card_sheen":  "rgba(255, 255, 255, 0.045)",  # top stop of the glass gradient
     # Dialogs and toasts sit OVER dense text (card grids, the console):
@@ -998,7 +1029,7 @@ _DARK = {
 
     # status — was GitHub-dark grade; v12.1 takes it a step quieter still.
     # These are the tones that appear on a tinted chip of their OWN hue
-    # (state_chip_qss, update_pill_qss), where saturation is what makes a
+    # (state_chip_qss, update_badge_qss), where saturation is what makes a
     # badge shout. Draining it there costs nothing and buys the most.
     "ok":          "#6fb273",
     "warn":        "#c09e63",
@@ -1049,32 +1080,33 @@ _LIGHT = {
     #
     # The separation is bought from `overlay` instead (below), which is the
     # surface actually behind the cards and carries no text of its own.
-    "bg_solid":    "#f2f2f7",   # see the note on the dark side's dropped "bg"
+    "bg_solid":    "#f3f4f6",   # see the note on the dark side's dropped "bg"
     # A whisper of a gradient — a few points either side of #F2F2F7, enough
     # that the page has air without becoming a tinted backdrop again.
-    "bg_grad_top":    "#f7f7fa",
-    "bg_grad_bottom": "#e9e9f0",
-    # THE CONTENT WELL IS WHERE LIGHT MODE'S CARD SEPARATION COMES FROM.
-    # Cards do not sit on the canvas — they sit in this well — so it is the
-    # only surface whose colour changes what a card is actually seen
-    # against. Tinted from the flat #F2F2F7 to a real grey, it composites
-    # to ~#DADCE3 over the canvas and takes card/well from 1.12:1 to
-    # 1.38:1: white cards now read as sheets on grey rather than white on
-    # white. It carries no text of its own, which is exactly why the
-    # separation is affordable here and not on bg_solid.
+    "bg_grad_top":    "#f8f9fb",
+    "bg_grad_bottom": "#eef0f3",
+    # v14 RETURNS THE WELL TO THE CANVAS TONE. v11 bought card separation by
+    # TINTING this surface to a real grey (~#DADCE3 composited), because a
+    # white card on a #F2F2F7 page measured 1.12:1 and dissolved. The clean
+    # minimal register the redesign asks for has exactly two neutrals —
+    # canvas #F3F4F6 and surface #FFFFFF — so the tinted mid-grey is the one
+    # thing it cannot keep: it reads as a dirty panel behind clean cards.
+    # Elevation moves to the hairline + cast shadow instead, which is the
+    # actual macOS construction (see shadow_alphas, raised for light in the
+    # same change to pay for the tone that was given up).
     #
-    # THE ALPHA IS LOAD-BEARING AND STAYS AT 0.55. This well is also the
-    # surface the ambient star field is seen THROUGH, so its opacity scales
-    # star contrast directly — a first pass that bought separation by
-    # raising it to 0.94 measured an 88% drop in star deltaE and would have
-    # quietly deleted the living background. Colour is free; opacity is not.
-    "overlay":     "rgba(198, 200, 210, 0.55)",
+    # THE ALPHA IS STILL LOAD-BEARING AND STAYS AT 0.55. This is the surface
+    # the ambient star field is seen THROUGH, so its opacity scales star
+    # contrast directly — a first pass that bought separation by raising it
+    # to 0.94 measured an 88% drop in star deltaE and would have quietly
+    # deleted the living background. Colour is free; opacity is not.
+    "overlay":     "rgba(243, 244, 246, 0.55)",
     # frosted sidebar / dock — a soft white glass a step above the grey
     # page, a step below the pure-white cards. macOS sidebar material.
     "panel":       "rgba(255, 255, 255, 0.60)",
     # Apple's separator grey, at the weight the system uses for chrome
     # hairlines rather than content borders.
-    "panel_line":  "rgba(60, 60, 67, 0.13)",
+    "panel_line":  "rgba(0, 0, 0, 0.08)",
     # PURE WHITE elevated surfaces — the redesign's explicit call, and the
     # thing that makes the mode read as macOS rather than as a grey app
     # with pale boxes. Separation is the hairline + cast shadow, not tone.
@@ -1085,12 +1117,14 @@ _LIGHT = {
     # not from luminance — chasing a lighter-than-white card is the one
     # elevation move this mode can never make.
     "card_hi":     "rgba(255, 255, 255, 1.0)",
-    "card_hover":  "rgba(84, 101, 180, 0.045)",
-    # #B7BAC4 — 1.94:1 against the white card. Darkened from #E5E5EA
-    # (1.26:1) along with the ground: a separator tuned to sit between two
-    # near-white surfaces is too faint to draw a white card's edge once
-    # that card sits on a real grey.
-    "card_line":   "#b7bac4",
+    "card_hover":  "rgba(84, 101, 180, 0.055)",
+    # The content hairline — the light twin of dark's, and the same single
+    # deviation from the spec's flat 0.08 for the same measured reason. A
+    # card's edge must separate from the card's OWN FILL at 1.45:1
+    # (test_contract.test_a_card_border_separates_from_its_own_fill): on
+    # pure white, black at 0.08 lands at 1.19:1 and at 0.17 holds 1.48:1.
+    # Chrome containers carry the spec's 0.08 — see `panel_line` above.
+    "card_line":   "rgba(0, 0, 0, 0.17)",
     "card_sheen":  "rgba(255, 255, 255, 0.9)",    # top stop of the glass gradient
     # Same opacity rule as dark: overlays never let text bleed through.
     "dialog_bg":   "rgba(255, 255, 255, 1.0)",
@@ -1219,13 +1253,49 @@ class ThemeManager(QObject):
 # ============================================================
 #  QSS FACTORIES — one call per theme switch, never per frame
 # ============================================================
+#: The shell gradient's vector, in object-bounding coordinates. Named
+#: because TWO renderers have to agree on it and only one of them is QSS:
+#: shell_qss declares it for the frame, and canvas_brush rebuilds the exact
+#: same ramp as a QBrush for the WINDOW underneath (see the note there). A
+#: literal in each is a mismatched seam waiting for the next tuning pass.
+CANVAS_VECTOR = (0.3, 1.0)
+
+
+def canvas_brush(t: dict) -> QBrush:
+    """The shell's own gradient, as a brush a QPalette can hold.
+
+    THIS IS THE FIX FOR THE BLACK EDGE DURING A LIVE RESIZE. Dragging an
+    edge grows the native window immediately; Qt repaints the shell into
+    the newly-revealed strip one event-loop turn later, and whatever
+    Windows and Qt put there in between is what the user sees tearing along
+    the edge they are dragging. Qt registers its window class with a NULL
+    background brush, so on a frameless window that strip was raw black.
+
+    Painting the window's own palette solved half of it and introduced the
+    other half: a FLAT `bg_grad_bottom` fill cannot match a gradient, so
+    the strip stopped being black and started being a visibly mismatched
+    band down the edge — which reads as a broken border rather than as
+    lag. An object-bounding gradient brush rescales itself to whatever
+    rect it is asked to fill, so the window underneath is painting the
+    same ramp at the same place as the shell on top of it, at every size
+    the drag passes through. The seam is gone because there is no longer
+    anything to mismatch.
+    """
+    grad = QLinearGradient(0.0, 0.0, *CANVAS_VECTOR)
+    grad.setCoordinateMode(QGradient.CoordinateMode.ObjectBoundingMode)
+    grad.setColorAt(0.0, QColor(t["bg_grad_top"]))
+    grad.setColorAt(1.0, QColor(t["bg_grad_bottom"]))
+    return QBrush(grad)
+
+
 def shell_qss(t: dict) -> str:
     """Maximized = edge-to-edge: the floating radius/border must vanish so
     the shell meets the monitor edges exactly like a native Win11 app.
     NOTE: the dynamic property is named `flush` (not `maximized`) because
     QWidget already exposes a built-in read-only `maximized` property —
     setProperty() on that name silently fails."""
-    grad = (f"qlineargradient(x1:0, y1:0, x2:0.3, y2:1, "
+    x2, y2 = CANVAS_VECTOR
+    grad = (f"qlineargradient(x1:0, y1:0, x2:{x2}, y2:{y2}, "
             f"stop:0 {t['bg_grad_top']}, stop:1 {t['bg_grad_bottom']})")
     # The shell is now a FULLY OPAQUE, square canvas that covers every pixel
     # of the window, in both states.
@@ -1281,9 +1351,9 @@ def nav_button_qss(t: dict) -> str:
             border-radius: {RADIUS['plaque']}px;
             color: {t['text_muted']};
             font-size: {TYPE['label']}px; font-weight: 500;
-            /* padding clears the painted icon plaque (12px inset + 30px
-               plaque + gap) — see widgets.NavButton.paintEvent */
-            text-align: left; padding-left: 54px;
+            /* padding clears the painted icon plaque (12px inset + the
+               PLAQUE_SIZE well + an 8px gap) — see NavButton.paintEvent */
+            text-align: left; padding-left: {12 + PLAQUE_SIZE + SPACE['sm']}px;
         }}
         QPushButton:hover {{
             background-color: {t['card_hover']};
@@ -1499,7 +1569,7 @@ def card_meta_pill_qss(t: dict, accent: str = "") -> str:
 
 
 #: Type and geometry for a micro status pill, written once. Both callers
-#: (state_chip_qss, update_pill_qss) compose this rather than restating it,
+#: (state_chip_qss, update_badge_qss) compose this rather than restating it,
 #: which is what makes "the same object one surface apart" a fact rather
 #: than a comment — see CHIP_PAD_V for what happened while it was only a
 #: comment.
@@ -2198,7 +2268,7 @@ def state_pill_qss(t: dict) -> str:
     """
 
 
-#: Alpha of the tone hairline on the update pill, per interaction state.
+#: Alpha of the tone hairline on the update badge, per interaction state.
 #:
 #: THE PLATE NEVER MOVES BETWEEN THESE. Hover and press are carried by the
 #: ring alone, so the pill's text contrast is a CONSTANT rather than a
@@ -2214,7 +2284,7 @@ def state_pill_qss(t: dict) -> str:
 #: which is exactly the badge-tint trap state_chip_qss documents, arrived
 #: at from the other direction. A ring has no such cost: it is not the
 #: surface the text sits on, so it can go to full saturation for free.
-UPDATE_PILL_RING = {
+UPDATE_BADGE_RING = {
     "rest":       0.45,   # resting hairline — the StatePill weight
     "actionable": 0.60,   # 'available' at rest: hotter, because it is a CTA
     "hover":      0.80,   # pointer is over the pill
@@ -2226,30 +2296,41 @@ UPDATE_PILL_RING = {
 #: in dark — a pass with 0.17 to spare — while warn holds 5.35:1, and the
 #: app already spends amber on "this needs your attention" (state_chip_qss
 #: 'due'/'mixed'). Red stays reserved for failure.
-UPDATE_PILL_TONES = {"checking": "accent", "current": "ok", "available": "warn"}
+UPDATE_BADGE_TONES = {"checking": "accent", "current": "ok", "available": "warn"}
 
 
-def update_pill_qss(t: dict) -> str:
-    """The self-updater's status chip in the Activity rail
-    (widgets.UpdatePill) — CHECKING / UP TO DATE / UPDATE READY.
+def update_badge_qss(t: dict) -> str:
+    """The self-updater's badge in the SIDEBAR FOOTER (widgets.UpdateBadge)
+    — CHECKING / UP TO DATE / UPDATE READY.
 
     One string per theme switch: states are dynamic-property flips, the
     same repolish mechanic StatePill and NavButton use, so a transition
     never rebuilds QSS and nothing here is driven by a timer.
 
+    v14 MOVED IT OFF THE ACTIVITY RAIL, and the move is a decluttering
+    decision rather than a styling one. The rail's job is reporting the
+    RUNNING TASK, and it was carrying seven controls to do it; the sidebar
+    footer was already the manual "check for updates" trigger, so the
+    answer and the control now live in one place instead of two that have
+    to be kept in sync. The badge sits directly above that footer and is
+    shown ONLY when it has something actionable to say — an update ready,
+    or a check the user asked for that is still running. "Up to date" is
+    reported by a toast and then gets out of the way, because a chip that
+    permanently says nothing is happening is chrome.
+
     THE FILL IS AN OPAQUE PLATE AT THE CARD TIER carrying a whisper of its
     own tone — the state_chip_qss recipe, for the same two reasons. The
-    ratio is one of them; the other is that an opaque plate makes the chip
+    ratio is one of them; the other is that an opaque plate makes the badge
     read identically wherever it lands, so it reports its own state and
-    nothing about the rail beneath it.
+    nothing about the panel beneath it.
 
     Measured, text on its own plate:
 
         state      tone      dark      light
-        checking   accent    5.14:1    4.84:1
-        current    ok        5.30:1    4.85:1
-        available  warn      5.35:1    4.81:1
-        idle       muted     7.79:1    8.28:1
+        checking   accent    5.53:1    4.84:1
+        current    ok        5.71:1    4.85:1
+        available  warn      5.76:1    4.81:1
+        idle       muted     8.86:1    8.28:1
 
     All six clear AA AT REST, which is the requirement this component
     exists to meet: it replaced a footer line that carried the same status
@@ -2267,20 +2348,20 @@ def update_pill_qss(t: dict) -> str:
     # flat, lifted off the rail by the panel line alone — the same
     # construction state_chip_qss gives its neutral DEFAULT verdict.
     out = [f"""
-        QPushButton#updatePill {{ {base}
+        QPushButton#updateBadge {{ {base}
             color: {t['text_muted']};
             background: {t['card']};
             border: 1px solid {t['panel_line']}; }}
     """]
-    for state, key in UPDATE_PILL_TONES.items():
+    for state, key in UPDATE_BADGE_TONES.items():
         color = t[key]
         plate = blend(t['card'], alpha(color, CHIP_TONE_WHISPER))
-        rest = UPDATE_PILL_RING["actionable" if state == "available" else "rest"]
+        rest = UPDATE_BADGE_RING["actionable" if state == "available" else "rest"]
         for pseudo, ring in (("", rest),
-                             (":hover", UPDATE_PILL_RING["hover"]),
-                             (":pressed", UPDATE_PILL_RING["press"])):
+                             (":hover", UPDATE_BADGE_RING["hover"]),
+                             (":pressed", UPDATE_BADGE_RING["press"])):
             out.append(f"""
-        QPushButton#updatePill[state="{state}"]{pseudo} {{ {base}
+        QPushButton#updateBadge[state="{state}"]{pseudo} {{ {base}
             color: {color};
             background: {plate};
             border: 1px solid {alpha(color, ring)}; }}
@@ -2911,7 +2992,7 @@ def sidebar_version_qss(t: dict) -> str:
     panel that is 5.37:1 dark / 5.13:1 light — legible on paper and
     invisible in practice, and it only became emphatic once the pointer
     arrived. Update status now lives in the Activity rail's UpdatePill
-    (update_pill_qss), which is toned, plated and AA at rest.
+    (update_badge_qss), which is toned, plated and AA at rest.
 
     What stays here is identity — and a control, still: clicking it is
     the rail's manual "check for updates". A CONTROL MUST NOT SIT ON THE

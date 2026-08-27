@@ -761,3 +761,96 @@ def test_filtering_dialogs_declare_an_empty_state(window, qapp):
         dialog.reject()
         dialog.deleteLater()
     qapp.processEvents()
+
+
+# ============================================================
+#  THE PLAQUE AND CONTROL SCALES (v14)
+# ============================================================
+def test_one_module_is_one_plaque_size_everywhere():
+    """A card's icon well and the sidebar entry that OPENS that card are
+    the same object seen twice. They were built by two pieces of code that
+    agreed on the tint and on nothing else, so they shipped at 36px and
+    30px — a six-pixel difference between two views of one thing, which
+    nobody chose and nobody could have noticed side by side because they
+    are never side by side.
+
+    IconPlaque's widget is deliberately LARGER than the scale: it reserves
+    _PAD on each side for the halo to bleed outward into (see the note
+    there), so the WELL it paints is what has to match, not the footprint.
+    """
+    from frontend.widgets import GlassCard, IconPlaque, NavButton
+    assert NavButton._PLAQUE == TH.PLAQUE_SIZE, (
+        f"the sidebar plaque is {NavButton._PLAQUE}px against the scale's "
+        f"{TH.PLAQUE_SIZE}px")
+    well = GlassCard._PLAQUE - 2 * IconPlaque._PAD
+    assert well == TH.PLAQUE_SIZE, (
+        f"the card's plaque well measures {well}px (a "
+        f"{GlassCard._PLAQUE}px widget less {IconPlaque._PAD}px of halo "
+        f"reserve each side) against the scale's {TH.PLAQUE_SIZE}px")
+
+
+def test_the_nav_label_clears_the_plaque_it_sits_beside():
+    """The plaque is PAINTED and the label is QSS text, so nothing in Qt
+    keeps the two apart — the left padding is the only thing standing
+    between a 36px well and the title running over it. Widening the
+    plaque without widening the padding is a silent overlap."""
+    from frontend.widgets import NavButton
+    qss = TH.nav_button_qss(TH.tokens("dark"))
+    match = re.search(r"padding-left:\s*(\d+)px", qss)
+    assert match, "nav_button_qss no longer declares a left padding"
+    assert int(match.group(1)) >= NavButton._PLAQUE_X + TH.PLAQUE_SIZE, (
+        f"nav labels start at {match.group(1)}px, inside the plaque that "
+        f"ends at {NavButton._PLAQUE_X + TH.PLAQUE_SIZE}px")
+
+
+#: Heights something may be fixed to that are NOT the control scale, each
+#: because it is a different KIND of object rather than a primary control
+#: that got away. Enumerated (not a range) so a genuinely new number has
+#: to be argued for here before it can ship:
+#:
+#:    22  status/state chip     26  rail tool, Stop button
+#:    24  update badge          28  drawer chevron
+#:    30  chip-strip pill       32  inline drive selector
+#:    34  the page accent rail  44  the Activity rail itself
+#:    46  nav row, search field 50  wizard link row
+#:    96  dashboard hero       172  live console
+#:   200  a scrolled sub-list
+#:
+#: Deliberately pruned to what the tree actually uses — a list carrying
+#: values nothing sets is a list that exempts the next stray by accident.
+_CONTROL_HEIGHT_EXEMPT = {22, 24, 26, 28, 30, 32, 34, 44, 46, 50,
+                          96, 172, 200}
+
+
+def test_primary_controls_share_one_height():
+    """The fourth scale, held to the same standard as SPACE, RADIUS and
+    TYPE. Dialog action bars had converged on 36 by convention, and the
+    two controls that had NOT — a 38px "Optimize Startup" and a 42px "Run
+    as Administrator" — were the only buttons in the app that looked
+    hand-placed. A convention nothing names is a convention that drifts,
+    which is the argument every other scale in this file already made.
+    """
+    literal = re.compile(r"setFixedHeight\((\d+)\)|setFixedSize\(\d+,\s*(\d+)\)")
+    strays = []
+    for module in ("main.py", "widgets.py"):
+        path = os.path.join(_FRONTEND, module)
+        for i, line in enumerate(open(path, encoding="utf-8").read().splitlines()):
+            for match in literal.finditer(line):
+                px = int(match.group(1) or match.group(2))
+                if px == TH.CONTROL_H or px in _CONTROL_HEIGHT_EXEMPT or px <= 14:
+                    continue
+                strays.append(f"  {module}:{i + 1}  {line.strip()}")
+    assert not strays, (
+        f"{len(strays)} control height(s) off the scale "
+        f"(CONTROL_H={TH.CONTROL_H}, exempt={sorted(_CONTROL_HEIGHT_EXEMPT)}):\n"
+        + "\n".join(strays))
+
+
+def test_the_control_height_clears_the_type_it_carries():
+    """A named height is only worth having if it FITS. The tallest label a
+    primary button carries is the `body` role, and a control has to give
+    it room to breathe on both sides or the scale is just a smaller
+    number that clips."""
+    assert TH.CONTROL_H >= TH.TYPE["body"] + 2 * TH.SPACE["sm"], (
+        f"CONTROL_H {TH.CONTROL_H} leaves under {TH.SPACE['sm']}px above "
+        f"and below a {TH.TYPE['body']}px label")

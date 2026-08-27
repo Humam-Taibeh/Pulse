@@ -276,12 +276,54 @@ def test_dark_star_weight_is_untouched(window):
     assert glow._STAR_SPAN_MUL["dark"] == 3.0
 
 
+#: The most mean channel spread the ambient wash may add to a canvas
+#: before it stops shading the base colour and starts replacing it.
+#: Calibrated against both ends: the shipping wash measures ~3.9 in light
+#: and ~3.2 in dark, and the peaks that shipped the lavender canvas
+#: measure ~10.4.
+_WASH_TINT_CEILING = 6.0
+
+
+def _wash_tint(glow, base_hex: str, multiply: bool) -> float:
+    """Mean per-pixel channel spread the orb layer adds to `base_hex`,
+    composited exactly the way paintEvent does it for that mode.
+
+    The base's OWN spread is subtracted, so this measures what the wash
+    contributes and nothing else — and it is read off the token rather
+    than written down, which is the bug the first version of this had: it
+    subtracted a hardcoded 5 for #F2F2F7 and would have silently gained
+    two points of slack the moment the canvas token moved.
+    """
+    canvas = QPixmap(glow.width(), glow.height())
+    canvas.fill(QColor(base_hex))
+    painter = QPainter(canvas)
+    if multiply:
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Multiply)
+    glow._layer = None
+    painter.drawPixmap(0, 0, glow._ensure_layer())
+    painter.end()
+
+    base = QColor(base_hex)
+    base_spread = (max(base.red(), base.green(), base.blue())
+                   - min(base.red(), base.green(), base.blue()))
+    img = canvas.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    tint = samples = 0
+    for y in range(0, img.height(), 5):
+        for x in range(0, img.width(), 5):
+            px = img.pixel(x, y)
+            r, g, b = (px >> 16) & 255, (px >> 8) & 255, px & 255
+            tint += (max(r, g, b) - min(r, g, b)) - base_spread
+            samples += 1
+    return tint / samples
+
+
 def test_the_light_wash_tints_the_paper_without_dyeing_it(window, qapp):
-    """v11's rule, measured: light mode's canvas is the neutral system
-    grey #F2F2F7, and the multiply wash may shade it but must not turn it
-    into a colour. The regression this catches shipped twice — the wash
-    dragged the page to a visible lavender (#ECEAF4), which is a light
-    mode whose defining colour is no longer 'system grey'.
+    """v11's rule, measured: light mode's canvas is a neutral system grey,
+    and the multiply wash may shade it but must not turn it into a colour.
+    The regression this catches shipped twice — the wash dragged the page
+    to a visible lavender (#ECEAF4), which is a light mode whose defining
+    colour is no longer 'system grey'.
 
     Measured off the orb layer composited exactly as paintEvent does it,
     so adding orbs, raising peaks or changing the blend all land here.
@@ -293,29 +335,8 @@ def test_the_light_wash_tints_the_paper_without_dyeing_it(window, qapp):
         settle(qapp, 900)
     try:
         assert glow._light
-        canvas = QPixmap(glow.width(), glow.height())
-        canvas.fill(QColor("#F2F2F7"))
-        painter = QPainter(canvas)
-        painter.setCompositionMode(
-            QPainter.CompositionMode.CompositionMode_Multiply)
-        glow._layer = None
-        painter.drawPixmap(0, 0, glow._ensure_layer())
-        painter.end()
-
-        img = canvas.toImage().convertToFormat(QImage.Format.Format_ARGB32)
-        tint = samples = 0
-        for y in range(0, img.height(), 5):
-            for x in range(0, img.width(), 5):
-                px = img.pixel(x, y)
-                r, g, b = (px >> 16) & 255, (px >> 8) & 255, px & 255
-                # the base grey is itself 5 wide (F2/F2/F7); anything the
-                # wash adds on top of that is the tint under test
-                tint += (max(r, g, b) - min(r, g, b)) - 5
-                samples += 1
-        mean = tint / samples
-        # Calibrated against both ends: the shipping wash measures ~3.9,
-        # and the peaks that shipped the lavender canvas measure ~10.4.
-        assert mean <= 6.0, (
+        mean = _wash_tint(glow, window.theme.t["bg_solid"], multiply=True)
+        assert mean <= _WASH_TINT_CEILING, (
             f"the light wash adds {mean:.1f} of mean channel spread — the "
             "porcelain is being dyed, not tinted (the v10 regression that "
             "dragged #F2F2F7 to #ECEAF4 measures ~10)")
@@ -323,6 +344,57 @@ def test_the_light_wash_tints_the_paper_without_dyeing_it(window, qapp):
         if not started_light:
             window._toggle_theme_animated()
             settle(qapp, 900)
+
+
+def test_the_dark_wash_shades_the_obsidian_without_navying_it(window, qapp):
+    """THE DARK TWIN, and it is new because dark only just needed one.
+
+    Light had this guard from v11 and dark did not, on the reasoning that
+    dark was the mode that was already right. v14 removed that asymmetry:
+    the content well used to be 45% NEAR-BLACK, so the frame the wash
+    showed through SUBTRACTED from it, and the obsidian palette raises the
+    same well to a #121417 container. The identical orb peaks then landed
+    on a base ~11 levels lighter across the whole content area and took the
+    jet #090A0B canvas to #1A1D25 in the orb cores — a navy-tinted grey,
+    which is exactly what the obsidian pass exists to remove, reached from
+    the ambient layer instead of from the palette.
+
+    Same ceiling as light, because it is the same requirement: the wash
+    shades the canvas, it does not become the canvas.
+    """
+    glow = window._glow
+    started_dark = window.theme.t["name"] == "dark"
+    if not started_dark:
+        window._toggle_theme_animated()
+        settle(qapp, 900)
+    try:
+        assert not glow._light
+        mean = _wash_tint(glow, window.theme.t["bg_solid"], multiply=False)
+        assert mean <= _WASH_TINT_CEILING, (
+            f"the dark wash adds {mean:.1f} of mean channel spread — the "
+            "obsidian is being dyed, not shaded; the v13 peaks on the v14 "
+            "raised well measure ~5.6 and read as navy")
+    finally:
+        if not started_dark:
+            window._toggle_theme_animated()
+            settle(qapp, 900)
+
+
+def test_the_wash_is_still_visible_in_both_modes(window, qapp):
+    """The corollary, and the reason the ceiling above is not simply set
+    to zero: this is a LIVING background, and the cheapest way to pass a
+    tint guard is to delete the effect. Every orb peak must stay clear of
+    nothing at all."""
+    glow = window._glow
+    for mode in ("dark", "light"):
+        peaks = glow._ORB_PEAKS[mode]
+        assert len(peaks) == 5, f"{mode} lost an orb"
+        assert min(peaks) > 0.02, (
+            f"{mode} orb peaks {peaks} have been tuned down to nothing — "
+            "the ambient field is the app's signature, not its overhead")
+        assert list(peaks) == sorted(peaks, reverse=True), (
+            f"{mode} orb peaks {peaks} no longer descend — the field's "
+            "depth tiers come from this ordering")
 
 
 def test_layer_rebuild_stays_inside_its_cadence(window, qapp):

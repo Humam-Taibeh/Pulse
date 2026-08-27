@@ -195,15 +195,28 @@ def test_the_top_edge_reads_as_lit_rather_than_as_a_groove(mode):
     The requirement in both modes is the same: the top row must end up
     brighter than the untreated hairline by a margin the eye can resolve,
     so the surface reads as catching light from above.
+
+    THE FLOOR IS CAPPED BY THE HEADROOM, which v14's clean-minimal light
+    hairline made load-bearing. A flat 1.5 was fair while light's hairline
+    was #B7BAC4 on a white card; against the spec's much subtler rgba(0,0,0,
+    0.17) the hairline is #D4D4D4, and bleaching it ALL THE WAY to the
+    card's own face — the most any sheen can ever do there — is 1.48:1. A
+    fixed 1.5 would therefore be asking for a lift that does not exist,
+    which is a broken test rather than a strict one. Dark has no such cap:
+    its hairline sits on obsidian and the sheen overshoots the face into a
+    real highlight (3.58:1), so 1.5 still binds there.
     """
     t = TH.tokens(mode)
     card = TH.blend(t["bg_solid"], t["card"])
     hairline = TH.to_qcolor(TH.blend(card, t["card_line"]))
     lit = _top_edge_colour(mode)
     gain = _lift(lit, hairline)
-    assert gain >= 1.5, (
+    ceiling = _lift(TH.to_qcolor(card), hairline)
+    floor = min(1.5, ceiling * 0.97)
+    assert gain >= floor, (
         f"{mode} top edge measures {gain:.2f}:1 against its own hairline "
-        f"({hairline.name()} -> {lit.name()}) — that is not an edge lift, "
+        f"({hairline.name()} -> {lit.name()}), under the {floor:.2f}:1 floor "
+        f"(ceiling {ceiling:.2f}:1) — that is not an edge lift, "
         "it is a rounding error")
 
 
@@ -326,18 +339,18 @@ def _decls(qss: str) -> dict:
     return out
 
 
-def test_the_card_badge_and_the_rail_pill_are_one_object():
-    """update_pill_qss has claimed to share state_chip_qss's geometry "to
+def test_the_card_badge_and_the_update_badge_are_one_object():
+    """update_badge_qss has claimed to share state_chip_qss's geometry "to
     the pixel" since it shipped, and it did not: the chip ran 2px of
-    vertical padding against the pill's 3px. A comment is not a
+    vertical padding against the badge's 3px. A comment is not a
     constraint. Both now compose theme._CHIP_TYPE, and this is what says
     so."""
     t = TH.tokens("dark")
     chip = _decls(TH.state_chip_qss(t, "applied"))
-    pill = _decls(TH.update_pill_qss(t))
-    assert chip == pill, (
-        f"the card badge and the rail pill render differently: {chip} vs "
-        f"{pill}")
+    badge = _decls(TH.update_badge_qss(t))
+    assert chip == badge, (
+        f"the card badge and the update badge render differently: {chip} vs "
+        f"{badge}")
 
 
 def test_the_chip_corner_stays_in_pill_territory():
