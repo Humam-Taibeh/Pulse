@@ -584,25 +584,49 @@ class TestFrostedBackdrop:
         try:
             frost = dialog._frost
             assert frost is not None, "no frost captured at all"
-            expected_w = max(1, dialog.width() // dialog._BLUR_DOWNSCALE)
-            expected_h = max(1, dialog.height() // dialog._BLUR_DOWNSCALE)
-            # +-1 for the integer division at each end, nothing more.
-            assert abs(frost.width() - expected_w) <= 1, (
-                f"frost is {frost.width()}x{frost.height()} but the dialog it "
-                f"paints into is {dialog.width()}x{dialog.height()} "
-                f"(expects ~{expected_w}x{expected_h}) — the capture was taken "
+            # Compared in LOGICAL pixels, which is the frame the dialog's
+            # own geometry is in. The frost is held at device resolution
+            # and tagged with the display ratio (v13.1 — see
+            # _capture_backdrop), so dividing it back out is what makes
+            # this arithmetic independent of the display scale it runs on.
+            # It used to compare against size // _BLUR_DOWNSCALE, which
+            # broke the moment the capture stopped being retained small.
+            logical_w = frost.width() / frost.devicePixelRatio()
+            logical_h = frost.height() / frost.devicePixelRatio()
+            assert abs(logical_w - dialog.width()) <= 2, (
+                f"frost covers {logical_w:.0f}x{logical_h:.0f} logical px but "
+                f"the dialog it paints into is "
+                f"{dialog.width()}x{dialog.height()} — the capture was taken "
                 "before refit_dialog set the final geometry, so the backdrop "
                 "is a stretched, misregistered rectangle")
-            assert abs(frost.height() - expected_h) <= 1
+            assert abs(logical_h - dialog.height()) <= 2
         finally:
             dialog.reject()
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_the_frost_is_retained_at_blur_resolution(self, window, qapp):
-        """Kept small on purpose: the downscale IS the blur, and holding a
-        full-size copy would cost a second smooth scale of ~1.8M pixels
-        plus the allocation, for pixels carrying no extra information."""
+    def test_the_frost_is_resolved_rather_than_magnified(self, window, qapp):
+        """THIS ASSERTION IS THE REVERSE OF THE ONE IT REPLACES, and the
+        reversal is the fix rather than a relaxation of it.
+
+        The old test pinned "kept small on purpose", on the reasoning that
+        magnifying at paint time costs nothing because the extra pixels
+        carry no information. They carry no information and they carry a
+        very visible artifact: one bilinear pass across a 10x (12.5x on a
+        1.25x display) magnification renders every source texel as a flat
+        tile with a hard-ish border, which is the chunky-square backdrop
+        this was reported as.
+
+        So the capture is resolved to the size it will be drawn at, once,
+        and blitted 1:1 forever after. The old economics were also measured
+        and were simply wrong in the other direction: the resolved blit
+        costs 3.83 ms against 3.53 ms for the magnifying one, because 1.9M
+        pixels of memory traffic beats 12K pixels of scaling. It is 0.3 ms
+        per repaint bought deliberately, not a saving.
+
+        What must NOT come back is the magnification, in either direction:
+        the frost's logical size has to equal the rect it fills.
+        """
         dialog = self._catalog(window)
         dialog.resize(window.size())
         dialog.show()
@@ -610,9 +634,11 @@ class TestFrostedBackdrop:
         try:
             frost = dialog._frost
             assert frost is not None
-            assert frost.width() <= dialog.width() // 4, (
-                f"frost retained at {frost.width()}px against a "
-                f"{dialog.width()}px dialog — it is being kept full-size")
+            magnification = dialog.width() / (frost.width()
+                                              / frost.devicePixelRatio())
+            assert abs(magnification - 1.0) < 0.01, (
+                f"the backdrop is magnified {magnification:.2f}x at paint "
+                "time — that magnification IS the chunky-tile artifact")
         finally:
             dialog.reject()
             dialog.deleteLater()

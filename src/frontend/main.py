@@ -2864,9 +2864,15 @@ class PulseApp(QMainWindow):
         self._glow.setGeometry(self._shell.rect())
         self._queue_occluder_sync()
         self.toasts.reposition()
-        active = QApplication.activeModalWidget()
-        if isinstance(active, PulseDialog):
-            refit_dialog(active)
+        # EVERY open sheet, not just the top one, and not via
+        # QApplication.activeModalWidget(). Pulse sheets are deliberately
+        # NonModal so the title bar stays live behind them (see
+        # PulseDialog.__init__), which makes activeModalWidget() answer
+        # None — and this is the call that keeps an open scrim glued to the
+        # body while the window is being dragged. Stacked wizards each own
+        # a full-body scrim, so each needs the refit.
+        for sheet in PulseDialog.open_dialogs():
+            refit_dialog(sheet)
 
     # ============================================================
     #  AMBIENT OCCLUSION — tell the wash what it is hidden behind
@@ -3085,8 +3091,33 @@ class PulseApp(QMainWindow):
             # run lock that reject() otherwise enforces.
             if self._playbook_dialog is not None:
                 self._playbook_dialog.force_close()
+        self._close_open_sheets()
         self._settle_background_threads()
         super().closeEvent(event)
+
+    def _close_open_sheets(self):
+        """Unwind every open PulseDialog through its OWN done(), newest
+        first, before this window tears itself down.
+
+        This became reachable the moment the title bar started working
+        behind a sheet (see PulseDialog.__init__): the close button is now
+        live while a modal is up, so "close the app with a wizard open" is
+        an ordinary gesture rather than something only Alt+F4 could reach.
+
+        It has to funnel through done() rather than deleteLater(), because
+        done() is where a dialog joins the QThread it owns. Letting Qt
+        destroy a parented dialog whose worker is still running is not an
+        exception — it is qFatal, an abort with no traceback, which is the
+        exact hazard PulseDialog.done() was written to prevent.
+
+        Newest first so a nested wizard unwinds before the sheet that
+        opened it, which is the order the user would have closed them in.
+        """
+        for sheet in reversed(PulseDialog.open_dialogs()):
+            try:
+                sheet.reject()
+            except RuntimeError:
+                continue        # already gone; nothing left to settle
 
     #: Bound on how long a closing window waits for ONE background thread.
     #: Deliberately the same number as widgets.PulseDialog._WORKER_WAIT_MS —

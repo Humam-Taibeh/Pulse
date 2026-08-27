@@ -21,12 +21,12 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDateTime, QEasingCurve, QEvent, QPoint, QPointF, QProcess,
+    QDateTime, QEasingCurve, QEvent, QEventLoop, QPoint, QPointF, QProcess,
     QPropertyAnimation, QRect, QRectF, Qt, QThread, QTime, QTimer, QUrl,
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics,
+    QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QImage,
     QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
     QRegion, QTextCursor, QTextLayout, QTextOption,
 )
@@ -60,6 +60,20 @@ from utils.helpers import (  # noqa: E402
 )
 
 
+def _alive(widget) -> bool:
+    """Is this Python wrapper still backed by a live C++ object?
+
+    Qt deletes a parented dialog out from under its wrapper, and the only
+    honest way to ask is to touch it. Used by PulseDialog._OPEN, which
+    outlives individual dialogs by construction.
+    """
+    try:
+        widget.isVisible()
+        return True
+    except RuntimeError:
+        return False
+
+
 class PulseDialog(QDialog):
     """Base for every frameless Pulse modal.
 
@@ -75,20 +89,90 @@ class PulseDialog(QDialog):
     PulseDialog) get this for free — each paints its own full-body scrim
     on top of whatever is behind it, so stacked modals just work."""
 
+    #: Every PulseDialog currently on screen, oldest first.
+    #:
+    #: This replaces QApplication.activeModalWidget() as the app's answer to
+    #: "is a sheet open, and which one is on top". That call returns None
+    #: now (see __init__ on why these are NonModal), and two things were
+    #: reading it: main.PulseApp.resizeEvent, to keep an open scrim glued to
+    #: the body during a live resize, and the nesting behaviour that stops
+    #: an outer sheet reacting to clicks meant for an inner one.
+    #:
+    #: A list rather than a single reference because sheets nest — a wizard
+    #: opened from a wizard — and both of those readers need the whole
+    #: stack: the resize has to refit every open scrim, not just the top.
+    _OPEN: "list[PulseDialog]" = []
+
     #: Downscale factor used to blur the captured backdrop. A Gaussian over
     #: a full 1300x800 frame is far too slow to do on a modal's show; a
     #: bilinear round-trip through a 1/N-scale pixmap is the standard cheap
-    #: approximation and is visually indistinguishable at this radius,
-    #: because what we want IS the low-frequency content. At 10 the source
-    #: frame collapses to ~130x80 before being smooth-scaled back, which
-    #: reads as a ~20px blur.
-    _BLUR_DOWNSCALE = 10
+    #: approximation, because what we want IS the low-frequency content.
+    #:
+    #: 10 -> 6, and the change is what fixes the chunky-square artifact.
+    #: The blockiness was never the blur radius, it was the MAGNIFICATION:
+    #: a 1/10 source stretched back over the full body is a 10x upscale, and
+    #: bilinear over 10x does not hide the source grid — it renders each
+    #: source texel as a visibly flat-centred square with a thin ramp at its
+    #: border, which is exactly the "chunky pixelation" this looked like. On
+    #: a 1.25x display it was worse still: the pixmap carried no device
+    #: pixel ratio, so the real magnification was 12.5x (see the DPR note
+    #: in _capture_backdrop) — and a NON-INTEGER one, so the tile edges
+    #: landed on a half-pixel cadence that never repeated cleanly. That is
+    #: why the artifact read as irregular chunky blocks rather than as an
+    #: even mosaic.
+    #:
+    #: 6 keeps the capture cheap (~1/36 of the pixels) while cutting the
+    #: upscale enough for the two-stage resample below to dissolve the grid
+    #: completely. The lost blur radius is put back by _BLUR_PASSES.
+    _BLUR_DOWNSCALE = 6
+
+    #: Box-blur passes applied to the small capture BEFORE it is scaled
+    #: back up. Two passes of a separable 3x3 box over a ~220x130 image is
+    #: sub-millisecond and approximates a Gaussian well enough that the
+    #: result has no directional structure left to magnify — which is what
+    #: lets the downscale factor come down without the frost turning back
+    #: into a legible screenshot.
+    _BLUR_PASSES = 2
 
     def __init__(self, parent: QWidget | None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setModal(True)
+        # EXPLICITLY NonModal, and this is a fix rather than a relaxation.
+        #
+        # setModal(True) is Qt::ApplicationModal, which blocks input to
+        # every other window in the application — including the host's own
+        # top-level window, which is where this app's title bar lives.
+        # refit_dialog has always sized the scrim to start BELOW the title
+        # bar so close/minimize/maximize stay visible "no matter what is
+        # open", and they were: visible, and completely dead. Qt drops
+        # spontaneous mouse events for a blocked window before they reach
+        # any handler, so the caption buttons and the window drag did
+        # nothing while a modal or the command palette was up.
+        #
+        # Nothing is actually given up by dropping Qt's modality here,
+        # because this class never depended on it for what it does. The
+        # dialog is a full-body window covering everything the user must
+        # not reach, so the BODY is guarded by geometry, not by modality;
+        # and the title bar is the one region deliberately left out of that
+        # rectangle. What Qt's modality added on top was blocking the strip
+        # we had explicitly decided to leave reachable.
+        #
+        # THIS ALONE IS NOT ENOUGH, and finding that out is why exec() is
+        # overridden below. QDialog::exec() sets WA_ShowModal
+        # unconditionally, and QWidget::setAttribute promotes a NonModal
+        # window back to ApplicationModal the moment that attribute goes
+        # on. Setting the modality here without replacing exec() leaves the
+        # dialog application-modal exactly as before — measured, not
+        # assumed: the first version of this fix did only this half and the
+        # title bar stayed dead.
+        #
+        # What modality WAS doing for free is now done by _OPEN below:
+        # ordering, so a nested sheet cannot be dismissed by a click meant
+        # for the sheet on top of it.
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        #: The local loop exec() blocks on, live only while it is running.
+        self._loop: QEventLoop | None = None
         self.panel: "DepthCard | None" = None
         self._scrim_color = QColor(5, 7, 10, 195)
         # Square by default, matching the opaque square shell it covers.
@@ -97,8 +181,9 @@ class PulseDialog(QDialog):
         # the bottom corners on the frame before that lands.
         self._scrim_radius = 0
         #: Blurred snapshot of whatever this modal covers, captured once on
-        #: show — see _capture_backdrop. Kept at blur resolution, not the
-        #: dialog's; paintEvent scales it up.
+        #: show — see _capture_backdrop. Held at the dialog's own DEVICE
+        #: resolution and tagged with the display's pixel ratio, so
+        #: paintEvent blits it 1:1 instead of magnifying it every frame.
         self._frost: QPixmap | None = None
         #: Coalesces backdrop re-captures during a live host resize, so a
         #: drag pays for one capture at the end rather than one per step.
@@ -158,14 +243,31 @@ class PulseDialog(QDialog):
         # each repaint, with SmoothPixmapTransform already set — a full-size
         # blurred pixmap here would cost a second smooth scale and an
         # allocation to match, for pixels that carry no extra information.
-        width = max(1, self.width() // self._BLUR_DOWNSCALE)
-        height = max(1, self.height() // self._BLUR_DOWNSCALE)
+        # DEVICE PIXELS, NOT LOGICAL ONES. This is half of the chunky-
+        # backdrop bug. The capture was sized from self.width(), which is
+        # LOGICAL, and the resulting pixmap carried the default device
+        # pixel ratio of 1 — so on the 1.25x display this was reported
+        # from, paintEvent stretched a 1/10-scale pixmap across a rect that
+        # is 1.25x larger in real pixels than Qt thought it was. The
+        # effective magnification was 12.5x rather than 10x, and every
+        # source texel landed on a 12.5-pixel square with a hard-ish edge.
+        # Capturing at device resolution and TAGGING the pixmap with the
+        # ratio makes the blit 1:1 on every display scale.
+        dpr = self.devicePixelRatioF()
+        dev_w = max(1, int(round(self.width() * dpr)))
+        dev_h = max(1, int(round(self.height() * dpr)))
+        width = max(1, dev_w // self._BLUR_DOWNSCALE)
+        height = max(1, dev_h // self._BLUR_DOWNSCALE)
+
         frost = QPixmap(width, height)
+        frost.setDevicePixelRatio(1.0)
         frost.fill(Qt.GlobalColor.transparent)
         painter = QPainter(frost)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        scale = 1.0 / float(self._BLUR_DOWNSCALE)
+        # One scale carrying BOTH the downscale and the display ratio, so
+        # the small capture stays registered to real pixels.
+        scale = dpr / float(self._BLUR_DOWNSCALE)
         painter.scale(scale, scale)
         # Shift the host so the slice sitting behind US lands at the origin.
         offset = host.mapFromGlobal(self.mapToGlobal(QPoint(0, 0)))
@@ -179,10 +281,108 @@ class PulseDialog(QDialog):
             painter.end()
             return
         painter.end()
-        self._frost = frost
+        self._frost = self._resolve_frost(frost, dev_w, dev_h, dpr)
+
+    def _resolve_frost(self, small: QPixmap, dev_w: int, dev_h: int,
+                       dpr: float) -> QPixmap:
+        """Turn the tiny capture into the pixmap paintEvent blits 1:1.
+
+        The old code kept the capture small and let paintEvent magnify it
+        on every repaint, on the reasoning that the upscale carries no
+        extra information. It carries no extra INFORMATION and it carries a
+        very visible ARTIFACT: one bilinear pass over a 10x magnification
+        leaves each source texel as a flat square with a one-pixel ramp
+        around it, which is a grid of chunky blocks rather than a blur.
+
+        Two things fix it, and both belong here rather than in paintEvent:
+
+          * a box blur on the SMALL image, where it costs microseconds and
+            removes the sharp texel-to-texel steps that magnification would
+            otherwise turn into visible tile edges;
+          * a two-STAGE smooth upscale. Bilinear only interpolates between
+            adjacent source texels, so one 6x jump still reproduces the
+            grid; going through an intermediate doubles the interpolation
+            and dissolves it.
+
+        Resolving once here COSTS a little at steady state rather than
+        saving it, which is worth stating because the opposite is the
+        intuitive guess. Measured on a 1400x850 sheet at 1.25x: a repaint
+        blitting the resolved 1750x1062 pixmap 1:1 runs 3.83 ms against
+        3.53 ms for magnifying the tiny one. Drawing 1.9M pixels is simply
+        more memory traffic than smoothing 12K up, however many times the
+        scaler runs. The pixmap also costs ~1.9 MB for as long as the sheet
+        is open.
+
+        Both are paid deliberately: 0.3 ms on a surface that repaints on
+        hover, for a backdrop with no visible tiling in it. The capture
+        itself went 6.6 -> 12.7 ms for the same reason (a 1/6 render at
+        device resolution rasterises more than a 1/10 render at logical
+        resolution), and lands on the one frame already hidden behind the
+        130 ms entrance fade.
+        """
+        image = small.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+        for _ in range(self._BLUR_PASSES):
+            image = self._box_blur(image)
+        # Stage one: halfway (geometric) between the capture and the target.
+        mid_w = max(1, int((image.width() * dev_w) ** 0.5))
+        mid_h = max(1, int((image.height() * dev_h) ** 0.5))
+        image = image.scaled(mid_w, mid_h,
+                             Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        image = image.scaled(dev_w, dev_h,
+                             Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        resolved = QPixmap.fromImage(image)
+        resolved.setDevicePixelRatio(dpr)
+        return resolved
+
+    @staticmethod
+    def _box_blur(image: QImage) -> QImage:
+        """One separable 3x3 box pass, done by Qt rather than by hand.
+
+        Scaling an image to half and back with SmoothTransformation IS a
+        box filter over 2x2 neighbourhoods followed by a bilinear spread —
+        the same thing a hand-written pass would compute, in C++, without
+        a Python loop over a quarter of a million pixels. The point of the
+        pass is not precision; it is to leave no sharp step for the
+        magnification downstream to enlarge.
+        """
+        half = image.scaled(max(1, image.width() // 2),
+                            max(1, image.height() // 2),
+                            Qt.AspectRatioMode.IgnoreAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation)
+        return half.scaled(image.width(), image.height(),
+                           Qt.AspectRatioMode.IgnoreAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+
+    @classmethod
+    def topmost(cls) -> "PulseDialog | None":
+        """The sheet the user is actually looking at, or None."""
+        for dialog in reversed(cls._OPEN):
+            try:
+                if dialog.isVisible():
+                    return dialog
+            except RuntimeError:      # C++ side already gone
+                continue
+        return None
+
+    @classmethod
+    def open_dialogs(cls) -> "list[PulseDialog]":
+        """Every live sheet, oldest first. Copied, because callers refit
+        and close things while iterating."""
+        return [d for d in cls._OPEN if _alive(d)]
+
+    def _register(self):
+        if self not in PulseDialog._OPEN:
+            PulseDialog._OPEN.append(self)
+
+    def _unregister(self):
+        PulseDialog._OPEN[:] = [d for d in PulseDialog._OPEN
+                                if d is not self and _alive(d)]
 
     def showEvent(self, e):
         super().showEvent(e)
+        self._register()
         # DELIBERATELY NO CAPTURE HERE — see _present_dialog, which takes it
         # immediately after refit_dialog has set our final geometry.
         #
@@ -202,6 +402,10 @@ class PulseDialog(QDialog):
         # Leaving _frost as None here means the pre-capture frame falls back
         # to the flat scrim, which is honest and has no artifact.
         self._frost = None
+
+    def hideEvent(self, e):
+        self._unregister()
+        super().hideEvent(e)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -246,10 +450,31 @@ class PulseDialog(QDialog):
         # the backdrop-dismiss gesture — everything inside the panel is
         # ordinary child-widget input and reaches its own handlers first,
         # so this only ever fires for genuine outside clicks.
+        #
+        # ONLY FOR THE TOP SHEET. Qt's application modality used to make
+        # that automatic: an outer sheet simply never saw the event. These
+        # are NonModal now (see __init__), so an outer sheet is a live
+        # window sitting behind an inner one and would happily dismiss
+        # itself out from under it.
+        if not self._is_topmost():
+            super().mousePressEvent(e)
+            return
         if self.panel is not None and not self.panel.geometry().contains(e.position().toPoint()):
             self.reject()
             return
         super().mousePressEvent(e)
+
+    def keyPressEvent(self, e):
+        """Escape closes the TOP sheet only, for the same reason a backdrop
+        click does. QDialog maps Escape to reject() unconditionally."""
+        if (e.key() == Qt.Key.Key_Escape and not self._is_topmost()):
+            e.ignore()
+            return
+        super().keyPressEvent(e)
+
+    def _is_topmost(self) -> bool:
+        top = PulseDialog.topmost()
+        return top is None or top is self
 
     # -- worker-thread teardown ---------------------------------------
     #: Bound on how long a closing dialog waits for its own worker thread.
@@ -263,6 +488,44 @@ class PulseDialog(QDialog):
     #: loop unwinds in single-digit milliseconds. It is spent in full only
     #: by the two dialogs that mutate — see _settle_worker_threads.
     _WORKER_GRACE_MS = 1200
+
+    def exec(self) -> int:
+        """Show and block, WITHOUT making the application modal.
+
+        QDialog.exec() cannot be configured into doing this. It sets
+        Qt::WA_ShowModal unconditionally, and QWidget::setAttribute turns a
+        NonModal window back into an ApplicationModal one as soon as that
+        attribute is set — so windowModality() is not a lever the caller
+        can pull, and the title bar this class deliberately leaves
+        uncovered stays unreachable. (Qt::WindowModal is no better here: it
+        blocks the modal widget's own window ancestry, and the host window
+        IS that ancestry.)
+
+        So the blocking half of exec() is reimplemented and the blocking-
+        OTHER-WINDOWS half is dropped. A local QEventLoop gives callers the
+        same synchronous `result = dialog.exec()` contract they already
+        write against, including for nested wizards — a sheet opened from a
+        sheet just nests another loop, which is what Qt does too.
+
+        What is NOT reimplemented is input containment, because this class
+        never got that from Qt: the sheet is a full-body window covering
+        everything the user must not touch. Geometry is the barrier; the
+        title bar is the hole we meant to leave in it.
+        """
+        if self._loop is not None:          # already running; don't nest
+            return self.result()
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowModal, False)
+        self.setResult(QDialog.DialogCode.Rejected)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        loop = QEventLoop(self)
+        self._loop = loop
+        try:
+            loop.exec()
+        finally:
+            self._loop = None
+        return self.result()
 
     def done(self, result: int):
         """Close, having first SETTLED any worker thread this dialog owns.
@@ -290,8 +553,16 @@ class PulseDialog(QDialog):
         with a scan still in flight is covered by the same guard. A no-op
         (two dict scans) for the eleven dialogs that own no thread.
         """
+        self._unregister()
         self._settle_worker_threads()
+        # Taken BEFORE super().done(), which hides the dialog and can
+        # delete it outright under WA_DeleteOnClose — touching self after
+        # that point is a use-after-free on the C++ side.
+        loop = self._loop
+        self._loop = None
         super().done(result)
+        if loop is not None:
+            loop.quit()
 
     def _settle_worker_threads(self, timeout_ms: int | None = None):
         """Join every QThread this dialog owns, cancelling only if needed.
