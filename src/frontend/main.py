@@ -3450,6 +3450,33 @@ class PulseApp(QMainWindow):
                 if y < tb_bottom and not self._over_theme_button(rect, x, y):
                     return True, 2   # HTCAPTION
 
+                # A MAXIMIZED WINDOW OWNS EVERY REMAINING PIXEL AS CLIENT.
+                #
+                # "No resize border while maximized" was the intent from the
+                # start (see this method's docstring), but it was only ever
+                # expressed by NOT answering — the border block above is
+                # skipped, nothing else matches, and the message fell through
+                # to DefWindowProc on the assumption that Windows would say
+                # HTCLIENT because WS_MAXIMIZE is set.
+                #
+                # That assumption is not ours to make, and it stopped being
+                # true: on PySide6 6.11.2 the same window, with byte-identical
+                # styles and the same -9,-9 maximized rect, comes back HTLEFT
+                # two pixels inside its own left edge, where 6.11.1 did not.
+                # The visible symptom is a maximized window showing resize
+                # cursors along edges it cannot be resized from, and the
+                # regression arrives without a commit — `PySide6>=6.6,<7` in
+                # requirements.txt means CI installs whatever shipped most
+                # recently.
+                #
+                # Stating the intent outright costs one line and removes the
+                # dependency on a third party agreeing with us. HTCLIENT is
+                # correct here by construction: WM_NCCALCSIZE above makes the
+                # client area cover the entire window, and the caption zones
+                # and title-bar strip have already claimed their pixels.
+                if self.isMaximized():
+                    return True, 1   # HTCLIENT
+
             elif (msg.message == self._WM_NCLBUTTONDOWN
                     and msg.wParam in self._HT_CAPTION.values()):
                 return True, 0   # consume — no default non-client flicker
