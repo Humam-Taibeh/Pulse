@@ -136,6 +136,87 @@ def test_the_type_scale_has_no_redundant_steps():
 
 
 # ============================================================
+#  THE RADIUS RAMP
+# ============================================================
+#: `border-radius: 12px` written straight into a QSS string.
+_RADIUS_LITERAL = re.compile(r"border-radius:\s*(\d+)px")
+
+
+def test_the_radius_ramp_is_exactly_three_tiers():
+    """The third scale, held to the same standard as SPACE and TYPE.
+
+    Through v12 this ran five steps — 8/10/12/14/18 — and five steps is
+    what fragmentation looks like once it has been given names. Two pixels
+    is below the threshold at which a corner difference reads as a
+    decision and above the threshold at which it reads as sloppiness, so a
+    10px button beside a 12px icon well beside a 14px card read as one
+    family drawn slightly wrong rather than as three levels of anything.
+
+    Three tiers, and the semantic names deliberately COLLIDE onto them:
+    `control`, `plaque` and `card` all resolving to 12 is the scale
+    asserting that a button, an icon well and a card ARE the same tier,
+    which is a statement the old ramp had no way to make.
+    """
+    tiers = sorted(set(TH.RADIUS.values()))
+    assert tiers == [8, 12, 16], (
+        f"the radius ramp is back to {len(tiers)} values {tiers} — see the "
+        "note on TH.RADIUS for why three is the whole point")
+
+
+def test_every_semantic_radius_lands_on_a_tier():
+    """A name is allowed to share a tier. A name is not allowed to invent
+    one — that is how five steps happened the first time."""
+    tiers = set(TH.RADIUS.values())
+    strays = {name: px for name, px in TH.RADIUS.items() if px not in tiers}
+    assert not strays, f"radius names off the ramp: {strays}"
+
+
+@pytest.mark.parametrize("module", _TYPED_MODULES)
+def test_every_radius_literal_is_a_tier_or_sub_chip(module):
+    """No hand-picked corners in QSS, the same guard the spacing and type
+    scales already carry.
+
+    Two things are legal besides a tier. ZERO, because a surface can be
+    deliberately square — the shell is, and has its own test saying so
+    (test_rendering.test_shell_paints_square_corners). And anything BELOW
+    the smallest tier, because a scrollbar handle or a meter bar is not a
+    surface with a corner style, it is a 4px-thick sliver whose radius is
+    half its own thickness. What is forbidden is the middle: a literal
+    sitting between the tiers is a corner nobody chose, and it is exactly
+    what `border-radius: 10px` would be.
+    """
+    tiers = set(TH.RADIUS.values())
+    source = open(os.path.join(_FRONTEND, module), encoding="utf-8").read()
+    lines = source.splitlines()
+    off_ramp = [(i + 1, line.strip())
+                for i, line in enumerate(lines)
+                for m in _RADIUS_LITERAL.finditer(line)
+                if int(m.group(1)) not in tiers
+                and int(m.group(1)) >= min(tiers)]
+    listing = "\n".join(f"  {module}:{ln}  {text}"
+                        for ln, text in off_ramp)
+    assert not off_ramp, (
+        f"{len(off_ramp)} border-radius literal(s) off the ramp "
+        f"{sorted(tiers)}:\n{listing}")
+
+
+def test_an_inset_child_stays_concentric():
+    """TH.inner_radius exists because `RADIUS['chip']-1` was written into
+    seven QSS strings by hand. Two rounded rects sharing a centre only read
+    as one nested object when their radii differ by exactly the gap between
+    them."""
+    for outer in sorted(set(TH.RADIUS.values())):
+        for inset in (1, 2, 3):
+            assert TH.inner_radius(outer, inset) == max(2, outer - inset)
+
+
+def test_an_inset_child_never_squares_off():
+    """A deep inset must not hand back a 0 radius: a square corner inside a
+    rounded surface is the one result worse than a mismatched one."""
+    assert TH.inner_radius(TH.RADIUS["chip"], 99) >= 2
+
+
+# ============================================================
 #  SECTION BANDS
 # ============================================================
 class TestSectionBands:

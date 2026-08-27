@@ -1656,11 +1656,15 @@ class PulseApp(QMainWindow):
 
         # Anchors the nav column so it no longer floats above a void — a
         # quiet identity line the way VS Code / Linear close their rails.
-        # A QPushButton, not a QLabel (v10.3): this is also the self-
-        # updater's one call site (see updater.py) — clicking it checks for
+        # A QPushButton, not a QLabel (v10.3): clicking it checks for
         # updates, or opens the SelfUpdateDialog directly for one a silent
-        # background check already found. setFlat + label_qss keep it
-        # looking exactly like the plain caption it replaced.
+        # background check already found. setFlat + sidebar_version_qss
+        # keep it looking exactly like the plain caption it replaced.
+        #
+        # v12.1: it no longer REPORTS the answer. Update status moved to
+        # the Activity rail's UpdatePill, which is toned and legible at
+        # rest; this line is identity plus a second way in. The two share
+        # _on_footer_clicked, so both honour the same in-flight guards.
         self._side_footer = QPushButton(f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}")
         self._side_footer.setFlat(True)
         self._side_footer.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1712,6 +1716,13 @@ class PulseApp(QMainWindow):
         self.shimmer = self.activity.shimmer
         self.status_dot = self.activity.status_dot
         self.status_text = self.activity.status_text
+        # The self-updater's status surface and its manual entry point.
+        # Shares _on_footer_clicked with the sidebar footer rather than
+        # carrying a second copy of that logic: the "already checking" and
+        # "already have an update in hand" guards must hold no matter which
+        # of the two the user reaches for.
+        self.update_pill = self.activity.update_pill
+        self.update_pill.clicked.connect(self._on_footer_clicked)
 
         body.addWidget(self._content, 1)
         self.toasts = ToastManager(self._shell, t)
@@ -1967,10 +1978,12 @@ class PulseApp(QMainWindow):
             self._probe_thread = None
 
     # ============================================================
-    #  SELF-UPDATE (v10.3) — the sidebar footer's click, and one silent
-    #  background check on launch. This is updater.py's ONLY GUI call
-    #  site: everything else (download/verify progress, the SHA-256
-    #  hand-off) lives in SelfUpdateDialog, which this only opens.
+    #  SELF-UPDATE (v10.3) — two manual entry points (the Activity
+    #  rail's UpdatePill and the sidebar footer, both landing on
+    #  _on_footer_clicked) plus one silent background check on launch.
+    #  This is updater.py's ONLY GUI call site: everything else
+    #  (download/verify progress, the SHA-256 hand-off) lives in
+    #  SelfUpdateDialog, which this only opens.
     # ============================================================
     def _on_footer_clicked(self):
         if self._update_check_thread is not None:
@@ -2009,6 +2022,7 @@ class PulseApp(QMainWindow):
         # write here and the read in the slot happen on the GUI thread, so
         # the companion field cannot race or desync from its request.
         self._update_check_silent = silent
+        self.update_pill.set_state("checking", "Checking for updates…")
         thread = QThread(self)
         worker = SelfUpdateCheckWorker(version.VERSION, version.CHANNEL)
         worker.moveToThread(thread)
@@ -2036,20 +2050,30 @@ class PulseApp(QMainWindow):
         silent = self._update_check_silent
         self._pending_update = update
         if update is None:
+            self.update_pill.set_state(
+                "current", f"Pulse v{version.VERSION} is the latest release. "
+                           "Click to check again.")
             if not silent:
                 self.toasts.show(
                     "success", f"You're up to date — v{version.VERSION}.", 3500)
             return
-        # Update the footer to say so even for a silent check — a toast
-        # alone disappears; the footer is where the answer stays findable.
-        self._side_footer.setText(
-            f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}  ·  "
-            f"Update available")
+        # The pill says so even for a silent check — a toast alone
+        # disappears; the rail is where the answer stays findable.
+        #
+        # This used to be appended to the sidebar footer's own identity
+        # line ("… · Update available") at the `caption` role: 10px,
+        # weight 500, on text_faint. The app's most actionable
+        # notification was rendered in its faintest type and only became
+        # emphatic on hover. It is now a toned, plated, AA-at-rest chip
+        # in the Activity rail — see theme.update_pill_qss.
+        self.update_pill.set_state(
+            "available", f"Pulse v{update.version} is available — "
+                         "click to install.")
         if silent:
             self.toasts.show(
                 "info",
-                f"Pulse v{update.version} is available — click your version "
-                "in the sidebar to install.", 6000)
+                f"Pulse v{update.version} is available — click "
+                "UPDATE in the status bar to install.", 6000)
         else:
             # Deferred one turn rather than opened inline. This slot runs
             # while worker.finished is still being delivered: thread.quit

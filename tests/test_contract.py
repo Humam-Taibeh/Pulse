@@ -1177,6 +1177,92 @@ class TestThemes:
             "modules sharing a colour:\n  " + "\n  ".join(failures))
 
 
+    #: OKLCh chroma ceilings, in percent, for any single accent and for the
+    #: set's mean. The v12.1 palette measures max 15.22% (light 'software')
+    #: and means of 10.10 / 10.38 — so these sit ~1.8 and ~1.6 points clear.
+    #:
+    #: DELIBERATELY LOOSE ENOUGH TO ALLOW A REAL EDIT, TIGHT ENOUGH TO CATCH
+    #: THE FAILURE. The palette this replaced measured 20.5% (dark 'err')
+    #: and 23.5% (light 'software'), with five tokens at 100% HSL
+    #: saturation; both would breach these by a wide margin.
+    _CHROMA_CEILING = 17.0
+    _CHROMA_MEAN_CEILING = 12.0
+
+    @staticmethod
+    def _oklch_chroma(value: str) -> float:
+        """OKLCh chroma, 0-100. Perceptual, so ONE threshold is meaningful
+        across every hue — which plain HSL saturation is not: #ea9804 and
+        #7d9bff both report ~100% there while looking nothing alike."""
+        import math
+        from frontend import theme as TH
+        r, g, b, _a = TH._parse_color(value)
+        chans = [c / 255 for c in (r, g, b)]
+        chans = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+                 for c in chans]
+        r, g, b = chans
+        l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+        m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+        s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+        l, m, s = (math.copysign(abs(v) ** (1 / 3), v) for v in (l, m, s))
+        a_ = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+        b_ = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+        return math.hypot(a_, b_) * 100
+
+    def _accent_chromas(self, tokens) -> dict:
+        values = {key: tokens[key] for key in
+                  ("accent", "accent2", "accent3", "ok", "warn", "err")}
+        values.update({f"module.{k}": v for k, v in tokens["module"].items()})
+        return values, {k: self._oklch_chroma(v) for k, v in values.items()}
+
+    def test_no_accent_exceeds_the_chroma_ceiling(self, qapp):
+        """THE CALM CONTRACT (v12.1).
+
+        Contrast and peer parity were both already pinned, and the palette
+        still shipped five tokens at 100% HSL saturation — because nothing
+        constrained CHROMA. Contrast can be satisfied at any saturation, so
+        a solve that only chases ratios has no reason not to drift loud,
+        and this one did: OKLCh chroma spanned 39.6% to 90.2% across the
+        set, which is why a few modules shouted while the rest whispered.
+
+        This is the missing constraint, and it has to exist SEPARATELY
+        because the failure it catches is invisible to every other test in
+        this file. The v12.1 re-solve moved chroma at FIXED LUMINANCE
+        precisely so no ratio changed — which means the reverse edit would
+        also hold every ratio, keep peer parity, keep dE, and pass the
+        whole suite while walking the palette straight back to neon.
+        """
+        failures = []
+        for name, tokens in self._themes(qapp).items():
+            values, chromas = self._accent_chromas(tokens)
+            for key, chroma in sorted(chromas.items(), key=lambda kv: -kv[1]):
+                if chroma > self._CHROMA_CEILING:
+                    failures.append(
+                        f"{name}: {key} ({values[key]}) has OKLCh chroma "
+                        f"{chroma:.1f}%, over the {self._CHROMA_CEILING}% "
+                        "ceiling")
+            mean = sum(chromas.values()) / len(chromas)
+            if mean > self._CHROMA_MEAN_CEILING:
+                failures.append(
+                    f"{name}: the accent set averages {mean:.1f}% chroma, "
+                    f"over the {self._CHROMA_MEAN_CEILING}% ceiling — the "
+                    "whole palette is drifting loud, not one token")
+        assert not failures, (
+            "accents drifting back toward neon:\n  " + "\n  ".join(failures))
+
+    def test_the_two_themes_stay_equally_calm(self, qapp):
+        """A module must be the SAME colour in both themes, so it must also
+        carry the same WEIGHT. Re-saturating one mode on its own gives the
+        app two palettes wearing one set of names."""
+        means = {}
+        for name, tokens in self._themes(qapp).items():
+            values = list(tokens["module"].values())
+            means[name] = sum(self._oklch_chroma(v) for v in values) / len(values)
+        spread = max(means.values()) / min(means.values())
+        assert spread <= 1.25, (
+            f"module chroma differs by {spread:.2f}x between themes "
+            f"({means}) — one mode has been re-saturated alone")
+
+
 def test_every_bound_shortcut_is_documented(window):
     """SHORTCUTS is meant to be the single source of truth for both the
     bindings and the help sheet — Ctrl+F was bound but undocumented."""

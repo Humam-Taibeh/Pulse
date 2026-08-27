@@ -26,7 +26,7 @@ from PySide6.QtCore import (
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QCursor, QDesktopServices, QFont, QFontMetrics,
+    QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics,
     QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
     QRegion, QTextCursor, QTextLayout, QTextOption,
 )
@@ -513,7 +513,8 @@ def _chip_strip(t: dict,
 
 
 def _dialog_chrome(dialog: PulseDialog, t: dict, accent: str,
-                   width: int = 0, radius: int = 18, anchor: str = "center",
+                   width: int = 0, radius: int = TH.RADIUS["panel"],
+                   anchor: str = "center",
                    responsive: bool = False) -> "DepthCard":
     """One shared construction path for every Pulse dialog: the frosted
     DepthCard panel, laid out centered (or top-anchored for the command
@@ -886,6 +887,9 @@ class NavButton(QPushButton):
         self._accent = QColor(TH.resolve_accent(t, accent_key))
         self._accent2 = QColor(t["accent2"])
         self._icon_font: QFont | None = None
+        self._halo: tuple[float, int] = (0.13, 3)
+        self._inner = 0.20
+        self._light = False
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
@@ -908,6 +912,10 @@ class NavButton(QPushButton):
         # monochrome text_soft), so all six modules read as a colored rail at
         # rest — matching the newly-colored GlassCard plaques (icon_plaque_qss).
         self._glyph_color_idle = QColor(self._accent)
+        # v13 plaque material, shared with widgets.IconPlaque
+        self._halo = TH.plaque_halo(t)
+        self._inner = TH.plaque_inner(t)
+        self._light = t["name"] == "light"
 
     def set_selected(self, on: bool):
         self.setProperty("selected", on)
@@ -920,10 +928,41 @@ class NavButton(QPushButton):
         super().mousePressEvent(e)
 
     def _paint_plaque(self, p: QPainter):
+        """The rail's icon well — the same micro-surface the cards wear.
+
+        v13 brings it into line with widgets.IconPlaque: a soft accent
+        halo outside the well and a lit inner rim inside it. The two
+        plaques are the same element in two places, and before this they
+        were built by two different pieces of code that agreed on nothing
+        but the tint. A sidebar entry and the card it opens now read as one
+        object seen twice, which is most of what "cohesion" means here.
+
+        The nav plaque keeps its own SELECTED state (the card has no such
+        thing), and its own lighter tint: at 30px on the rail's panel tier
+        the card's 0.24 wash reads as a solid colour chip.
+        """
         selected = bool(self.property("selected"))
         y = (self.height() - self._PLAQUE) / 2.0
         box = QRectF(self._PLAQUE_X, y, self._PLAQUE, self._PLAQUE)
+        radius = float(TH.RADIUS["plaque"])
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # ambient halo — brighter under the selected module, which is the
+        # rail's only "this one is live" cue besides the indicator bar
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        halo_alpha, halo_spread = self._halo
+        halo_alpha *= 1.45 if selected else 1.0
+        for i in range(halo_spread):
+            step = i + 1
+            a = halo_alpha * (1.0 - i / float(halo_spread)) ** 2.0
+            if a <= 0.004:
+                break
+            glow = QColor(self._accent)
+            glow.setAlphaF(min(1.0, a))
+            p.setPen(QPen(glow, 1.0))
+            p.drawRoundedRect(box.adjusted(-step, -step, step, step),
+                              radius + step, radius + step)
+
         # brighter fill/glyph when selected — the plaque lights with the module
         fill = QColor(self._accent)
         fill.setAlphaF(0.20 if selected else 0.12)
@@ -931,7 +970,23 @@ class NavButton(QPushButton):
         line.setAlphaF(0.45 if selected else 0.30)
         p.setPen(QPen(line, 1.0))
         p.setBrush(fill)
-        p.drawRoundedRect(box, 9, 9)
+        p.drawRoundedRect(box, radius, radius)
+
+        # lit inner rim — see theme.PLAQUE_INNER
+        inner = box.adjusted(1.5, 1.5, -1.5, -1.5)
+        if inner.width() > 2 and inner.height() > 2:
+            rim = QColor(self._accent) if self._light else QColor(255, 255, 255)
+            top = QColor(rim)
+            top.setAlphaF(self._inner)
+            bottom = QColor(rim)
+            bottom.setAlphaF(0.0)
+            rim_grad = QLinearGradient(inner.topLeft(), inner.bottomLeft())
+            rim_grad.setColorAt(0.0, top)
+            rim_grad.setColorAt(0.75, bottom)
+            p.setPen(QPen(QBrush(rim_grad), 1.0))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(inner, radius - 1.5, radius - 1.5)
+
         # glyph
         p.setPen(self._accent if selected else self._glyph_color_idle)
         if self._icon_font is not None:
@@ -946,10 +1001,11 @@ class NavButton(QPushButton):
         super().paintEvent(e)  # QSS background/text first
         p = QPainter(self)
         self._paint_plaque(p)
-        paint_bevel_frame(p, self.rect(), 13)
-        paint_ripple_frame(p, self.rect(), 13, self._glow.color,
+        radius = TH.RADIUS["plaque"]
+        paint_bevel_frame(p, self.rect(), radius)
+        paint_ripple_frame(p, self.rect(), radius, self._glow.color,
                            self._ripple.progress, self._ripple.origin)
-        paint_glow_frame(p, self.rect(), 13, self._glow.color,
+        paint_glow_frame(p, self.rect(), radius, self._glow.color,
                          self._glow.intensity, self._glow.cursor,
                          halo_alpha=self._glow.halo_alpha,
                          edge_alpha=self._glow.edge_alpha)
@@ -1355,6 +1411,175 @@ class ClampedLabel(QLabel):
         self.setToolTip(self._full)
 
 
+class StatusChip(QLabel):
+    """A card's verdict badge (APPLIED / MODIFIED / ACTION DUE / DEFAULT) —
+    a frosted pill rather than a filled rectangle with rounded ends.
+
+    Everything about its PLATE is still theme.state_chip_qss, and that is
+    deliberate: the plate is the surface the 9px text is solved against,
+    and the contrast table in that function is the reason the badge is
+    legible on the worst card it can land on. Nothing here touches it.
+
+    What this adds is the one pixel QSS cannot reach — a lit rim along the
+    top edge, painted over the chip's own border. It is the same cue the
+    cards use two scales up (theme.sheen_alphas) and the icon wells use one
+    scale up (IconPlaque), so a badge, a plaque and a card all catch light
+    from the same direction. Contrast-neutral by construction: the rim has
+    faded out 1.5px in, and the text starts CHIP_PAD_V + 1 px down. See
+    theme.chip_sheen.
+
+    Static, like everything else in this file's steady state: one cached
+    perimeter blit on a repaint the label was doing anyway.
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self._sheen: tuple[int, float] | None = None
+
+    def set_sheen(self, t: dict):
+        self._sheen = TH.chip_sheen(t)
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)       # the QSS plate, border and text
+        if self._sheen is None:
+            return
+        peak, depth = self._sheen
+        p = QPainter(self)
+        paint_top_sheen(p, self.rect(), TH.RADIUS["chip"], strength=1.0,
+                        peak=peak, depth=depth)
+        p.end()
+
+
+class IconPlaque(QLabel):
+    """A card's icon well — a painted micro-surface, not a coloured box.
+
+    Through v12 this was a plain QLabel wearing icon_plaque_qss: one flat
+    accent gradient inside one flat 1px accent border, sitting directly on
+    the card with nothing between them. Every premium desktop app this one
+    is measured against (Linear, Raycast, Fluent 2) builds the same element
+    as a MATERIAL instead, and the difference is three things QSS cannot
+    put on a QLabel:
+
+      * an ambient HALO outside the well, so the module's colour is in the
+        air around the glyph rather than stopping dead at a border;
+      * a second hairline INSIDE the first, lit at the top — the same "this
+        has a top face" cue the cards themselves use one scale up (see
+        theme.sheen_alphas), spent as a single stroke because at 42px a
+        gradient has nowhere to fall off;
+      * a lit top rim on the well's own edge, so the plaque catches the
+        same overhead light the card does instead of being lit from
+        nowhere.
+
+    CONTRAST-NEUTRAL BY CONSTRUCTION. The well fill is the identical
+    translucent gradient icon_plaque_qss used to declare, at the identical
+    per-mode alphas (theme.plaque_tints), composited over the identical
+    card. Everything added lives at the EDGE — outside the well, or in its
+    outermost pixel — so nothing new lands between the glyph and its
+    background. The in-plaque contrast solve icon_plaque_qss documents
+    measures the same before and after, which is why it did not have to be
+    re-run.
+
+    STATIC. No timer, no animation, no QGraphicsEffect: the whole thing is
+    four cached-cheap strokes and a fill, repainted only when the card
+    repaints anyway. The glyph is still drawn by QLabel itself, so the
+    hover "pop" (GlassCard._sync_icon_scale, a setFont on a handful of
+    frames) keeps working untouched.
+    """
+
+    #: Room reserved inside the widget for the halo to bleed into. The well
+    #: shrinks by this much rather than the widget growing, so the card's
+    #: header row, its minimum width and its height envelope are all
+    #: byte-for-byte what they were.
+    _PAD = 3
+
+    def __init__(self, text: str, parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self._accent = QColor("#7d9bff")
+        self._tint: tuple[float, float] = (0.24, 0.13)
+        self._halo: tuple[float, int] = (0.13, 3)
+        self._inner = 0.20
+        self._light = False
+
+    def apply_theme(self, t: dict, accent: str):
+        self.setStyleSheet(TH.icon_plaque_qss(t, accent))
+        self._accent = QColor(TH.to_qcolor(accent))
+        self._tint = TH.plaque_tints(t)
+        self._halo = TH.plaque_halo(t)
+        self._inner = TH.plaque_inner(t)
+        self._light = t["name"] == "light"
+        self.update()
+
+    def _accent_alpha(self, a: float) -> QColor:
+        c = QColor(self._accent)
+        c.setAlphaF(max(0.0, min(1.0, a)))
+        return c
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        radius = float(TH.RADIUS["plaque"])
+        pad = float(self._PAD)
+        well = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
+
+        # -- 1. ambient halo, OUTSIDE the well ------------------------
+        # Concentric strokes walking outward from the well's edge, each a
+        # pixel clear of the last so the falloff is actually spent across
+        # the pad instead of piling onto one row. Squared falloff: a linear
+        # ramp at this few steps reads as a hard ring.
+        halo_alpha, halo_spread = self._halo
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(halo_spread):
+            step = i + 1
+            a = halo_alpha * (1.0 - i / float(halo_spread)) ** 2.0
+            if a <= 0.004:
+                break
+            p.setPen(QPen(self._accent_alpha(a), 1.0))
+            p.drawRoundedRect(well.adjusted(-step, -step, step, step),
+                              radius + step, radius + step)
+
+        # -- 2. the well itself: the v9 accent wash, unchanged ---------
+        a_top, a_bot = self._tint
+        grad = QLinearGradient(well.topLeft(), well.bottomLeft())
+        grad.setColorAt(0.0, self._accent_alpha(a_top))
+        grad.setColorAt(1.0, self._accent_alpha(a_bot))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(grad)
+        p.drawRoundedRect(well, radius, radius)
+
+        # -- 3. outer hairline, on the well's edge ---------------------
+        # Inset half a pixel so a 1px cosmetic pen lands on one row instead
+        # of antialiasing across two — the same correction paint_bevel_frame
+        # makes for the same reason.
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(self._accent_alpha(TH.PLAQUE_LINE), 1.0))
+        p.drawRoundedRect(well.adjusted(0.5, 0.5, -0.5, -0.5),
+                          radius - 0.5, radius - 0.5)
+
+        # -- 4. inner hairline: the top rim that makes it a surface -----
+        # A vertical gradient pen rather than a flat colour, so the rim is
+        # lit where the light would fall and gone by the bottom edge. Dark
+        # spends it in white (on obsidian, white IS light); light spends it
+        # in the accent's own hue, which reads as the tint deepening toward
+        # the rim — a bevel rather than a highlight it has no room for.
+        # See theme.PLAQUE_INNER.
+        inner = well.adjusted(1.5, 1.5, -1.5, -1.5)
+        if inner.width() > 2 and inner.height() > 2:
+            rim = QColor(self._accent) if self._light else QColor(255, 255, 255)
+            top = QColor(rim)
+            top.setAlphaF(self._inner)
+            bottom = QColor(rim)
+            bottom.setAlphaF(0.0)
+            rim_grad = QLinearGradient(inner.topLeft(), inner.bottomLeft())
+            rim_grad.setColorAt(0.0, top)
+            rim_grad.setColorAt(0.75, bottom)
+            p.setPen(QPen(QBrush(rim_grad), 1.0))
+            p.drawRoundedRect(inner, radius - 1.5, radius - 1.5)
+        p.end()
+
+        super().paintEvent(e)   # the glyph, in the colour QSS gave it
+
+
 class GlassCard(QFrame):
     clicked = Signal()
     # Arrow-key traversal request: "left" | "right" | "up" | "down". The
@@ -1508,7 +1733,7 @@ class GlassCard(QFrame):
         char, self._glyph_fluent = (
             TH.glyph(item["glyph"]) if item.get("glyph")
             else (item.get("icon", "•"), False))
-        self._icon = QLabel(char)
+        self._icon = IconPlaque(char)
         self._icon.setFixedSize(self._PLAQUE, self._PLAQUE)
         self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Font is managed as a QFont object, not inline QSS: hover "pop" is
@@ -1582,7 +1807,7 @@ class GlassCard(QFrame):
         # stays zero-height until something needs it (the chip and badge
         # both start hidden), so a plain action card is unchanged visually.
         self._meta_pills: list[QLabel] = []
-        self._applied_chip = QLabel("APPLIED")
+        self._applied_chip = StatusChip("APPLIED")
         self._applied_chip.hide()
         # v10.1 run history ("Ran 3d ago · ~2m"). Starts hidden and stays
         # hidden until this task has actually been run, so a fresh install
@@ -1645,7 +1870,7 @@ class GlassCard(QFrame):
         self._accent = TH.resolve_accent(t, self._accent_key)
         self.setStyleSheet(TH.card_qss(t, self._accent, self._danger, self._featured))
         plaque_accent = t["err"] if self._danger else self._accent
-        self._icon.setStyleSheet(TH.icon_plaque_qss(t, plaque_accent, self._featured))
+        self._icon.apply_theme(t, plaque_accent)
         self._title.setStyleSheet(TH.label_qss(t, "card"))
         self._desc.setStyleSheet(TH.label_qss(t, "desc"))
         if self._badge is not None:
@@ -1662,12 +1887,14 @@ class GlassCard(QFrame):
         self._tokens = t
         self._applied_chip.setStyleSheet(
             TH.state_chip_qss(t, self._applied or "applied"))
+        self._applied_chip.set_sheen(t)
         self._history_pill.setStyleSheet(TH.card_history_pill_qss(t))
         self._glow.set_accent(plaque_accent)
         self._glow.set_alphas(*TH.glow_alphas(t))
         # painted-material state, read in paintEvent
         self._bevel = TH.bevel_alphas(t)
         self._shadow = TH.shadow_alphas(t)
+        self._sheen = TH.sheen_alphas(t)
         self._feat_base = TH.to_qcolor(t["card_hi"])
         self._feat_sheen = TH.to_qcolor(t["card_sheen"])
         self._aur1 = QColor(t["accent"])
@@ -1931,7 +2158,8 @@ class GlassCard(QFrame):
         visual acknowledgement it started or how it ended.
         """
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        path = squircle_path(self.rect().adjusted(1, 1, -1, -1), 20)
+        path = squircle_path(self.rect().adjusted(1, 1, -1, -1),
+                             TH.RADIUS["panel"])
         # frosted-glass fill: top sheen falling into the card_hi base
         grad = QLinearGradient(self.rect().topLeft(), self.rect().bottomLeft())
         grad.setColorAt(0.0, self._feat_sheen)
@@ -2004,8 +2232,16 @@ class GlassCard(QFrame):
                 shadow_alpha * (1.0 + (TH.HOVER_LIFT_SHADOW - 1.0) * lift),
                 shadow_spread)
             paint_bevel_frame(p, self.rect(), radius, *self._bevel)
+            # The resting strength is a THEME value, not a shared 0.55:
+            # light spends nearly its whole budget at rest to erase the
+            # top hairline, dark spends it gradually. See
+            # theme.sheen_alphas. Clamped because light rests at 0.95 and
+            # the hover lift would otherwise ask for 1.25.
+            sheen_peak, sheen_depth, sheen_rest = self._sheen
             paint_top_sheen(p, self.rect(), radius,
-                            strength=0.55 + TH.HOVER_LIFT_SHEEN * lift)
+                            strength=min(1.0, sheen_rest
+                                         + TH.HOVER_LIFT_SHEEN * lift),
+                            peak=sheen_peak, depth=sheen_depth)
         if self._press_tint > 0.01:
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             p.setPen(Qt.PenStyle.NoPen)
@@ -2987,7 +3223,8 @@ class DepthCard(QFrame):
     like `QFrame#insight` still match (Qt resolves by base class + object
     name, and DepthCard IS a QFrame)."""
 
-    def __init__(self, radius: int = 14, parent: QWidget | None = None,
+    def __init__(self, radius: int = TH.RADIUS["panel"],
+                 parent: QWidget | None = None,
                  t: dict | None = None):
         super().__init__(parent)
         self._radius = radius
@@ -2998,12 +3235,19 @@ class DepthCard(QFrame):
         # falls back to the neutral bevel it has always painted.
         self._bevel: tuple[float, float] | None = None
         self._shadow: tuple[float, int] | None = None
+        # v13: the lit top edge is half of the elevation cue (see
+        # theme.sheen_alphas). A container that casts a shadow but has no
+        # top face reads as a shadow printed behind a flat shape — which is
+        # exactly how the hero banner and every dialog panel looked once
+        # the cards beside them got theirs.
+        self._sheen: tuple[int, float, float] | None = None
         if t is not None:
             self.set_theme(t)
 
     def set_theme(self, t: dict):
         self._bevel = TH.bevel_alphas(t)
         self._shadow = TH.shadow_alphas(t)
+        self._sheen = TH.sheen_alphas(t)
         self.update()
 
     def paintEvent(self, e):
@@ -3015,6 +3259,13 @@ class DepthCard(QFrame):
             paint_bevel_frame(p, self.rect(), self._radius, *self._bevel)
         else:
             paint_bevel_frame(p, self.rect(), self._radius)
+        if self._sheen is not None:
+            peak, depth, rest = self._sheen
+            # The resting weight, never a hovered one: these surfaces do
+            # not hover, and a container lit harder than the cards sitting
+            # on it would invert the elevation order it exists to set up.
+            paint_top_sheen(p, self.rect(), self._radius, strength=rest,
+                            peak=peak, depth=depth)
         p.end()
 
 
@@ -5658,6 +5909,148 @@ class StatePill(QLabel):
 
 
 # ============================================================
+#  UPDATE PILL — self-update status chip (Activity rail)
+# ============================================================
+class UpdatePill(QPushButton):
+    """CHECKING / UP TO DATE / UPDATE READY — the self-updater's status,
+    and its manual entry point.
+
+    A QPushButton because it is CLICKABLE in every state: 'available'
+    opens the update dialog, anything else re-checks. Styled entirely by
+    theme.update_pill_qss through the dynamic `state` property — the same
+    repolish mechanic StatePill uses, so a transition never rebuilds QSS
+    and nothing here runs off a timer.
+
+    Before this the updater's only persistent surface was the sidebar
+    footer, which appended '· Update available' to its own identity line at
+    the app's quietest type role. See update_pill_qss for the measurement
+    that motivated moving it.
+
+    TWO LAYOUT PROPERTIES, both deliberate, because this lands in a rail
+    that already carries six other controls:
+
+      * It is the LEFTMOST item of the rail's right-packed cluster (it goes
+        in directly after the stretch). Items to the right of a stretch
+        keep their distance from the right edge, so this appearing for the
+        first time grows the cluster leftward into the stretch and moves
+        'LIVE OUTPUT', the state pill, the tools and the chevron by zero
+        pixels.
+
+      * Its width is LOCKED to the widest label it can ever show, so the
+        three states cannot jitter its own left edge either. Derived from
+        fontMetrics() rather than hardcoded: the QSS sets 9px on Segoe UI,
+        but the real advance depends on DPI scaling and on what the font
+        actually falls back to, and a literal here would clip on the first
+        machine that disagreed. Recomputed once per theme apply.
+
+    AND IT STANDS DOWN WHILE A TASK IS RUNNING (set_busy, driven by
+    ActivityDrawer.set_running). That is a measurement before it is a
+    preference. At the window's minimum width the rail is handed ~608px
+    and its six existing controls need ~509; this chip fits in what is
+    left, but a running task also reveals the 112px Stop button, and the
+    three together do not. Something would have to be squeezed, and a
+    QLabel squeezed below its hint does not elide, it CLIPS.
+
+    The pill is the right thing to yield, not the loser of an arbitrary
+    tiebreak: while a task runs, the rail's whole job is reporting THAT
+    task, and this chip is not even actionable — main._open_update_dialog
+    already refuses to start an install mid-run (the _busy() guard) and
+    tells the user to wait. Suppressing it removes a control that could
+    not have been used anyway, and hands the rail back the width its
+    actual job needs.
+    """
+
+    #: Terse on purpose, and the terseness is a MEASUREMENT. The rail is
+    #: handed ~608px at the window's minimum width and the six controls
+    #: already there need ~509 of it, so this chip has under 100px to live
+    #: in. "↑ UPDATE READY" locked the width at 114 and overflowed;
+    #: single-spaced, with the CTA cut to one word, it locks at 95. The
+    #: sentence-length version of each answer lives in the tooltip, which
+    #: costs no rail.
+    TEXTS = {
+        "idle":      "—",
+        "checking":  "● CHECKING…",
+        "current":   "✓ UP TO DATE",
+        "available": "↑ UPDATE",
+    }
+
+    #: Horizontal padding + the 1px ring, both from the QSS, plus 2px of
+    #: slack so the last glyph's letter-spacing cannot clip. Derived from
+    #: TH.CHIP_PAD_H rather than restating it: this constant carried a bare
+    #: `8` that nothing tied back to the sheet, so a padding change in
+    #: theme.py would have silently clipped the rail's only status control.
+    _WIDTH_CHROME = 2 * TH.CHIP_PAD_H + 2 * 1 + 2
+
+    def __init__(self, t: dict, parent: QWidget | None = None):
+        super().__init__(self.TEXTS["checking"], parent)
+        self.setObjectName("updatePill")
+        self.setProperty("state", "checking")
+        self.setFixedHeight(22)          # StatePill's height — one rail, one chip
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Chrome, not content: the rail's chips must not join a page's
+        # arrow-key traversal or pull focus off it — the same call the
+        # drawer's own toolbar buttons and the sidebar footer make.
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Hidden until the first check has something to say. Showing it
+        # costs no reflow (see the class docstring), so there is no reason
+        # to park a placeholder in the rail before then.
+        self._reported = False   # a check has resolved at least once
+        self._busy = False       # a task is running; stand down
+        self._sheen: tuple[int, float] | None = None
+        self.hide()
+        self.apply_theme(t)
+
+    def apply_theme(self, t: dict):
+        self.setStyleSheet(TH.update_pill_qss(t))
+        self._sheen = TH.chip_sheen(t)
+        self._lock_width()
+        self.update()
+
+    def paintEvent(self, e):
+        """The same frosted rim StatusChip wears, for the same reason: this
+        pill and a card's verdict badge are one object on two surfaces (see
+        update_pill_qss), so they have to catch light identically. Painted
+        rather than declared because a QSS border is one flat colour on all
+        four sides."""
+        super().paintEvent(e)
+        if self._sheen is None:
+            return
+        peak, depth = self._sheen
+        p = QPainter(self)
+        paint_top_sheen(p, self.rect(), TH.RADIUS["chip"], strength=1.0,
+                        peak=peak, depth=depth)
+        p.end()
+
+    def _lock_width(self):
+        """Pin the width to the widest label. ensurePolished() first: the
+        font-size lives in the stylesheet, so fontMetrics() reports the
+        default UI font until the style has been applied."""
+        self.ensurePolished()
+        fm = self.fontMetrics()
+        widest = max(fm.horizontalAdvance(text) for text in self.TEXTS.values())
+        self.setFixedWidth(widest + self._WIDTH_CHROME)
+
+    def set_state(self, state: str, tooltip: str = ""):
+        self.setText(self.TEXTS.get(state, state.upper()))
+        self.setProperty("state", state)
+        self.setToolTip(tooltip)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._reported = True
+        self._sync_visibility()
+
+    def set_busy(self, busy: bool):
+        """Stand down while a task runs — see the class docstring for the
+        width measurement that forces this, and why this is the control
+        that yields."""
+        self._busy = busy
+        self._sync_visibility()
+
+    def _sync_visibility(self):
+        self.setVisible(self._reported and not self._busy)
+
+
+# ============================================================
 #  STATUS DOT — the bottom-bar '●', breathes while busy
 # ============================================================
 class StatusDot(QLabel):
@@ -5839,6 +6232,12 @@ class ActivityDrawer(QWidget):
         rail.addWidget(self.status_text)
         rail.addStretch()
 
+        # Directly after the stretch, so it is the LEFTMOST item of the
+        # right-packed cluster: it can appear, and change label, without
+        # moving anything already standing to its right. See UpdatePill.
+        self.update_pill = UpdatePill(t)
+        rail.addWidget(self.update_pill)
+
         self._console_label = QLabel("LIVE OUTPUT")
         rail.addWidget(self._console_label)
         self.state_pill = StatePill(t)
@@ -5987,6 +6386,7 @@ class ActivityDrawer(QWidget):
             btn.setStyleSheet(TH.activity_toggle_qss(t))
         self.status_text.setStyleSheet(TH.label_qss(t, "status"))
         self.state_pill.apply_theme(t)
+        self.update_pill.apply_theme(t)
         self.stop_btn.setStyleSheet(TH.stop_button_qss(t))
         self._toggle.setStyleSheet(TH.activity_toggle_qss(t))
         self.console.apply_theme(t)
@@ -6046,6 +6446,10 @@ class ActivityDrawer(QWidget):
         is the complaint this whole pairing answers.
         """
         self._active = running
+        # The rail cannot carry the update chip AND the Stop button at the
+        # window's minimum width (see UpdatePill's docstring for the
+        # measurement); while a task owns the rail, the chip stands down.
+        self.update_pill.set_busy(running)
         if running:
             self._open()
             return
@@ -7079,11 +7483,13 @@ class OfficeWizardDialog(PulseDialog):
             row = QHBoxLayout()
             row.setSpacing(TH.SPACE["md"])
             badge = QLabel(num)
-            badge.setFixedSize(22, 22)
+            badge_px = 22
+            badge.setFixedSize(badge_px, badge_px)
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             badge.setStyleSheet(
                 f"color: {t['accent']}; background: {TH.alpha(t['accent'], 0.14)};"
-                f"border: 1px solid {TH.alpha(t['accent'], 0.40)}; border-radius: 11px;"
+                f"border: 1px solid {TH.alpha(t['accent'], 0.40)};"
+                f" border-radius: {badge_px // 2}px;"
                 f"font-size: {TH.TYPE['caption']}px; font-weight: {TH.WEIGHT['bold']};")
             row.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
             label = QLabel(text)

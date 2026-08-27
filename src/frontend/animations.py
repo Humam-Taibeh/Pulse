@@ -343,9 +343,42 @@ def _cached_stroke(painter: QPainter, rect, key: tuple, draw) -> None:
     painter.restore()
 
 
+#: THE DUAL-RAMP CAST SHADOW, as multipliers on the single (alpha, spread)
+#: pair theme.shadow_alphas hands over. Kept here rather than in theme.py
+#: because these describe the RASTERISATION, not the design weight: theme
+#: still owns "how dark, how far", this owns "in what shape".
+#:
+#: Each tuple is (spread_mul, alpha_mul, falloff_exp, ...):
+#:
+#:   CONTACT  — the tight, near-opaque line that puts the card in touch with
+#:              the surface. Short and steep. This is essentially what the
+#:              old single ramp already was: at ybot 0.35 its strokes piled
+#:              up inside ~2px of the bottom edge, so measured, the shipping
+#:              "spread 6" shadow had a reach of ONE pixel. It read as an
+#:              edge, never as height.
+#:
+#:   AMBIENT  — the wide, faint halo that reads as elevation, and the half
+#:              that did not exist before. ybot 1.0 is what makes it a
+#:              gradient rather than a stack: each successive stroke clears
+#:              the last by a full pixel, so the falloff is actually spent
+#:              across `spread` px instead of collapsing onto the edge.
+#:
+#: v13 drops the CONTACT amplitude 1.15 -> 0.85. It is not a taste change
+#: and it is not independent of theme.shadow_alphas: that function raised
+#: its dark weight 0.26 -> 0.34 in the same revision, and this multiplier
+#: is what decides where the extra weight lands. Left at 1.15 the raise
+#: would have gone almost entirely into the contact line (peak 91 -> 116 of
+#: 255), which is the "grubby lower lip" the dual ramp was built to get rid
+#: of. At 0.85 the contact peak holds at ~94 while the ambient — whose
+#: multiplier is unchanged, so it scales with the raise — gains the full
+#: 30%. Elevation is the tail; the edge was never the problem.
+_SHADOW_CONTACT = (0.50, 0.85, 2.4, 2.00, 0.40)   # + (ytop, ybot)
+_SHADOW_AMBIENT = (2.00, 0.36, 1.5, 1.00)          # + (ybot); top is pinned
+
+
 def paint_drop_shadow(painter: QPainter, rect, radius: int,
                       alpha: float = 0.055, spread: int = 6):
-    """The soft cast shadow under an elevated surface — v11's primary
+    """The soft cast shadow under an elevated surface — the primary
     elevation cue in both themes (see theme.shadow_alphas).
 
     Qt QSS has no box-shadow, and QGraphicsDropShadowEffect is off the table
@@ -361,11 +394,33 @@ def paint_drop_shadow(painter: QPainter, rect, radius: int,
     edge produces the same cue. The tell it cannot reproduce is a shadow
     falling ON a neighbour, which at these alphas is invisible anyway.
 
-    Built as `spread` concentric rounded-rect strokes, each one pixel
-    further in and weaker than the last, weighted toward the BOTTOM by
-    offsetting the arc downward — the `0 4px` vertical bias of the CSS
-    spec. Cached and blitted like every other stroke here, so a grid of
-    cards costs one blit each.
+    TWO RAMPS, NOT ONE (v12.2), because the single ramp was only ever
+    producing half the effect. Measured on a 320x150 card at the dark
+    theme's own alpha, reading pixel alpha upward from the bottom edge:
+
+        one ramp, spread 6 ....  96  29   1   0   0   0   0  ->  reach  1px
+        contact + ambient .....  91  25  17  14  12  10   8  ->  reach  9px
+
+    The old construction spent its whole falloff inside two pixels, so it
+    delivered a crisp contact edge and no elevation at all — which is why
+    cards read as drawn-on rather than raised. The peak is deliberately
+    UNCHANGED (96 -> 91): the edge was never the problem, and darkening it
+    further would just look grubby. Everything gained is in the new tail.
+
+    THE AMBIENT'S TOP IS PINNED OFF-CANVAS, and that is a correctness fix
+    rather than a flourish. Each ramp step is a CLOSED rounded rect, so its
+    top edge lands as a horizontal ring inside the card. The old ramp did
+    this too (its top profile reads 43 23 43 9 22 — visibly non-monotone),
+    and simply widening the spread would have smeared those rings across
+    26px of the card's upper half. Spanning the ambient rect from -h to
+    +h instead means only its sides and bottom arc are ever inside the
+    pixmap. Measured, the ambient contributes exactly ZERO to the top
+    profile, and the total top weight drops from 164 to 108.
+
+    BOTH RAMPS RASTERISE INTO ONE CACHED PIXMAP under one key, so a grid of
+    cards still costs exactly one blit each — the per-frame budget is
+    byte-for-byte what it was. Only the one-time rasterisation grows, from
+    6 strokes to 15, and only on a cache miss.
     """
     if alpha <= 0.002 or spread <= 0:
         return
@@ -373,25 +428,46 @@ def paint_drop_shadow(painter: QPainter, rect, radius: int,
     if peak <= 0:
         return
 
+    c_smul, c_amul, c_exp, c_ytop, c_ybot = _SHADOW_CONTACT
+    a_smul, a_amul, a_exp, a_ybot = _SHADOW_AMBIENT
+    contact_spread = max(1, int(round(spread * c_smul)))
+    ambient_spread = max(1, int(round(spread * a_smul)))
+    contact_peak = int(peak * c_amul)
+    ambient_peak = int(peak * a_amul)
+
     def draw(p, width, height):
-        for i in range(spread):
-            # Quadratic falloff: strongest against the edge, gone by
-            # `spread` px in — a soft ramp rather than a hard ring.
-            k = (1.0 - i / float(spread)) ** 2
-            a = int(peak * k)
+        w, h = float(width), float(height)
+
+        # -- ambient first, so the contact edge composites ON TOP of it --
+        for i in range(ambient_spread):
+            a = int(ambient_peak * (1.0 - i / float(ambient_spread)) ** a_exp)
             if a <= 0:
                 continue
             inset = 0.5 + i
-            # The downward offset is the shadow's vertical bias: the top
-            # edge sheds the stroke almost immediately, the bottom keeps it.
-            inner = QRectF(0.0, 0.0, float(width), float(height)).adjusted(
-                inset, inset * 1.7, -inset, -inset * 0.35)
+            # Spans -h..+h: the top edge (and its corners) sit outside the
+            # pixmap, so only the sides and the bottom arc ever render.
+            inner = QRectF(0.0, -h, w, h * 2.0).adjusted(
+                inset, 0.0, -inset, -inset * a_ybot)
             if inner.width() <= 1 or inner.height() <= 1:
                 break
             p.setPen(QPen(QColor(0, 0, 0, a), 1.0))
             p.drawRoundedRect(inner, radius, radius)
 
-    _cached_stroke(painter, rect, ("shadow", int(radius), peak, int(spread)), draw)
+        # -- contact: short, steep, and biased hard toward the bottom --
+        for i in range(contact_spread):
+            a = int(contact_peak * (1.0 - i / float(contact_spread)) ** c_exp)
+            if a <= 0:
+                continue
+            inset = 0.5 + i
+            inner = QRectF(0.0, 0.0, w, h).adjusted(
+                inset, inset * c_ytop, -inset, -inset * c_ybot)
+            if inner.width() <= 1 or inner.height() <= 1:
+                break
+            p.setPen(QPen(QColor(0, 0, 0, a), 1.0))
+            p.drawRoundedRect(inner, radius, radius)
+
+    _cached_stroke(painter, rect, ("shadow", int(radius), peak, int(spread)),
+                   draw)
 
 
 def paint_bevel_frame(painter: QPainter, rect, radius: int,
@@ -453,28 +529,59 @@ def squircle_path(rect, radius: float, smoothing: float = 0.55) -> QPainterPath:
     return path
 
 
-def paint_top_sheen(painter: QPainter, rect, radius: int, strength: float = 1.0):
+def paint_top_sheen(painter: QPainter, rect, radius: int,
+                    strength: float = 1.0, peak: int = 150,
+                    depth: float = 3.0):
     """A crisp 1px highlight hugging the TOP edge of a surface, fading to
     nothing within a few pixels — the 'lit from above' tell that separates a
     premium material from a flat translucent panel. A perimeter stroke whose
     pen brush is a short vertical gradient (bright white at the very top,
     transparent just below, PadSpread keeping the sides/bottom clear), so
-    only the top edge lights up. Cached and blitted — see _cached_stroke."""
+    only the top edge lights up. Cached and blitted — see _cached_stroke.
+
+    `peak` (the white alpha at full strength) and `depth` (how far down the
+    fade runs) ARRIVE FROM THE THEME — see theme.sheen_alphas — because the
+    single hard-coded 150 could not serve both canvases, for opposite
+    reasons in each:
+
+      * on obsidian, 150 x the resting 0.55 strength is alpha 82, which on
+        a #22252E card lifts the top edge by about six levels of grey. It
+        is present under measurement and invisible across a room.
+
+      * on paper it was worse than weak, it was BACKWARDS. The light card
+        is #FFFFFF and its hairline is #B7BAC4 (183) against a #F2F2F7
+        (242) well — so the untreated top edge is DARKER than the surface
+        behind it. That is the optical signature of a groove, not a lift,
+        and no amount of shadow underneath fixes an edge that reads as cut
+        into the page. Bleaching that top hairline toward white is what
+        flips it: at light's peak the top edge lands lighter than the well
+        it sits against, so the eye finally reads the card as standing
+        proud of the page rather than stamped into it.
+
+    The stroke also moves from a 0.75px inset to 0.5px, so it lands ON the
+    QSS border row rather than straddling it and antialiasing across two.
+    That is what makes the light-mode bleach a clean edge instead of a
+    smear.
+    """
     if strength <= 0.01:
         return
-    hi_alpha = int(150 * strength)
+    hi_alpha = int(peak * strength)
+    if hi_alpha <= 0:
+        return
+    fade = max(1.0, float(depth))
 
     def draw(p, width, height):
         inner = QRectF(0.0, 0.0, float(width), float(height)).adjusted(
-            0.75, 0.75, -0.75, -0.75)
+            0.5, 0.5, -0.5, -0.5)
         grad = QLinearGradient(inner.left(), inner.top(),
-                               inner.left(), inner.top() + 3.0)
+                               inner.left(), inner.top() + fade)
         grad.setColorAt(0.0, QColor(255, 255, 255, hi_alpha))
         grad.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.setPen(QPen(QBrush(grad), 1.0))
         p.drawRoundedRect(inner, radius, radius)
 
-    _cached_stroke(painter, rect, ("sheen", int(radius), hi_alpha), draw)
+    _cached_stroke(painter, rect,
+                   ("sheen", int(radius), hi_alpha, round(fade, 2)), draw)
 
 
 def paint_aurora_edge(painter: QPainter, path: QPainterPath,

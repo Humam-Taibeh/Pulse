@@ -246,23 +246,68 @@ SPACE = {
 # Semantic radii — named by the surface they belong to, so a card and a
 # dialog can never drift a pixel apart by accident.
 #
-# v11: the card step drops 16 -> 14 and the panel step 20 -> 18. Apple's own
-# surfaces sit in a 10-14 band at card scale; at 16-20 the corner starts
-# reading as a "bubble" rather than a machined edge, which is a large part of
-# why the old grid looked boxy-but-soft at the same time. The scale still
-# rises monotonically (chip < control < plaque < card < panel) so the
-# hierarchy is unchanged — it is the whole ramp that tightens, not one step.
+# v13 COLLAPSES THE RAMP TO THREE TIERS, and that is the whole point of this
+# revision rather than a tidy-up. Five steps (8/10/12/14/18) sound like a
+# hierarchy and render as noise: a 10px button beside a 12px icon well
+# beside a 14px card is three corners the eye reads as ONE family drawn
+# slightly wrong, not as three levels of an intentional scale. Two pixels is
+# under the threshold at which a corner difference reads as a decision, and
+# above the threshold at which it reads as sloppiness — the worst possible
+# place for it to sit. Every tier-1 desktop system this app is benchmarked
+# against (Linear, Raycast, Fluent 2) ships a three-step ramp for exactly
+# this reason.
+#
+# The three tiers, and the rule for picking one:
+#
+#   8  SMALL     — anything that is a LABEL rather than a surface: chips,
+#                  badges, tags, count pills. At their ~17px height 8px is
+#                  already a full pill, which is what a tag should be.
+#   12 SURFACE   — anything you can point at and operate, plus the wells
+#                  that hold a glyph: buttons, inputs, GlassCards, icon
+#                  plaques, nav entries, list rows.
+#   16 CONTAINER — anything that HOLDS surfaces: the sidebar, the content
+#                  frame, dialog panels, the dashboard hero.
+#
+# The five semantic names survive because call sites should keep naming the
+# surface, not the number — `RADIUS['card']` still says what it is, and
+# three of them now deliberately resolve to the same step. That is the
+# scale asserting that a card and a button ARE the same tier, which is a
+# statement the old ramp could not make.
+#
+# The card step therefore rises 14 -> 12 (tightening toward the machined
+# edge v11 was already reaching for) and the panel step falls 18 -> 16,
+# closing the gap between a dialog and the card grid inside it.
+_R_SMALL, _R_SURFACE, _R_CONTAINER = 8, 12, 16
+
 RADIUS = {
-    "chip":    8,    # pills, badges, small tags
-    "control": 10,   # buttons, inputs
-    "plaque":  12,   # icon wells, nav entries, list rows
-    "card":    14,   # GlassCard, action surfaces
-    "panel":   18,   # sidebar, content frame, dialog panels
+    "chip":    _R_SMALL,      # pills, badges, small tags
+    "control": _R_SURFACE,    # buttons, inputs
+    "plaque":  _R_SURFACE,    # icon wells, nav entries, list rows
+    "card":    _R_SURFACE,    # GlassCard, action surfaces
+    "panel":   _R_CONTAINER,  # sidebar, content frame, dialog panels
     # No "shell" entry: the window's own corners are rounded by DWM
     # (apply_native_rounding), not by QSS. A radius painted here would only
     # carve wedges out of the opaque shell and expose the bare window
     # palette behind them.
 }
+
+
+def inner_radius(outer: int, inset: int = 1) -> int:
+    """The radius a child painted `inset` pixels inside a rounded surface
+    needs for the two curves to stay CONCENTRIC.
+
+    This is the one legitimate source of a radius that is not a RADIUS
+    step, and it exists so that it stops being written as `RADIUS['chip']-1`
+    in seven places. Two rounded rects sharing a centre only look like one
+    nested object when their radii differ by exactly the gap between them;
+    matching them instead makes the inner corner look fat, and guessing
+    makes it look arbitrary — which is what the seven hand-written
+    subtractions were doing.
+
+    Floored at 2 so a deep inset can never square off a corner that the
+    surface around it is still rounding.
+    """
+    return max(2, int(outer) - int(inset))
 
 
 # Type scale — named by the ROLE the text plays, exactly like RADIUS is
@@ -318,6 +363,53 @@ WEIGHT = {
 #: own-hue fill it replaced. Raising it walks back toward that failure.
 CHIP_TONE_WHISPER = 0.08
 
+#: The padding every micro status pill in the app shares, as (vertical,
+#: horizontal). Named because THREE things have to agree on it and two of
+#: them are not QSS: state_chip_qss and update_pill_qss both claim to be
+#: "the same object one surface apart" (update_pill_qss says so in as many
+#: words), and widgets.UpdatePill measures its own fixed width from the
+#: horizontal value. They did not agree — the chip ran 2px vertical and the
+#: pill 3px, so the documented invariant had been false since the pill
+#: shipped, and the pill's width constant carried the horizontal figure as
+#: a bare `8` that nothing tied back to the sheet.
+#:
+#: v13 settles it at 3/9. Vertical 3 because 2 gave an 18px chip around a
+#: 9px cap-height label — a tag squeezed onto its text rather than a pill
+#: containing it; 3 lands it at 20 and the label finally sits IN something.
+#: Horizontal 9 because a pill wants visibly more air at the ends than at
+#: the top, and 10 pushed UpdatePill past the rail width it is pinned to.
+#:
+#: NOT a mathematical pill, and that is a deliberate trade rather than an
+#: oversight. A literal pill needs radius >= height/2, which at 20px means
+#: 10 — a corner that exists on no tier of the ramp (see RADIUS), and
+#: inventing one for the smallest object in the app is exactly the
+#: fragmentation the three-tier collapse was for. At 8 against 20 the
+#: corner still turns through 80% of the chip's half-height, which reads
+#: as a pill at 9px type; the discipline is worth more than the 2px.
+CHIP_PAD_V, CHIP_PAD_H = 3, 9
+
+
+def chip_sheen(t: dict) -> tuple[int, float]:
+    """(peak_white_alpha, fade_depth_px) for the lit top rim on a micro
+    status pill — the chip-scale version of sheen_alphas.
+
+    Same idea one order of magnitude down: a 1px highlight along the top
+    edge is what separates a frosted pill from a filled rectangle with
+    rounded ends. It is spent on the BORDER, never on the plate: the text
+    sits CHIP_PAD_V + 1 pixels below the top edge and the rim has faded out
+    within 1.5, so the contrast table state_chip_qss documents measures
+    exactly the same with the rim as without it. That is the property that
+    let this ship at all — every luminance gradient ACROSS the plate was
+    tried first and every one of them cost AA (a mere 0.04 white lift drops
+    the dark DEFAULT verdict to 4.07:1), because the plate is the surface
+    the text is solved against.
+
+    Lower peaks than a card's (110/170 against 200/255) because the rim
+    runs the full perimeter of a 17px object: at card weight it stops
+    reading as a lit edge and starts reading as a second, brighter border.
+    """
+    return (170, 1.5) if t["name"] == "light" else (110, 1.5)
+
 
 #: Alpha of the tint a card's running / flash state blends onto the card
 #: tier (see card_qss). Named rather than inlined three times because the
@@ -372,12 +464,91 @@ def shadow_alphas(t: dict) -> tuple[float, int]:
     the CSS layer alpha; the falloff spends it across `spread` pixels, so
     the integrated weight lands close to the 0.04 the spec asks for while
     staying visible on a real display.
+
+    v13 SPENDS MORE — dark 0.26 -> 0.34, light 0.055 -> 0.080 — because the
+    v12.2 rebuild proved the construction and then under-funded it. The two
+    ramps put the falloff in the right place, but at 0.26 the ambient tail
+    tops out at alpha 23/255 and simply is not visible at arm's length on a
+    calibrated panel; the card still read as a rectangle with a crisp lower
+    lip rather than an object with air under it.
+
+    THE RAISE GOES ENTIRELY INTO THE AMBIENT TAIL, not the contact edge —
+    see _SHADOW_CONTACT, whose amplitude multiplier drops 1.15 -> 0.85 in
+    the same change to hold the peak where it was. That pairing is the
+    whole design: a heavier contact edge just looks grubby (it is what
+    made pre-v12.2 cards read as outlined), while a heavier tail is
+    literally what elevation is. Measured on a 320x150 dark card:
+
+        v12.2 @ 0.26 ...  91  25  17  14  12  10   8   6   4   2
+        v13   @ 0.34 ...  94  31  22  19  16  13  10   8   5   3
+
+    The peak moves three points and the tail gains about 30% throughout,
+    which is the difference between a shadow you can find and one you can
+    see.
     """
     if t["name"] == "light":
-        return (0.055, 6)
+        return (0.080, 6)
     # Obsidian needs a firmer cast: a black shadow on a near-black canvas
     # has far less room to register than one on porcelain.
-    return (0.26, 6)
+    return (0.34, 6)
+
+
+def sheen_alphas(t: dict) -> tuple[int, float, float]:
+    """(peak_white_alpha, fade_depth_px, resting_strength) for
+    animations.paint_top_sheen — the 1px lit top edge, and the OTHER half
+    of v13's elevation pass.
+
+    The cast shadow says "there is air under this". The sheen says "this
+    has a top face". A surface with one and not the other reads as a
+    sticker with a shadow printed behind it, which is exactly what the
+    single hard-coded `150` left both themes with once shadow_alphas took
+    its raise: a real shadow under a flat edge.
+
+    Split per mode for the same reason bevel_alphas and glow_alphas are —
+    the two canvases receive light in opposite directions — and the RESTING
+    STRENGTH is part of the split rather than a shared 0.55, because the
+    two modes are not spending the same budget on the same thing.
+
+    DARK (200, 3.0, 0.55). On obsidian, white IS light: the top edge of a
+    #22252E card lifting toward white is the literal thing a raised surface
+    does under an overhead source, and it can be spent gradually. 150 was
+    set when the sheen was a whisper on a card that separated by luminance
+    anyway; the Apple/obsidian palette gave that separation up (the card
+    measures 1.09:1 against its well) and the lit edge has to carry it.
+    At rest this now lands the top row near 146/255 against a card body of
+    34 — a rim you can see rather than one you can measure.
+
+    LIGHT (255, 2.0, 0.95). The light card is already #FFFFFF, so a white
+    sheen cannot brighten its FACE — but that was never the job. The job is
+    the HAIRLINE: card_line is #B7BAC4 (183) against a #F2F2F7 (242) well,
+    so an untreated top edge is DARKER than the page behind it. That is the
+    optical signature of a groove, and no amount of shadow underneath fixes
+    an edge that reads as cut into the paper.
+
+    Light therefore spends nearly its whole budget at rest (0.95 of 255)
+    to ERASE that top hairline — the row lands at ~251, indistinguishable
+    from the card's own face — so the boundary stops being a drawn line and
+    becomes a face-to-face luminance step from the card (255) to the well
+    (242). The card's sides and bottom keep their #B7BAC4 outline, so the
+    object reads: lit rim on top, defined flanks, shadow underneath. That
+    is the macOS construction, and it is the one thing that makes a white
+    card on a near-white page read as raised at all.
+
+    A partial bleach was tried first and is worse than none: at the dark
+    mode's 0.55 the light row lands at 219 — between the hairline and the
+    well, so the edge is neither a line nor a lift, just a smudge.
+
+    The fade is shorter on light (2.0 vs 3.0) because there is no dark body
+    for the falloff to dissolve into; on paper a long fade only fogs the
+    first three rows of the card.
+
+    The resting value is the FLOOR, not the whole story: GlassCard adds
+    HOVER_LIFT_SHEEN on top as the pointer arrives (clamped at 1.0), so a
+    hovered card catches more light along its top edge in both modes.
+    """
+    if t["name"] == "light":
+        return (255, 2.0, 0.95)
+    return (200, 3.0, 0.55)
 
 
 #: Elevation steps a card climbs while the pointer is over it.
@@ -638,53 +809,69 @@ _DARK = {
     # has painted an OPAQUE gradient over every pixel since the layered-
     # window path was dropped, so nothing had read it in either mode for
     # several versions.)
-    "bg_solid":    "#0d0e12",
-    # shell gradient — a shallow obsidian fall. Deliberately narrow (a ~1.35
-    # luminance span, where v10 spent 3.4): a steep gradient on a canvas
-    # this dark reads as a vignette artifact, not as light.
-    "bg_grad_top":    "#14171f",
-    "bg_grad_bottom": "#0a0b0f",
+    "bg_solid":    "#090a0b",
+    # shell gradient — a shallow obsidian fall around the jet base. Kept
+    # NEUTRAL (r≈g≈b) and deliberately narrow: v13's #14171f top carried a
+    # visible blue cast, which is the "muddy navy grey" the obsidian pass
+    # exists to remove, and a steep gradient on a canvas this dark reads as
+    # a vignette artifact rather than as light.
+    "bg_grad_top":    "#0c0d10",
+    "bg_grad_bottom": "#08090a",
     # The content well still recesses below the canvas — depth is cheaper to
     # buy by digging than by lifting — but it no longer has to do the whole
     # job alone, so it can be gentler (0.55 -> 0.45) and keep the floor a
     # true obsidian rather than crushing it to black.
-    "overlay":     "rgba(5, 6, 10, 0.45)",
-    "panel":       "rgba(255, 255, 255, 0.038)",
-    "panel_line":  "rgba(255, 255, 255, 0.075)",
-    # THE card tier: #282C38 exactly, opaque. Opaque and not translucent
+    # v14 INVERTS THE WELL. Through v13 the content frame RECESSED below the
+    # canvas (a near-black wash) and elevation was bought by digging; the
+    # jet-obsidian base has nowhere left to dig, and a well darker than
+    # #090A0B is simply black with cards floating on it. Both containers now
+    # RISE off the shell instead — the Fluent 2 / macOS layering the rest of
+    # this pass adopts: shell #090A0B -> containers #121417 -> cards #181A1F,
+    # each step lighter than the one beneath it.
+    #
+    # STILL TRANSLUCENT, AND THE ALPHA IS LOAD-BEARING. These are the two
+    # surfaces the ambient star field is seen THROUGH; opacity scales star
+    # contrast directly, so the tone moves and the alpha does not (see the
+    # same note on the light side's `overlay`). The tint is solved so that
+    # 0.45 of it over the shell lands exactly on #121417.
+    "overlay":     "rgba(29, 32, 38, 0.45)",
+    "panel":       "rgba(29, 32, 38, 0.45)",
+    # The system hairline, at the weight the redesign specifies. Chrome
+    # containers (sidebar, content frame, rails, dialog edges) all draw
+    # their edge with this; `card_line` below is heavier for a reason it
+    # documents there.
+    "panel_line":  "rgba(255, 255, 255, 0.08)",
+    # THE CARD TIER: #181A1F exactly, opaque. Opaque and not translucent
     # because a card must look identical on the well, inside a dialog and
     # over the console — a translucent card tinted itself differently in
     # each, which is the other half of the old "lacks depth" complaint.
     #
-    # RAISED from #16181D to #22252E. At the old value the card measured
-    # 1.11:1 against the content well — both near-black, and the card did
-    # not read as a surface at all. The obvious fix (darken the well) does
-    # almost nothing here: WCAG's ratio is (Lhi+0.05)/(Llo+0.05), and down
-    # at these luminances the +0.05 floor dominates both terms, so pushing
-    # the well from #090A0E to nearly pure black bought only 1.11 -> 1.15:1.
-    # The card's own luminance is the term with room to move; raising it
-    # takes the pair to 1.29:1 while leaving the well — and therefore the
-    # ambient star field seen THROUGH it — completely untouched.
+    # v14 DROPS IT 34,37,46 -> 24,26,31, and the fall is the whole obsidian
+    # pass. #22252E was solved when the well was a near-black RECESS and the
+    # card had to out-brighten it to read at all; against the raised #121417
+    # container it is a mid slate sitting on a dark one — the "washed
+    # graphite" register, back again one layer up. On the new stack the card
+    # is the LIGHTEST surface in the app and only has to clear the container
+    # under it, which #181A1F does by 1.06:1 of luminance plus a hairline
+    # and a cast shadow (see shadow_alphas / sheen_alphas — that pairing is
+    # what carries elevation here, not tone).
     #
-    # #22252E IS A CEILING, NOT A PREFERENCE. The status badge paints
-    # text_faint on this card and is held to AA by
-    # test_visual_polish.test_a_status_badge_clears_aa_on_the_worst_card_
-    # it_can_land_on. Every step lighter eats that margin: #22252E measures
-    # 4.59:1, and the very next step tried (#242833) fell to 4.41:1 and
-    # failed. Going lighter than this needs the BADGE's own colour raised
-    # first — the palette cannot buy more separation on its own.
-    "card":        "rgba(34, 37, 46, 1.0)",
+    # DARKENING IS FREE FOR CONTRAST, which is why it can move this far in
+    # one step: every text token in the ramp is LIGHT, so a darker plate
+    # only ever raises their ratios. The badge that pinned #22252E as a
+    # ceiling (text_faint at 4.59:1) measures 5.61:1 here.
+    "card":        "rgba(24, 26, 31, 1.0)",
     # hero/featured tier — a small, deliberate step (1.08:1). It reads
     # because it sits next to the card, not because it out-brightens it.
     # Moved WITH the card and by the ratio it always had (1.077:1): left at
     # #1C1F26 the "elevated" tier would have ended up DARKER than the
     # ordinary card it exists to sit above.
-    "card_hi":     "rgba(40, 43, 53, 1.0)",
+    "card_hi":     "rgba(30, 33, 38, 1.0)",
     # hover: a cool indigo lift, paired with the accent border and the glow
     # frame in card_qss — the "subtle glowing accent on hover" the redesign
     # asks for, kept low so a pointer sweep lights the grid rather than
     # flashing it.
-    "card_hover":  "rgba(125, 155, 255, 0.075)",
+    "card_hover":  "rgba(150, 168, 224, 0.085)",
     # The delicate border highlight. Lifted 0.088 -> 0.13 along with the
     # card: the hairline's job is to define the card's edge, and against a
     # LIGHTER card the old alpha no longer separated it from its own fill
@@ -694,14 +881,49 @@ _DARK = {
     # Dialogs and toasts sit OVER dense text (card grids, the console):
     # fully/near-fully opaque, or the content underneath bleeds through
     # and reads as overlapping text.
-    "dialog_bg":   "rgba(24, 26, 32, 1.0)",
-    "toast_bg":    "rgba(30, 33, 40, 0.99)",
+    "dialog_bg":   "rgba(24, 26, 31, 1.0)",
+    "toast_bg":    "rgba(30, 33, 38, 0.99)",
 
-    # brand — Aurora tri-tone, tuned a touch more electric/vivid for v9:
+    # ================================================================
+    #  v12.1 — THE CALM RE-SOLVE (applies to every accent below, in
+    #  BOTH themes). Read this once; the per-token notes assume it.
+    #
+    #  Through v12 the accents were solved for CONTRAST and for PEER
+    #  PARITY, and both held. What nothing constrained was CHROMA, so
+    #  each colour ended up as saturated as its hue happened to be at the
+    #  lightness its ratio demanded. Measured, that was not a palette:
+    #  accent/accent2/accent3, `software` and `automation` all sat at
+    #  100% HSL saturation, `information` at 98.2%, `optimization` at
+    #  96.6% — and OKLCh chroma across the set spanned 39.6% to 90.2%.
+    #  A 2.3x spread means some modules shout and others whisper, which
+    #  is precisely what stops a set reading as one system.
+    #
+    #  THE MOVE COSTS NO CONTRAST, and that is why it is safe to make
+    #  across 26 tokens at once. WCAG's ratio is a function of RELATIVE
+    #  LUMINANCE ONLY — saturation does not appear in it. So each colour
+    #  is converted to OKLCh, its chroma scaled down, and its lightness
+    #  then re-solved by bisection until it lands back on the luminance
+    #  it started from. Measured across all 26: worst drift 0.02.
+    #
+    #  Scales are not uniform, because the tokens do not have the same
+    #  job. Modules keep x0.65 — seven of them must stay tellable apart
+    #  and CIE dE is what pays for that. Brand and semantic keep x0.62.
+    #  `err` keeps x0.72: a failure tone is the one that must stay
+    #  unmistakable, and it is also the only tone the eye needs to find
+    #  without reading.
+    #
+    #  Mean module chroma: dark 14.2% -> 9.2%, light 14.8% -> 9.7%.
+    #  The ceiling is pinned by test_contract's chroma-ceiling test —
+    #  raising it walks the palette straight back toward neon.
+    # ================================================================
+
+    # brand — Aurora tri-tone. Still indigo -> violet -> magenta and still
+    # the app's signature sweep; v12.1 drains ~38% of its chroma so the
+    # sweep reads as a considered brand gesture rather than an electric one.
     # indigo (primary) → violet → magenta.
-    "accent":      "#7d9bff",
-    "accent2":     "#a184ff",
-    "accent3":     "#e784ff",
+    "accent":      "#8a9edb",
+    "accent2":     "#9c8ed8",
+    "accent3":     "#d196df",
 
     # ---- TEXT RAMP (v10 construction, re-measured for v11) -----------
     # Built EVENLY IN CIE L* rather than by eye, with the floor pinned just
@@ -740,14 +962,19 @@ _DARK = {
     #
     # Each colour is now solved along its OWN hue and saturation — nothing
     # here is re-hued for contrast — until it measures 5.50:1 against its
-    # own plaque well. The result is a 5.48-5.51 band in-plaque and a
-    # 7.55-7.76 band as text on the card, replacing spreads of 1.46x and
-    # 1.62x with 1.006x and 1.03x.
+    # own plaque well.
+    #
+    # v12.1 CARRIES THAT PARITY THROUGH THE CHROMA DRAIN. The re-solve
+    # above is luminance-preserving, so the peer relationship the v12 work
+    # bought is preserved by construction rather than re-derived: measured
+    # after, the set sits in a 4.83-4.95 band in-plaque (1.025x, against a
+    # 1.10x cap) with a minimum pairwise CIE76 dE of 14.3 — six times the
+    # ~2.3 just-noticeable threshold, so every module keeps its identity.
     "module": {
-        "software":     "#7dabff",
-        "optimization": "#ea9804",
-        "maintenance":  "#15bf9c",
-        "privacy":      "#f08bab",
+        "software":     "#8eace2",
+        "optimization": "#d4a05e",
+        "maintenance":  "#67b8a1",
+        "privacy":      "#d997ab",
         # v12 RE-HUES THIS ONE, the single exception to "own hue preserved".
         # 'information' was #6598ff against 'software' #5e96ff: CIE76 dE 1.6
         # apart, BELOW the ~2.3 just-noticeable-difference threshold, when
@@ -761,29 +988,32 @@ _DARK = {
         # at 168 and blue starts at 220. At this hue the closest peer is
         # 37.9 away and the brand accent 49.2, so every module is now
         # unambiguously itself.
-        "information":  "#02b9dd",
-        "safety":       "#33c074",
+        "information":  "#65b5cb",
+        "safety":       "#6cb988",
         # v10.3 — Automation (playbooks, health report). Violet is the one
         # hue the original six left unclaimed, so the module reads as new
         # rather than as a relative of an existing one.
-        "automation":   "#bb9aff",
+        "automation":   "#b5a2e3",
     },
 
-    # status — GitHub-dark grade: unmistakable but never neon
-    "ok":          "#3fb950",
-    "warn":        "#d29922",
-    "err":         "#f85149",
-    "danger_line": "rgba(248, 81, 73, 0.30)",
+    # status — was GitHub-dark grade; v12.1 takes it a step quieter still.
+    # These are the tones that appear on a tinted chip of their OWN hue
+    # (state_chip_qss, update_pill_qss), where saturation is what makes a
+    # badge shout. Draining it there costs nothing and buys the most.
+    "ok":          "#6fb273",
+    "warn":        "#c09e63",
+    "err":         "#de695f",
+    "danger_line": "rgba(222, 105, 95, 0.30)",
 
     # chrome
     "scroll":      "rgba(255, 255, 255, 0.14)",
-    "scroll_hov":  "rgba(124, 147, 255, 0.50)",
+    "scroll_hov":  "rgba(138, 158, 219, 0.50)",
     "shimmer_track": (255, 255, 255, 12),      # QColor args for painted widgets
     "titlebar_hover": "rgba(255, 255, 255, 0.06)",
     "close_hover":    "#c42b1c",               # native Win11 caption red
     # modal backdrop — dense enough that the card grid underneath is
     # fully masked while a dialog is open (QColor args, painted widget)
-    "scrim":          (3, 4, 7, 200),
+    "scrim":          (4, 4, 5, 205),
 }
 
 # ============================================================
@@ -855,7 +1085,7 @@ _LIGHT = {
     # not from luminance — chasing a lighter-than-white card is the one
     # elevation move this mode can never make.
     "card_hi":     "rgba(255, 255, 255, 1.0)",
-    "card_hover":  "rgba(74, 92, 224, 0.045)",
+    "card_hover":  "rgba(84, 101, 180, 0.045)",
     # #B7BAC4 — 1.94:1 against the white card. Darkened from #E5E5EA
     # (1.26:1) along with the ground: a separator tuned to sit between two
     # near-white surfaces is too faint to draw a white card's edge once
@@ -866,10 +1096,12 @@ _LIGHT = {
     "dialog_bg":   "rgba(255, 255, 255, 1.0)",
     "toast_bg":    "rgba(255, 255, 255, 0.99)",
 
-    # brand — Aurora tri-tone, ink-saturated for paper: indigo → violet → magenta
-    "accent":      "#4a5ce0",
-    "accent2":     "#7a4fd0",
-    "accent3":     "#c24fd0",
+    # brand — Aurora tri-tone, ink-saturated for paper: indigo → violet →
+    # magenta. Same v12.1 chroma drain as dark (see the block there): the
+    # brand must be the SAME gesture in both themes or it is two brands.
+    "accent":      "#5465b4",
+    "accent2":     "#725da9",
+    "accent3":     "#aa68b2",
 
     # Text ramp — same L*-even construction as dark (see the note in
     # _DARK), with the floor pinned just clear of AA and the three steps
@@ -895,28 +1127,38 @@ _LIGHT = {
     # as text on the card, 3:1 as a glyph in the plaque well. Amber is the
     # one hue that cannot be both bright and legible on white, so
     # 'optimization' lands as a deep gold rather than a light one.
+    #
+    # v12.1 applies the same luminance-preserving chroma drain as dark (see
+    # the block there). Light needed it at least as badly: 'software' shipped
+    # at 100% saturation / 90.2% chroma and 'privacy' at 92.9%, against
+    # 'maintenance' at 38.8% — the widest spread in either theme. After:
+    # 4.36-4.43 in-plaque (1.016x) with a minimum pairwise dE of 9.4.
     "module": {
-        "software":     "#1969ff",
-        "optimization": "#9a6b17",
-        "maintenance":  "#1f826f",
-        "privacy":      "#e11c59",
+        "software":     "#4072ce",
+        "optimization": "#8e6f43",
+        "maintenance":  "#497e71",
+        "privacy":      "#bf4e63",
         # v12 — the light twin of dark's re-hued 'information' (see the note
         # there). A module must be the SAME colour in both themes or it has
         # no identity at all, so this moves to the same 190deg. Cyan is a
         # light hue, so on paper it lands as a deep teal-cyan for the same
-        # reason amber lands as a deep gold two lines up — 4.68:1, dead
-        # centre of the peer band.
-        "information":  "#027f98",
-        "safety":       "#328357",
-        # v10.3 — Automation. Solved to 4.27:1, deliberately matching the
-        # 4.25-4.29 band the other light accents share: on paper these read
-        # as a set only if they carry the same visual weight, so hitting the
-        # peer ratio matters more than maximising contrast.
-        "automation":   "#7064d8",
+        # reason amber lands as a deep gold two lines up — dead centre of
+        # the peer band (4.68:1 at v12, 4.67:1 after the v12.1 drain).
+        "information":  "#437c8b",
+        "safety":       "#507f62",
+        # v10.3 — Automation. Solved deliberately to the peer band the other
+        # light accents share rather than to maximum contrast: on paper
+        # these read as a set only if they carry the same visual weight.
+        # The v12.1 chroma drain preserves that by construction, since it
+        # moves chroma at fixed luminance (4.66:1, inside the band).
+        "automation":   "#706cb6",
     },
 
     # status — GitHub-light grade, nudged a few points darker in v11 so each
-    # tone clears AA against a chip tinted in ITS OWN hue. The app has a
+    # tone clears AA against a chip tinted in ITS OWN hue, and drained of
+    # ~38% of its chroma in v12.1 (see the block in _DARK) — which the
+    # own-hue chip trap makes free here: the tint is built FROM this token,
+    # so a calmer token is also a calmer plate. The app has a
     # dozen such chips (applied / impact / recommendation / inline status /
     # state pill), and a 0.12 tint of a colour under text of that same
     # colour subtracts contrast from exactly the thing the chip exists to
@@ -925,13 +1167,13 @@ _LIGHT = {
     # (report_badge_qss and strip_status_qss avoid the trap differently, by
     # refusing a fill at all; both notes explain why that was necessary
     # there, where the text runs down to 11px.)
-    "ok":          "#197a35",
-    "warn":        "#916100",
-    "err":         "#cb212d",
-    "danger_line": "rgba(207, 34, 46, 0.35)",
+    "ok":          "#43744b",
+    "warn":        "#83663c",
+    "err":         "#b34341",
+    "danger_line": "rgba(179, 67, 65, 0.35)",
 
     "scroll":      "rgba(60, 60, 67, 0.20)",
-    "scroll_hov":  "rgba(74, 92, 224, 0.55)",
+    "scroll_hov":  "rgba(84, 101, 180, 0.55)",
     "shimmer_track": (60, 60, 67, 18),
     "titlebar_hover": "rgba(60, 60, 67, 0.08)",
     "close_hover":    "#c42b1c",               # native Win11 caption red
@@ -1154,20 +1396,89 @@ def icon_plaque_qss(t: dict, accent: str, featured: bool = False) -> str:
     Light drops to 0.15/0.08, which lifts it to 3.89-4.05:1 while keeping
     the well plainly tinted; below about 0.11 the gain flattens out and the
     plaque stops reading as coloured at all, which would trade one mode's
-    weakness for another's."""
-    a_top, a_bot = (0.15, 0.08) if t["name"] == "light" else (0.24, 0.13)
-    fill = (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            f"stop:0 {alpha(accent, a_top)}, stop:1 {alpha(accent, a_bot)})")
-    line = alpha(accent, 0.42)
-    glyph_color = accent
+    weakness for another's.
+
+    v13 HANDS THE WELL TO THE PAINTER and keeps only the glyph here. The
+    plaque was a QSS rectangle: one flat gradient inside one flat 1px
+    border, sitting directly on the card with nothing between them. That is
+    a coloured box behind a glyph, and next to a Linear or Raycast icon
+    chip it reads exactly like one.
+
+    Three things a premium plaque has that QSS cannot express on a QLabel —
+    an ambient halo bleeding OUTSIDE the well, a second hairline INSIDE the
+    first, and a lit top rim on the well itself — are now painted by
+    widgets.IconPlaque, which composites the identical gradient underneath
+    them. The tint alphas therefore did not move (see plaque_tints): the
+    contrast solve above is still exactly what ships, and everything v13
+    adds lives at the plaque's EDGE, where it cannot subtract from the
+    glyph's legibility.
+
+    What stays in QSS is the glyph's own colour, plus an explicitly
+    transparent background and no border — without those two a QLabel
+    inherits the card's sheet and would paint a second, unstyled box on
+    top of everything the painter just did.
+    """
     return f"""
         QLabel {{
-            background: {fill};
-            border: 1px solid {line};
-            border-radius: {RADIUS['plaque']}px;
-            color: {glyph_color};
+            background: transparent;
+            border: none;
+            color: {accent};
         }}
     """
+
+
+def plaque_tints(t: dict) -> tuple[float, float]:
+    """(top_alpha, bottom_alpha) of the accent wash filling an icon well.
+
+    The numbers and the reasoning behind them live in icon_plaque_qss,
+    which is where the contrast solve is documented; they are lifted into
+    their own function only because the well is painted now
+    (widgets.IconPlaque) while the glyph colour is still QSS, and the two
+    must not be able to drift apart.
+    """
+    return (0.15, 0.08) if t["name"] == "light" else (0.24, 0.13)
+
+
+#: Alpha of the accent hairline drawn ON the icon well's outer edge. The
+#: value the QSS border carried since v9; unchanged, so the plaque's
+#: perimeter weight is exactly what it was.
+PLAQUE_LINE = 0.42
+
+#: Alpha of the INNER hairline — a second line one pixel inside the first,
+#: white-tinted at the top and falling to nothing by the bottom.
+#:
+#: This is the single move that turns a coloured box into a machined
+#: micro-surface, and it is the same trick the cards themselves use one
+#: scale up (see sheen_alphas): a lit top rim tells the eye the object has
+#: a top FACE, and an object with a top face is an object rather than a
+#: region. At 42px the well is too small for a gradient to read, so it is
+#: spent as a single inset stroke instead.
+#:
+#: Split per mode on the same logic as every other edge weight in this
+#: file. On obsidian white is light and can be spent freely. On paper the
+#: well sits on a #FFFFFF card, so a white inner rim has nothing to
+#: brighten — light instead spends the budget on the accent's OWN hue at
+#: low alpha, which reads as the tint deepening toward the rim: a bevel,
+#: not a highlight.
+PLAQUE_INNER = {"dark": 0.20, "light": 0.16}
+
+#: (alpha, spread_px) of the soft accent bloom around the OUTSIDE of an
+#: icon well — "the module's colour is in the air around this glyph".
+#:
+#: Painted outside the well and never under the glyph, so it is contrast-
+#: neutral by construction: the in-plaque solve icon_plaque_qss documents
+#: measures the same before and after. Kept low enough that a grid of nine
+#: cards does not turn into nine coloured lamps; the halo is meant to be
+#: felt at a glance and not noticed when looked at directly.
+PLAQUE_HALO = {"dark": (0.13, 3), "light": (0.10, 3)}
+
+
+def plaque_halo(t: dict) -> tuple[float, int]:
+    return PLAQUE_HALO["light" if t["name"] == "light" else "dark"]
+
+
+def plaque_inner(t: dict) -> float:
+    return PLAQUE_INNER["light" if t["name"] == "light" else "dark"]
 
 
 def card_meta_pill_qss(t: dict, accent: str = "") -> str:
@@ -1185,6 +1496,20 @@ def card_meta_pill_qss(t: dict, accent: str = "") -> str:
         background: {t['panel']}; border: 1px solid {t['panel_line']};
         border-radius: {RADIUS['chip']}px; padding: 2px 9px; letter-spacing: 0.5px;
     """
+
+
+#: Type and geometry for a micro status pill, written once. Both callers
+#: (state_chip_qss, update_pill_qss) compose this rather than restating it,
+#: which is what makes "the same object one surface apart" a fact rather
+#: than a comment — see CHIP_PAD_V for what happened while it was only a
+#: comment.
+#:
+#: The 1px tracking is load-bearing at this size and not decoration: 9px
+#: all-caps set solid reads as a grey smear, and opening it up is the
+#: single thing that makes micro type look SHARP rather than merely small.
+_CHIP_TYPE = (f"font-size: {TYPE['micro']}px; font-weight: {WEIGHT['bold']};"
+              f" letter-spacing: 1px; border-radius: {RADIUS['chip']}px;"
+              f" padding: {CHIP_PAD_V}px {CHIP_PAD_H}px;")
 
 
 def state_chip_qss(t: dict, verdict: str) -> str:
@@ -1240,16 +1565,14 @@ def state_chip_qss(t: dict, verdict: str) -> str:
         # Neutral: the same plate, lifted off the card by the panel line
         # alone. No tone to whisper, so the plate is the card tier flat.
         return f"""
-            color: {t['text_faint']}; font-size: {TYPE['micro']}px; font-weight: {WEIGHT['bold']};
+            color: {t['text_faint']}; {_CHIP_TYPE}
             background: {t['card']};
             border: 1px solid {t['panel_line']};
-            border-radius: {RADIUS['chip']}px; padding: 2px 8px; letter-spacing: 1px;
         """
     return f"""
-        color: {color}; font-size: {TYPE['micro']}px; font-weight: {WEIGHT['bold']};
+        color: {color}; {_CHIP_TYPE}
         background: {blend(t['card'], alpha(color, CHIP_TONE_WHISPER))};
         border: 1px solid {alpha(color, 0.45)};
-        border-radius: {RADIUS['chip']}px; padding: 2px 8px; letter-spacing: 1px;
     """
 
 
@@ -1451,7 +1774,7 @@ def titlebar_button_qss(t: dict, hover: str) -> str:
     Enter/Leave there, so the hover look is driven by property flips."""
     return f"""
         QPushButton {{
-            background: transparent; border: none; border-radius: {RADIUS['chip']-1}px;
+            background: transparent; border: none; border-radius: {inner_radius(RADIUS['chip'])}px;
             color: {t['text_muted']}; font-size: {TYPE['label']}px;
         }}
         QPushButton:hover, QPushButton[nchover="true"] {{
@@ -1469,7 +1792,7 @@ def titlebar_close_qss(t: dict) -> str:
     HTCLOSEBUTTON non-client zone — see main.nativeEvent)."""
     return f"""
         QPushButton {{
-            background: transparent; border: none; border-radius: {RADIUS['chip']-1}px;
+            background: transparent; border: none; border-radius: {inner_radius(RADIUS['chip'])}px;
             color: {t['text_muted']}; font-size: {TYPE['label']}px;
         }}
         QPushButton:hover, QPushButton[nchover="true"] {{
@@ -1668,7 +1991,7 @@ def badge_qss(t: dict) -> str:
         color: {t['warn']}; font-size: {TYPE['micro']}px; font-weight: 600;
         background: {alpha(t['warn'], 0.08)};
         border: 1px solid {alpha(t['warn'], 0.28)};
-        border-radius: {RADIUS['chip']-1}px; padding: 2px 7px;
+        border-radius: {inner_radius(RADIUS['chip'])}px; padding: 2px 7px;
     """
 
 
@@ -1875,6 +2198,96 @@ def state_pill_qss(t: dict) -> str:
     """
 
 
+#: Alpha of the tone hairline on the update pill, per interaction state.
+#:
+#: THE PLATE NEVER MOVES BETWEEN THESE. Hover and press are carried by the
+#: ring alone, so the pill's text contrast is a CONSTANT rather than a
+#: function of where the pointer is — which is the whole point of the
+#: component: the contrast floor had to hold in STEADY STATE, not only
+#: once something lit it up.
+#:
+#: The first draft deepened the plate on hover instead, and measured:
+#:
+#:      own-hue tint 0.12 ... 4.55:1 worst (light/accent)  <- 0.05 margin
+#:      own-hue tint 0.13 ... 4.49:1 worst (light/warn)    <- under AA
+#:
+#: which is exactly the badge-tint trap state_chip_qss documents, arrived
+#: at from the other direction. A ring has no such cost: it is not the
+#: surface the text sits on, so it can go to full saturation for free.
+UPDATE_PILL_RING = {
+    "rest":       0.45,   # resting hairline — the StatePill weight
+    "actionable": 0.60,   # 'available' at rest: hotter, because it is a CTA
+    "hover":      0.80,   # pointer is over the pill
+    "press":      1.00,   # full tone — the click acknowledged on the way down
+}
+
+#: Which status token each pill state wears. Amber for 'available' rather
+#: than the brand violet: measured on this plate, accent2 lands at 4.67:1
+#: in dark — a pass with 0.17 to spare — while warn holds 5.35:1, and the
+#: app already spends amber on "this needs your attention" (state_chip_qss
+#: 'due'/'mixed'). Red stays reserved for failure.
+UPDATE_PILL_TONES = {"checking": "accent", "current": "ok", "available": "warn"}
+
+
+def update_pill_qss(t: dict) -> str:
+    """The self-updater's status chip in the Activity rail
+    (widgets.UpdatePill) — CHECKING / UP TO DATE / UPDATE READY.
+
+    One string per theme switch: states are dynamic-property flips, the
+    same repolish mechanic StatePill and NavButton use, so a transition
+    never rebuilds QSS and nothing here is driven by a timer.
+
+    THE FILL IS AN OPAQUE PLATE AT THE CARD TIER carrying a whisper of its
+    own tone — the state_chip_qss recipe, for the same two reasons. The
+    ratio is one of them; the other is that an opaque plate makes the chip
+    read identically wherever it lands, so it reports its own state and
+    nothing about the rail beneath it.
+
+    Measured, text on its own plate:
+
+        state      tone      dark      light
+        checking   accent    5.14:1    4.84:1
+        current    ok        5.30:1    4.85:1
+        available  warn      5.35:1    4.81:1
+        idle       muted     7.79:1    8.28:1
+
+    All six clear AA AT REST, which is the requirement this component
+    exists to meet: it replaced a footer line that carried the same status
+    at the `caption` role (10px/500 on text_faint, the app's quietest step)
+    and only lifted to a legible weight once hovered.
+    """
+    # Geometry is state_chip_qss's, to the pixel, because both compose the
+    # SAME string (_CHIP_TYPE) rather than restating it — which is how it
+    # came to be untrue: this pill ran 3px of vertical padding against the
+    # chip's 2px for as long as it has existed. These are the same kind of
+    # object one surface apart, and the rail cannot afford a wider one
+    # anyway (see UpdatePill's width note).
+    base = _CHIP_TYPE
+    # Resting/neutral: no tone to whisper, so the plate is the card tier
+    # flat, lifted off the rail by the panel line alone — the same
+    # construction state_chip_qss gives its neutral DEFAULT verdict.
+    out = [f"""
+        QPushButton#updatePill {{ {base}
+            color: {t['text_muted']};
+            background: {t['card']};
+            border: 1px solid {t['panel_line']}; }}
+    """]
+    for state, key in UPDATE_PILL_TONES.items():
+        color = t[key]
+        plate = blend(t['card'], alpha(color, CHIP_TONE_WHISPER))
+        rest = UPDATE_PILL_RING["actionable" if state == "available" else "rest"]
+        for pseudo, ring in (("", rest),
+                             (":hover", UPDATE_PILL_RING["hover"]),
+                             (":pressed", UPDATE_PILL_RING["press"])):
+            out.append(f"""
+        QPushButton#updatePill[state="{state}"]{pseudo} {{ {base}
+            color: {color};
+            background: {plate};
+            border: 1px solid {alpha(color, ring)}; }}
+            """)
+    return "".join(out)
+
+
 def checkbox_qss(t: dict, accent: str) -> str:
     """Selector checkbox. Every state transition answers the pointer:
     unchecked hover pre-tints the well with the accent (a preview of the
@@ -1886,7 +2299,7 @@ def checkbox_qss(t: dict, accent: str) -> str:
             background: transparent; border: none; spacing: 10px; padding: 4px 2px;
         }}
         QCheckBox::indicator {{
-            width: 16px; height: 16px; border-radius: {RADIUS['chip']-2}px;
+            width: 16px; height: 16px; border-radius: {inner_radius(RADIUS['chip'], 2)}px;
             border: 1px solid {t['card_line']}; background: {t['card']};
         }}
         QCheckBox::indicator:hover {{
@@ -2087,7 +2500,7 @@ def icon_ghost_button_qss(t: dict, accent: str) -> str:
     return f"""
         QPushButton {{
             background: transparent; border: 1px solid {t['card_line']};
-            border-radius: {RADIUS['chip']-2}px; color: {t['text_muted']}; font-size: {TYPE['label']}px; font-weight: 700;
+            border-radius: {inner_radius(RADIUS['chip'], 2)}px; color: {t['text_muted']}; font-size: {TYPE['label']}px; font-weight: 700;
         }}
         QPushButton:hover {{
             background: {alpha(accent, 0.14)}; border: 1px solid {alpha(accent, 0.45)};
@@ -2263,12 +2676,12 @@ def version_chip_qss(t: dict, accent: bool = False) -> str:
         return f"""
             color: {t['accent']}; font-size: {TYPE['caption']}px; font-weight: 700;
             background: {alpha(t['accent'], 0.14)}; border: 1px solid {alpha(t['accent'], 0.40)};
-            border-radius: {RADIUS['chip']-1}px; padding: 3px 9px;
+            border-radius: {inner_radius(RADIUS['chip'])}px; padding: 3px 9px;
         """
     return f"""
         color: {t['text_muted']}; font-size: {TYPE['caption']}px; font-weight: 600;
         background: {t['panel']}; border: 1px solid {t['panel_line']};
-        border-radius: {RADIUS['chip']-1}px; padding: 3px 9px;
+        border-radius: {inner_radius(RADIUS['chip'])}px; padding: 3px 9px;
     """
 
 
@@ -2358,17 +2771,39 @@ def dialog_go_qss(t: dict, accent: str) -> str:
 # so the title-vs-description gap now reads in BOTH size and tone (hierarchy
 # from contrast, per the app's standing philosophy — just tuned harder).
 # A new `meta` role carries the card footer's count pills / hints.
+#
+# v13 SHARPENS THE TOP OF THE RAMP, because the middle was widened in v7
+# and then nothing was ever done about the WEIGHT. Titles shipped at 650
+# and 680 — values that exist in no type system, land on whatever Qt
+# rounds them to, and read as "a bit bolder than the body" rather than as
+# a different kind of text. A card title is the first thing read on a
+# card and the only thing read when scanning a grid of nine; it has to
+# separate from the description underneath it instantly, and 650 against
+# the description's 400 was doing that on size alone.
+#
+# Titles now sit on the WEIGHT scale proper (semi/bold — the two steps
+# that carry meaning) and carry NEGATIVE TRACKING, which is the half
+# nobody thinks to add. At display sizes the default spacing that suits
+# 12px body copy leaves large text looking loose and slightly unresolved;
+# pulling it in is what makes a heading read as machined. The pull scales
+# with the size (-0.5px at 22, -0.3px at 18, -0.2px at 16) because
+# tracking is an optical correction, not a constant — applying the
+# hero's -0.5 to a 16px card title would visibly jam the letters.
+#
+# The description roles are deliberately UNTOUCHED. The hierarchy is the
+# GAP between the two, and every point of weight added to the muted half
+# closes it again.
 _LABEL_ROLES = {
-    "title":    ("22px", "680", "text",       ""),
+    "title":    ("22px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.5px;"),
     # v10: a REAL dialog heading role. Every dialog used to build its
     # header as `label_qss(t, "card").replace("14px", "16px")` — but the
     # card role has been 16px since v7, so that replace matched nothing
     # and silently did nothing in all 8 call sites. Dialog titles have
     # been rendering at plain card-title size ever since; they now have
     # their own step above it.
-    "dialog":   ("18px", "700", "text",       ""),
+    "dialog":   ("18px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.3px;"),
     "version":  ("11px", "500", "text_faint", ""),
-    "card":     ("16px", "650", "text",       ""),
+    "card":     ("16px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.2px;"),
     "body":     ("13px", "400", "text_muted", ""),
     "desc":     ("13px", "400", "text_soft",  ""),
     "tagline":  ("12px", "400", "text_muted", ""),
@@ -2445,34 +2880,52 @@ def sidebar_version_qss(t: dict) -> str:
     manual "check for updates" button (main.PulseApp._on_footer_clicked).
     Pairs with elevate_button_qss as the rail's two footer controls.
 
-    Its resting state is DERIVED from the `caption` label role it replaced,
-    not retyped, so the line that closes the rail looks exactly as quiet as
-    it always did — a control announcing itself here would re-weight a zone
-    deliberately kept calm.
+    Its size, weight and tracking are DERIVED from the `caption` label role
+    it replaced, not retyped, so the line that closes the rail looks
+    exactly as quiet as it always did — a control announcing itself here
+    would re-weight a zone deliberately kept calm. (The COLOUR is no longer
+    taken from that role; see the v12.1 note below.)
 
     But it is clickable, and it shipped with no hover or press state at
     all: the affordance was invisible, discoverable only by clicking the
     version number on a hunch. Hover therefore lifts the text the FULL way
-    (text_faint -> text) over an accent wash and hairline, and press pushes
-    both further while dimming the text, so the click is acknowledged on
-    the way down.
+    (to `text`) over an accent wash and hairline, and press pushes both
+    further while dimming the text, so the click is acknowledged on the
+    way down.
 
-    The first attempt lifted one step to text_muted over `card_hover`,
-    whose 7.5% alpha is all but invisible against the rail — it technically
-    had a hover state and still failed the thing a hover state is for.
+    The first attempt lifted the WASH only one step, to `card_hover`, whose
+    7.5% alpha is all but invisible against the rail — it technically had a
+    hover state and still failed the thing a hover state is for.
     Discoverability is the requirement, so the contrast has to be legible,
     not merely present.
 
     The rest state paints NOTHING — but it reserves the border as
     `1px solid transparent`, so the hairline appearing on hover cannot
     reflow the footer by two pixels the moment the pointer arrives.
+
+    v12.1 LIFTS THE REST COLOUR OFF THE FLOOR, and hands its status job
+    away. This line used to carry the updater's answer too ("… · Update
+    available"), appended to its own text — the app's most actionable
+    notification, rendered at the `caption` role: 10px, weight 500, on
+    text_faint, the quietest step in the ramp. Measured on the sidebar
+    panel that is 5.37:1 dark / 5.13:1 light — legible on paper and
+    invisible in practice, and it only became emphatic once the pointer
+    arrived. Update status now lives in the Activity rail's UpdatePill
+    (update_pill_qss), which is toned, plated and AA at rest.
+
+    What stays here is identity — and a control, still: clicking it is
+    the rail's manual "check for updates". A CONTROL MUST NOT SIT ON THE
+    TEXT FLOOR, so the resting colour is derived from the `status` role
+    (text_muted, 7.94:1 light / 9.11:1 dark) while keeping the caption
+    role's size, weight and tracking: the line reads exactly as quiet as
+    it always did, at a weight you can actually resolve.
     """
-    size, weight, color_key, extra = _LABEL_ROLES["caption"]
+    size, weight, _floor_key, extra = _LABEL_ROLES["caption"]
     return f"""
         QPushButton {{
             background: transparent;
             border: 1px solid transparent;
-            color: {t[color_key]};
+            color: {t['text_muted']};
             font-size: {size}; font-weight: {weight}; {extra}
             padding: 7px 4px;
             border-radius: {RADIUS['control']}px;
