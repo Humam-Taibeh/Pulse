@@ -24,7 +24,7 @@ import os
 import re
 
 import pytest
-from PySide6.QtWidgets import QFrame, QLabel
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton
 
 from frontend import theme as TH
 from frontend.main import CategoryPage
@@ -214,6 +214,65 @@ def test_an_inset_child_never_squares_off():
     """A deep inset must not hand back a 0 radius: a square corner inside a
     rounded surface is the one result worse than a mismatched one."""
     assert TH.inner_radius(TH.RADIUS["chip"], 99) >= 2
+
+
+# ============================================================
+#  THE ICON SCALE
+# ============================================================
+#: `TH.icon_font(20)` — a glyph size written straight into a call.
+_ICON_SIZE_LITERAL = re.compile(r"icon_font\(\s*(\d+)\s*\)")
+
+
+def test_the_icon_ramp_is_exactly_three_tiers():
+    """The fifth scale, held to the same standard as SPACE, TYPE and
+    RADIUS. Glyphs shipped at SIX hand-picked sizes (12, 13, 15, 16, 19,
+    21), and three of those were the same element — a Fluent glyph in a
+    PLAQUE_SIZE well — drawn at three sizes in three places."""
+    tiers = sorted(set(TH.ICON.values()))
+    assert len(tiers) == 3, (
+        f"the icon ramp is back to {len(tiers)} values {tiers} — see the "
+        "note on TH.ICON for why three is the point")
+    assert min(tiers) >= 12 and max(tiers) <= 24
+
+
+def test_one_well_is_one_glyph_size_everywhere():
+    """The defect the scale was added for, asserted directly.
+
+    PLAQUE_SIZE already guarantees that a sidebar entry, a category card
+    and a dialog action row paint the same 36px WELL. It said nothing about
+    what goes inside, so the three drew 16px, 21px and 19px glyphs in it —
+    which is the same 'one module is one object' rule failing one level
+    further in than the rule was written.
+    """
+    from frontend.widgets import ActionRow, GlassCard
+    assert GlassCard._ICON_BASE_PX == TH.ICON["plaque"]
+    assert ActionRow._ICON_PX == TH.ICON["plaque"]
+    # ...and the well itself is still the shared one on both.
+    assert ActionRow._PLAQUE == GlassCard._PLAQUE
+
+
+@pytest.mark.parametrize("module", ["main.py", "widgets.py"])
+def test_every_icon_size_comes_off_the_scale(module):
+    """No hand-picked glyph sizes, the same guard the other four scales
+    carry.
+
+    Scoped to TH.icon_font() calls deliberately: the scale governs glyphs
+    drawn in the Fluent ICON FONT. A '●' set in the UI font at 12px (the
+    activity rail's status dot) is a dot diameter, not an icon size, and
+    holding it to this ramp would be enforcing a rule about a different
+    thing because it happens to be a small number.
+    """
+    tiers = set(TH.ICON.values())
+    source = open(os.path.join(_FRONTEND, module), encoding="utf-8").read()
+    off_ramp = [(i + 1, line.strip())
+                for i, line in enumerate(source.splitlines())
+                for m in _ICON_SIZE_LITERAL.finditer(line)
+                if int(m.group(1)) not in tiers]
+    listing = chr(10).join(f"  {module}:{ln}  {text}"
+                           for ln, text in off_ramp)
+    assert not off_ramp, (
+        f"{len(off_ramp)} icon size literal(s) off the ramp "
+        f"{sorted(tiers)}:" + chr(10) + listing)
 
 
 # ============================================================
@@ -621,6 +680,318 @@ def test_every_dialog_uses_the_shared_chrome(window, qapp):
         dialog.deleteLater()
     qapp.processEvents()
     assert not missing, f"dialogs not built on _dialog_chrome: {missing}"
+
+
+# ============================================================
+#  THE ACTION BAND  (v10.5)
+# ============================================================
+def _shipped_hubs():
+    """The hubs that shipped the defect this band exists to fix.
+
+    Read off the real menu structure rather than named, so a third hub
+    added later is covered without anyone remembering to add it here.
+    """
+    return [item for cat in CATEGORIES for item in category_items(cat)
+            if item.get("hub")]
+
+
+def test_there_are_hubs_to_test():
+    """Guards the discovery above: if hubs stop being declared with the
+    `hub` key, every assertion below would pass while testing nothing."""
+    assert _shipped_hubs(), "no hub cards found in the menu structure"
+
+
+@pytest.mark.parametrize("host_size", [(752, 620), (1300, 860), (2560, 1440)])
+def test_a_hub_never_stretches_past_the_action_band(window, qapp, host_size):
+    """THE regression this band was added for.
+
+    Built on the selector band, a two-action hub opened at up to 1280x900:
+    two rows, stretched and centred, in a panel sized for a fourteen-card
+    page. The complaint was "massive dead space", and it only got worse on
+    the big displays nobody develops on - which is why the widest case here
+    is 1440p rather than the developer's own window.
+    """
+    from frontend import widgets as W
+
+    original = window.size()
+    window.resize(*host_size)
+    qapp.processEvents()
+    try:
+        for hub in _shipped_hubs():
+            dialog = W.HubDialog(window, hub, window.theme.t)
+            dialog.show()
+            qapp.processEvents()
+            W.refit_dialog(dialog)
+            qapp.processEvents()
+            width = dialog.panel.width()
+            assert W._ACTION_WIDTH_MIN <= width <= W._ACTION_WIDTH_MAX, (
+                f"{hub['title']} opened {width}px wide at host {host_size} - "
+                f"outside the action band "
+                f"[{W._ACTION_WIDTH_MIN}, {W._ACTION_WIDTH_MAX}]")
+            dialog.reject()
+            dialog.deleteLater()
+        qapp.processEvents()
+    finally:
+        window.resize(original)
+        qapp.processEvents()
+
+
+def test_a_hub_is_only_as_tall_as_what_it_offers(window, qapp):
+    """Height HUGS content - that is the difference in KIND between the two
+    bands, not merely a smaller number. A hub with more actions must be
+    taller than one with fewer; a fixed height would make them identical
+    and both of them mostly empty."""
+    from frontend import widgets as W
+
+    heights = {}
+    for hub in _shipped_hubs():
+        dialog = W.HubDialog(window, hub, window.theme.t)
+        dialog.show()
+        qapp.processEvents()
+        W.refit_dialog(dialog)
+        qapp.processEvents()
+        heights[len(hub["items"])] = dialog.panel.height()
+        assert dialog.panel.height() < W._SELECTOR_HEIGHT_MIN, (
+            f"{hub['title']} is {dialog.panel.height()}px tall - taller than "
+            "the SELECTOR band's own floor, so it is not hugging anything")
+        dialog.reject()
+        dialog.deleteLater()
+    qapp.processEvents()
+    if len(heights) > 1:
+        counts = sorted(heights)
+        assert heights[counts[-1]] > heights[counts[0]], (
+            f"a {counts[-1]}-action hub is no taller than a {counts[0]}-"
+            f"action one ({heights}) - the panel is not sized by its content")
+
+
+def test_every_hub_action_is_one_action_row(window, qapp):
+    """One row per offered action, in order, and nothing else in the list.
+    A hub that silently dropped or doubled a sub-action would still look
+    perfectly right."""
+    from frontend import widgets as W
+    from frontend.menu_structure import hub_items
+
+    for hub in _shipped_hubs():
+        dialog = W.HubDialog(window, hub, window.theme.t)
+        rows = dialog.panel.findChildren(W.ActionRow)
+        assert len(rows) == len(hub_items(hub)), hub["title"]
+        assert ([r.item["title"] for r in rows]
+                == [i["title"] for i in hub_items(hub)])
+        dialog.reject()
+        dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_hubs_action_buttons_share_one_right_edge(window, qapp):
+    """Each button sizes itself to its own verb, so "Remove" and
+    "Reinstall" came out 78 and 80 wide - a two-pixel stagger on the
+    dialog's right edge, which is exactly the "almost aligned" class of
+    defect the layout scales exist to remove."""
+    from frontend import widgets as W
+
+    for hub in _shipped_hubs():
+        dialog = W.HubDialog(window, hub, window.theme.t)
+        dialog.show()
+        qapp.processEvents()
+        widths = {r.button.width()
+                  for r in dialog.panel.findChildren(W.ActionRow)}
+        assert len(widths) == 1, (
+            f"{hub['title']}'s action buttons are {sorted(widths)} wide")
+        dialog.reject()
+        dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_destructive_row_is_tinted_rather_than_wireframed(qapp):
+    """The destructive treatment, asserted at the factory.
+
+    A hard red outline around a transparent row makes the teardown the
+    loudest thing on a dialog whose other option is the safe one - it
+    advertises exactly the action the user is least likely to want. The
+    fill has to be present, and it has to be QUIET.
+    """
+    for mode in ("dark", "light"):
+        t = TH.ThemeManager(mode, None).t
+        danger = TH.action_row_qss(t, t["accent"], danger=True)
+        safe = TH.action_row_qss(t, t["accent"], danger=False)
+        assert TH.alpha(t["err"], TH.DANGER_TINT) in danger, (
+            f"{mode}: the destructive row has no tinted fill")
+        assert TH.alpha(t["err"], TH.DANGER_LINE) in danger
+        assert t["err"] not in safe, (
+            f"{mode}: a non-destructive row is wearing the error tone")
+    assert TH.DANGER_TINT <= 0.12, (
+        f"the destructive tint is {TH.DANGER_TINT} - past ~0.12 it stops "
+        "shouldering the row and starts dyeing it")
+    assert TH.DANGER_LINE < 0.30, (
+        "the destructive hairline is back at wireframe weight")
+
+
+def test_a_destructive_row_cannot_be_fired_by_a_stray_click(window, qapp):
+    """The whole row is clickable as a convenience, the way a native
+    settings list behaves - but never for a destructive action, where a
+    stray click on a description would start an irreversible task."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from frontend import widgets as W
+
+    t = window.theme.t
+    danger = W.ActionRow({"title": "Purge", "desc": "d", "danger": True}, t,
+                         t["accent"])
+    safe = W.ActionRow({"title": "Restore", "desc": "d"}, t, t["accent"])
+    fired = []
+    danger.activated.connect(lambda: fired.append("danger"))
+    safe.activated.connect(lambda: fired.append("safe"))
+    for row in (danger, safe):
+        row.resize(560, 80)
+        QTest.mouseClick(row, Qt.MouseButton.LeftButton,
+                         pos=QPoint(row.width() // 2, row.height() // 2))
+    qapp.processEvents()
+    assert fired == ["safe"], (
+        f"row-wide click fired {fired} - a destructive action must be "
+        "reachable only through its own button")
+
+
+# ============================================================
+#  FLOATING SURFACES - dialogs, popups, menus
+# ============================================================
+def test_every_menu_surface_composes_the_shared_material(qapp):
+    """The command palette and every combo popup are the same object: a
+    list floating over the page. They had drifted - the palette hovered on
+    `card_hover` (the accent-tinted CARD lift, which paints an indigo
+    streak down a menu being scrubbed) while the combo popup had no hover
+    rule at all and no item padding."""
+    for mode in ("dark", "light"):
+        t = TH.ThemeManager(mode, None).t
+        surfaces = {"palette": TH.command_list_qss(t),
+                    "combo": TH.filter_combo_qss(t, t["accent"])}
+        for name, qss in surfaces.items():
+            assert t["row_hover"] in qss, (
+                f"{mode}/{name} does not use the neutral hover pill")
+            assert t["card_hover"] not in qss, (
+                f"{mode}/{name} still hovers on the accent-tinted card lift")
+
+
+def test_the_hover_pill_never_outweighs_a_real_selection(qapp):
+    """Hover says "the pointer is here". Selection says something the list
+    is reporting. If the pointer's weight ever reaches the selection's, the
+    two become indistinguishable while scrubbing a menu."""
+    for mode in ("dark", "light"):
+        t = TH.ThemeManager(mode, None).t
+        hover = TH._parse_color(t["row_hover"])[3]
+        assert 0.03 <= hover <= 0.10, (
+            f"{mode}: the hover pill is at {hover} - outside the weight at "
+            "which it reads as a pointer rather than as a state")
+        assert hover < 0.16, "hover has reached the selection tint's weight"
+
+
+def test_a_floating_surface_casts_the_shared_two_layer_shadow(window, qapp):
+    """Elevation is TWO layers, and one mechanism cannot supply both: a
+    single shadow is either tight enough to seat a surface or soft enough
+    to lift it, never both. The outer (ambient) layer is the
+    QGraphicsDropShadowEffect asserted below; the inner (contact) layer is
+    the ramp DepthCard paints just inside its own edge, which happens only
+    if the panel was given its theme - and no dialog panel had been, since
+    the depth tokens landed."""
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+    from frontend import widgets as W        # noqa: F401  (fixture parity)
+
+    dx, dy, blur, opacity = TH.DIALOG_SHADOW
+    for name, build in _dialog_specs(window):
+        dialog = build()
+        effect = dialog.panel.graphicsEffect()
+        assert isinstance(effect, QGraphicsDropShadowEffect), name
+        assert effect.blurRadius() == blur, name
+        assert (effect.xOffset(), effect.yOffset()) == (dx, dy), name
+        assert effect.color().alpha() == round(255 * opacity), name
+        assert dialog.panel._shadow is not None, (
+            f"{name}'s panel was built without a theme, so it casts an "
+            "outer shadow with no contact edge and no lit top face")
+        assert dialog.panel._sheen is not None, name
+        dialog.reject()
+        dialog.deleteLater()
+    qapp.processEvents()
+
+
+# ============================================================
+#  DIALOG FOOTERS
+# ============================================================
+#: `cancel.setFixedSize(96, 36)` — a hand-picked footer button box.
+_FIXED_BUTTON_BOX = re.compile(r"setFixedSize\(\s*(\d+)\s*,\s*%d\s*\)"
+                               % TH.CONTROL_H)
+
+
+def test_no_footer_button_carries_a_hand_picked_width():
+    """Widths came off ten different literals — 96, 110, 112, 120, 122,
+    128, 132, 140, 150, 160, 170, 214 — one per button, for one element.
+
+    A FIXED width is also wrong on its own terms wherever the label is
+    not fixed, and several are not: the Update Center's CTA cycles through
+    "Update Selected", "Update Selected (3)" and "Update All (14)" inside
+    one 160px box, so the same button reads cramped at its longest label
+    and adrift at its shortest. widgets.size_dialog_button replaces both
+    halves with a floor plus the button's own sizeHint.
+    """
+    strays = []
+    for module in ("main.py", "widgets.py"):
+        source = open(os.path.join(_FRONTEND, module), encoding="utf-8").read()
+        for i, line in enumerate(source.splitlines()):
+            if _FIXED_BUTTON_BOX.search(line):
+                strays.append(f"  {module}:{i + 1}  {line.strip()}")
+    assert not strays, (
+        f"{len(strays)} dialog button(s) still carry a hand-picked width — "
+        "use widgets.size_dialog_button (or dialog_footer, which calls "
+        "it):\n" + chr(10).join(strays))
+
+
+@pytest.mark.parametrize("name", _DIALOG_NAMES)
+def test_every_dialog_footer_shares_one_baseline(window, qapp, name):
+    """A dialog's action bar is one SET of buttons, and a set has to look
+    like one: same height, same floor, growing only for a label that
+    genuinely needs the room.
+
+    Measured on the ACTUAL widgets rather than on the source, because the
+    source guard above can only see the literals it knows the shape of —
+    a button sized through some other route would pass it and still ship
+    a footer with two different heights in it.
+    """
+    from frontend import widgets as W
+
+    spec = dict(_dialog_specs(window))
+    dialog = spec[name]()
+    dialog.show()
+    qapp.processEvents()
+    try:
+        # Identified by the MARK widgets.size_dialog_button leaves, not by
+        # geometry. Guessing from height would sweep up icon-only tools and
+        # in-row controls, and would go quiet about the one button that had
+        # actually drifted — a drifted button is exactly the one a
+        # geometric guess stops recognising as a footer button.
+        buttons = [b for b in dialog.panel.findChildren(QPushButton)
+                   if b.property("dialogAction")]
+        if not buttons:
+            # The command palette is the one dialog with no action bar at
+            # all: Enter runs the highlighted result and Escape closes it,
+            # so a footer would be two buttons restating the keyboard. An
+            # empty footer is a design decision here, not a drift.
+            assert name == "CommandPalette", (
+                f"{name} has no dialog action buttons — either it hand-rolled "
+                "its footer instead of using widgets.dialog_footer, or it "
+                "genuinely has none and belongs in this exemption")
+            return
+        wrong_height = [(b.text(), b.height()) for b in buttons
+                        if b.isVisible() and b.height() != TH.CONTROL_H]
+        assert not wrong_height, (
+            f"{name}: footer button(s) off CONTROL_H={TH.CONTROL_H}: "
+            f"{wrong_height}")
+        too_narrow = [(b.text(), b.width()) for b in buttons
+                      if b.isVisible() and b.width() < W._FOOTER_BTN_W]
+        assert not too_narrow, (
+            f"{name}: footer button(s) under the {W._FOOTER_BTN_W}px floor: "
+            f"{too_narrow}")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
 
 
 class TestChipStrip:

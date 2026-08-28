@@ -346,6 +346,71 @@ class TestElidedCaption:
             f"truncates {text!r} at that width — the caption can never "
             "render in full")
 
+    def test_a_caption_on_a_PLATE_elides_inside_its_padding(self, qapp):
+        """The v10.5 regression, and the one failure mode this whole class
+        exists to prevent — reintroduced by putting it on a tinted plate.
+
+        Every caller until the Activity drawer's phase chip sat on a
+        transparent background, so `width()` and the drawing area were the
+        same number and eliding against the former was harmlessly wrong.
+        theme.stage_chip_qss reserves 8px each side plus a 1px border: the
+        label measured the string against the OUTER width, judged that it
+        fit, and Qt then drew it into a rect 18px narrower — so the tail
+        was CLIPPED mid-glyph instead of eliding, with no ellipsis to say
+        anything had been dropped.
+        """
+        from frontend import theme as TH
+        from frontend.widgets import ElidedCaption
+
+        for mode in ("dark", "light"):
+            t = TH.ThemeManager(mode, None).t
+            label = ElidedCaption(max_width=320)
+            label.setStyleSheet(TH.stage_chip_qss(t))
+            label.setFullText(
+                "Downloading Mozilla Firefox 145.0 (replacing 144.0.2)...")
+            label.resize(label.sizeHint())
+            label.show()
+            qapp.processEvents()
+            try:
+                room = label.contentsRect().width()
+                assert room < label.width(), (
+                    "the plate reserves no chrome — this test is measuring "
+                    "nothing")
+                drawn = label.fontMetrics().horizontalAdvance(label.text())
+                assert drawn <= room, (
+                    f"{mode}: the caption draws {drawn}px of text into "
+                    f"{room}px of room — it is clipping, not eliding")
+            finally:
+                label.hide()
+                label.deleteLater()
+        qapp.processEvents()
+
+    def test_a_squeezed_plate_caption_still_shows_an_ellipsis(self, qapp):
+        """...and when it genuinely does not fit, it says so. A clip is
+        indistinguishable from a sentence that happened to end there."""
+        from frontend import theme as TH
+        from frontend.widgets import ElidedCaption
+
+        t = TH.ThemeManager("dark", None).t
+        label = ElidedCaption(max_width=320)
+        label.setStyleSheet(TH.stage_chip_qss(t))
+        label.setFullText(
+            "Downloading Microsoft Visual Studio Code 1.108.2 (replacing "
+            "1.107.0)...")
+        label.resize(140, label.sizeHint().height())
+        label.show()
+        qapp.processEvents()
+        try:
+            assert "…" in label.text(), (
+                f"squeezed to 140px the caption rendered {label.text()!r} "
+                "with no ellipsis")
+            assert (label.fontMetrics().horizontalAdvance(label.text())
+                    <= label.contentsRect().width())
+        finally:
+            label.hide()
+            label.deleteLater()
+        qapp.processEvents()
+
     def test_the_hint_is_not_padded_beyond_what_is_needed(self, qapp):
         """The slack above must stay a rounding allowance, not become a
         margin — a caption that over-asks pushes its neighbours around."""

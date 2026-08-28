@@ -16,6 +16,178 @@ GUI version, with core changes called out explicitly.
 
 ---
 
+## [10.5.0] — 2026-08-28
+
+A still background, a compact action dialog, and an updater that says what
+it is doing.
+
+### Changed — the background stopped moving
+- **The ambient field is static.** Five aurora orbs drifting and breathing
+  on independent sine paths, 126 stars rising and twinkling, and a whole
+  sheet leaning toward the pointer — all of it gone. The removal is
+  implemented by *stopping time* rather than by deleting the field
+  (`_AmbientSimulation.STATIC`): every pixel is a pure function of `_t`,
+  the seeded scatter and the theme, so pinning `_t` at 0 yields the exact
+  frame the animated field rendered at t=0. The constellation is still a
+  constellation — each star's brightness comes from its own seeded twinkle
+  phase, which is what keeps a motionless field from reading as 126
+  identical dots — and every measured quality of the wash (star weight in
+  both themes, wash neutrality, paint cost) is unchanged by construction.
+- **An idle window now costs nothing at the bottom of its z-order.** The
+  timer is built and never started: `_arm()` is the single choke point
+  every path re-schedules through, and it refuses. The animated field's
+  *cheapest* configuration was a full-window repaint ten times a second,
+  and a repaint here is never "repaint the wash" — every surface above it
+  is translucent, so Qt re-rasterised the whole stack (18.5ms at 1300x860,
+  of which the card grid alone was 10.9ms).
+- The pointer lean is neutered at its gain (`_POINTER_GAIN = 0.0`), because
+  it is the one piece of motion a frozen clock would *not* have stopped: it
+  integrates from `QCursor.pos()`, not from `_t`.
+- `suspend()`/`resume()` keep their job — they still freeze the composited
+  orb layer across an OS move/resize loop, which is a real cost even for a
+  field that does not animate. `defer()` becomes a no-op; its callers are
+  asserting "the GUI thread is about to be busy", which stays true.
+- The GPU renderer's orb texture is now explicitly invalidated on a theme
+  change. It was rebuilt on a cadence measured against `_t`, so against a
+  frozen clock a toggle would have baked the previous theme's aurora into
+  the texture for the life of the process — a bug that could not exist
+  while the field was animating.
+
+### Changed — dialogs
+- **A new ACTION band, 580–640px wide, with height that hugs its content.**
+  The Microsoft Edge and Microsoft OneDrive hubs offer two actions each and
+  were built on the *selector* band, so they opened at up to 1280x900: two
+  tiles, stretched and centred, in a panel sized for a fourteen-card page.
+  Card-shaped rows made that unfixable — a `GlassCard` caps at 156px and
+  cannot absorb a panel's worth of slack, so the surplus fell into the gaps
+  whatever the layout did with it. A two-action hub is now a ~320px panel
+  holding exactly two actions.
+- **`ActionRow`**, the row those hubs are built from: left-aligned icon in
+  the shared `PLAQUE_SIZE` well, title over description, and one button at
+  the right edge. A column of them has two hard vertical rules, which is
+  what makes a list scan as a list rather than as three independent boxes.
+- **Destructive rows are a translucent tinted fill plus a hairline**
+  (`DANGER_TINT` 0.08, `DANGER_LINE` 0.22), replacing the high-contrast red
+  wireframe. A wireframe makes the teardown the loudest thing on a dialog
+  whose other option is the safe one — it advertises exactly the action the
+  user is least likely to want. Text contrast on the new fill is measured
+  and pinned (14.0:1 / 15.8:1 for the title, 8.1:1 / 7.4:1 for the
+  description).
+- A destructive row is **button-only**: the whole row is clickable
+  elsewhere, the way a native settings list behaves, but a stray click on a
+  description must never start something irreversible.
+- **`dialog_footer` / `size_dialog_button`.** Footer button widths came off
+  twelve different literals — 90, 96, 110, 112, 120, 122, 128, 132, 140,
+  150, 160, 170, 214 — one per button, for one element. They are now
+  `CONTROL_H` tall with a 96px floor and grow to fit their label, which
+  also fixes the buttons whose labels are not fixed: the Update Center's
+  CTA cycles through "Update Selected", "Update Selected (3)" and "Update
+  All (14)" inside what used to be one 160px box.
+- The three read-only inspectors' Close buttons were 88px — the one family
+  in the app whose Close was visibly narrower than every other dialog's.
+- **Dialog panels finally cast both halves of their elevation.** Every
+  panel was built without a theme, so it wore an outer shadow with no
+  contact edge and no lit top face — a shadow printed behind a flat shape,
+  which is the exact failure `DepthCard`'s own docstring calls out. The
+  ambient layer moves to `DIALOG_SHADOW` (`0 12px 32px rgba(0,0,0,0.45)`,
+  down from a 42px blur at 0.59) and the contact ramp is now painted.
+
+### Changed — menus, dropdowns and icons
+- **One shared material for every floating list** (`menu_surface_qss` /
+  `menu_item_qss`): 12px surface radius, 10px of vertical lead per row, and
+  a *neutral* translucent hover pill. The command palette was hovering on
+  `card_hover`, the accent-tinted card lift, so scrubbing the results
+  painted an indigo streak down them; the combo popup had no hover rule at
+  all and no item padding. New `row_hover` token, inverted rather than
+  re-alphaed for light (white at any weight is invisible on porcelain).
+- **`TH.ICON`, the fifth scale.** Glyphs shipped at six hand-picked sizes,
+  and three of those were the *same element* — a Fluent glyph in a
+  `PLAQUE_SIZE` well — drawn at 16px in the sidebar, 21px on a card and
+  19px in a dialog row. `PLAQUE_SIZE` exists so that object is one object;
+  letting the well agree while the glyph disagreed by five pixels was the
+  same defect one level further in. Three tiers (`micro`/`inline`/`plaque`),
+  enforced by `test_layout_contract`.
+
+### Added — the live app updater
+- **A process termination guard that is not a nine-entry lookup table.**
+  Windows will not replace a file that is open for execution, so an update
+  applied over a running app either fails outright or half-applies.
+  Termination used to be `$Script:LockProcessMap` alone — exactly right for
+  its nine apps, and silently absent for the ones most likely to be running
+  when the user updates them. The map survives as the authoritative layer;
+  under it, an app is now matched by process name, by the executable's
+  `ProductName`, or by its install directory.
+- **The guard is conservative on purpose.** Terminating the wrong process
+  is unsaved work, gone, with no undo and no error message. Every rule is
+  an *equality* on a normalised name, never a substring; candidates under
+  four characters are refused as coincidences; and a hard denylist (the OS,
+  the shell, and Pulse's own process tree) outranks every rule. When
+  nothing matches, nothing is killed.
+- **Closing is graceful first.** `CloseMainWindow()` sends the same WM_CLOSE
+  clicking the X does, so an app with unsaved work shows its own save
+  prompt and the user gets to answer it; only what survives six seconds is
+  terminated.
+- **The Update Center says which apps are running before the button is
+  pressed.** The scan reports it per row (a `RUNNING` chip naming the
+  processes), and applying a selection that includes one confirms it *by
+  name* — "3 apps will be closed" is not something anyone can decide with,
+  because the whole question is which ones.
+- **The phase channel is wired to the pipeline every operation runs
+  through.** `##PULSE##STAGE|` has existed since v10.3 and only the Update
+  Center's own scan dialog listened to it, so a task that closed a running
+  app, downloaded 90MB and verified the result reported all three as an
+  undifferentiated scroll of winget output under a rail that said
+  "Executing: Update Selected Apps" for eight minutes. Phases now reach a
+  fixed chip in the Activity drawer, the rail (alongside the task name),
+  and the console transcript: `[3/14] Mozilla Firefox` → `Closing Mozilla
+  Firefox (firefox)...` → `Downloading Mozilla Firefox 145.0 (replacing
+  144.0)...` → `Verifying...` → `Verified 144.0 -> 145.0`.
+- **Updates are verified against the machine, not against an exit code.**
+  After a successful winget run the installed version is re-read and the
+  actual `old -> new` transition is reported. Never downgraded to a
+  failure: a package whose version winget cannot resolve after a clean
+  install is a reporting gap, not a broken install.
+
+### Fixed
+- **Phase markers could be eaten by carriage-return progress.** A marker
+  appended just before a winget percentage frame became the console's
+  newest line, so the frame *rewrote* it and every completed phase vanished
+  from the exported log. `LiveConsole.append_marker` makes a marker
+  un-overwritable exactly once — a CR rewrite means "replace what I just
+  wrote", and a marker is not something the stream wrote.
+- **The process guard's match set could silently become substring
+  matching.** PowerShell enumerates a collection on return, so a
+  `HashSet[string]` holding one key came back as a bare `[string]` and
+  `$Keys.Contains($x)` stopped being set membership. Combined with an
+  unreadable `ProductName` comparing as `""` (and `"anything".Contains("")`
+  being true), the guard matched 107 of 235 processes for an app that does
+  not exist. Comparison now goes through `Test-AppKeyMatch`, which
+  validates both ends and can only ever test equality.
+- **The install-directory rule matched ancestors.** Steam installs every
+  game under `Steam\steamapps\common\<game>\`, so "update Steam" resolved
+  to the user's running game and offered to close it. Only the leaf
+  directory is consulted now, which still catches everything the rule
+  exists for.
+
+### Tests
+- 893 pytest (up from 838) and 126 Pester (up from 101).
+- New: `tests/backend/ProcessGuard.Tests.ps1` (25) covers the guard's
+  matching rules, its denylist and its dry-run behaviour against a
+  synthetic process table — a real `Get-Process` would make "did this
+  match?" mean something different on every machine.
+- New: `tests/test_live_updater.py` (19) covers the phase channel end to
+  end, marker survival against CR progress, and the running-app
+  confirmation.
+- `ElidedCaption` gains two: a caption on a padded plate must elide
+  inside its contents rect, not clip against its outer width.
+- `test_ambient.py`'s motion section is replaced by a stillness section
+  that asserts the inverse contract at every layer that could reintroduce
+  motion; `TestAmbientDefer` becomes
+  `TestAmbientQuietDuringNavigation`, which keeps the guarantee the
+  deferral existed to provide now that it is unconditional.
+
+---
+
 ## [10.4.0] — 2026-08-28
 
 The v14 surface pass, a decluttered Activity rail, and the first release

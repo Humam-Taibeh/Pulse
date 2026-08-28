@@ -1,15 +1,23 @@
 """
-Ambient background performance contract.
+Ambient background contract — composition, weight, and STILLNESS.
 
-The glow is the bottom widget in the shell, so it is repainted far more
-often than its own ~28fps timer requests: every animation above it (the two
-BreathingIcons) forces a partial repaint underneath. Measured at idle
-before this was addressed: 3.55 paintEvents per timer tick, ~76/s, adding
-up to 26 full-widget repaints per second at ~2.7ms each.
+The field is static as of v10.5 (widgets._AmbientSimulation.STATIC): the
+aurora orbs and the star scatter are the frame the animated field rendered
+at t=0, and nothing advances them. Two halves to the contract, and both are
+tested here:
 
-The fix is not to paint less often — that is not ours to control — but to
-make each paint cheap: the three drifting orbs are composited into one
-cached pixmap and blitted, instead of three smooth-scaled blits per frame.
+WHAT MUST NOT MOVE. No timer, no drift, no twinkle, no pointer lean, and no
+repaint that the window system did not ask for. The animated field's
+cheapest configuration was a full-window repaint ten times a second, and a
+repaint here is never "repaint the wash" — every surface above this widget
+is translucent, so Qt re-rasterises the whole stack (18.5ms measured at
+1300x860, of which the card grid alone is 10.9ms).
+
+WHAT MUST NOT CHANGE. Freezing time is not licence to let the picture rot:
+the orb peaks, the star weight in both themes, the wash's neutrality
+against its canvas and the cost of a single paint are all still solved for
+here, because the pixels a still field shows are the pixels it shows
+forever.
 """
 from __future__ import annotations
 
@@ -36,13 +44,29 @@ def test_layer_is_built_and_reused(window, qapp):
     assert glow._layer is first, "layer rebuilt within its cadence window"
 
 
-def test_layer_rebuilds_after_the_cadence_elapses(window):
+def test_the_clock_never_rebuilds_the_layer(window):
+    """The inverse of what this asserted before v10.5, and deliberately so.
+
+    The orb layer used to be resampled every _LAYER_MS because the aurora
+    was moving. Against a frozen `_t` that cadence would re-rasterise a
+    full-window pixmap purely to reproduce the identical image, so
+    _ensure_layer now keys staleness on size and theme alone. Advancing the
+    clock by any amount must therefore change nothing.
+    """
     glow = window._glow
     glow.repaint()
     first = glow._layer
-    glow._t += (glow._LAYER_MS / 1000.0) + 0.01     # advance animation time
-    glow.repaint()
-    assert glow._layer is not first, "layer never refreshes — orbs would freeze"
+    glow._t += (glow._LAYER_MS / 1000.0) * 50       # a wall-clock eternity
+    try:
+        glow.repaint()
+        assert glow._layer is first, (
+            "the orb layer was rebuilt by the passage of time — a static "
+            "field is paying an animated field's rasterisation bill for a "
+            "pixmap that cannot have changed")
+    finally:
+        glow._t = 0.0
+        glow._layer = None
+        glow.repaint()
 
 
 def test_only_one_layer_is_ever_retained(window):
@@ -398,10 +422,12 @@ def test_the_wash_is_still_visible_in_both_modes(window, qapp):
 
 
 def test_layer_rebuild_stays_inside_its_cadence(window, qapp):
-    """The orb layer is rebuilt 10x a second on the UI thread, so its cost
-    is a permanent background tax — measured at ~3.6ms for five orbs. The
-    ceiling is a tenth of the cadence it runs at; past that, adding orbs
-    is spending frame budget rather than depth."""
+    """A rebuild is no longer a background tax — it happens on a resize
+    step and a theme toggle and at no other time — but it is still work on
+    the UI thread at the two moments the user is most likely to notice
+    latency: mid-drag, and mid-toggle. The ceiling stays where it was
+    (a tenth of the cadence the field used to run at, ~10ms) because that
+    is the budget a resize STEP has, not because anything still ticks."""
     glow = window._glow
     samples = []
     for _ in range(12):
@@ -461,116 +487,130 @@ def test_paint_cost_stays_within_the_frame_budget(window, qapp, theme_name):
 
 
 # ============================================================
-#  CONTINUITY ACROSS NAVIGATION  (v10.3 final pass)
+#  STILLNESS  (v10.5)
 # ============================================================
-# Reported from real-world testing on low-spec hardware: "the ambient
-# circles freeze during a tab switch, then reset and restart their path".
+# The field used to be alive: five orbs drifting and breathing on
+# independent sine paths, 126 stars rising and twinkling, the whole sheet
+# leaning toward the pointer. All of it is gone, and this section is what
+# keeps it gone.
 #
-# Nothing ever reset them — _build_particles runs once, in __init__. What
-# happened is that _tick RETURNED BEFORE INTEGRATING while deferred, so a
-# page switch cost the field the entire deferral: 150 ms warm, 360 ms the
-# first time a module is opened (PAGE_FADE_MS, then CASCADE_BUDGET_MS +
-# CASCADE_MS). Motion resumed from where it stopped instead of from where
-# continuous motion would have put it, which from the outside is
-# indistinguishable from the field snapping back.
-#
-# Measured over a three-lap sweep of all four modules before the fix: the
-# field advanced 661 ms of a 2695 ms sweep — 75% frozen, with dead stalls
-# of 1061 ms. The deferral itself is NOT the bug and must stay: the wash's
-# cost is the full-window repaint it forces through every translucent
-# surface above it (18.5 ms), and landing one mid-transition is the hitch
-# it was introduced to remove. Skipping the PAINT is the whole saving;
-# skipping the arithmetic with it was free to do and expensive to have done.
+# The removal is implemented by STOPPING TIME rather than by deleting the
+# field (see widgets._AmbientSimulation.STATIC), which is why the weight,
+# neutrality and contrast tests above still hold unchanged: what is on
+# screen is the exact frame the animated field rendered at t=0. That makes
+# the stillness itself the only thing left to assert, and it has to be
+# asserted at every layer that could reintroduce motion — the timer that
+# would schedule it, the tick that would integrate it, the pointer that
+# would bias it, and the repaint that would show it.
 
-def _deferred_tick(glow, elapsed_s: float):
-    """Drive one tick that lands `elapsed_s` after arming, while deferred."""
-    glow.defer(5000)
-    glow._armed_at = time.perf_counter() - elapsed_s
+def test_the_field_declares_itself_static(window):
+    """The one switch. If this is ever flipped back, every assertion below
+    is expected to fail — which is the point of a single flag rather than
+    a dozen independently-editable call sites."""
+    assert window._glow.STATIC is True
+
+
+def test_no_timer_is_ever_running(window, qapp):
+    """The ambient loop is not merely idle, it is never armed.
+
+    _arm() is the single choke point every path re-schedules through
+    (showEvent, resume, _tick itself), so a running timer here means some
+    path found its way around it.
+    """
+    glow = window._glow
+    settle(qapp, 200)
+    assert not glow._timer.isActive(), (
+        "the ambient timer is running — the field is repainting the whole "
+        "translucent widget stack behind an app that is doing nothing")
+    glow._arm()
+    glow._arm(10.0)
+    assert not glow._timer.isActive(), "_arm() started the frozen timer"
+
+
+def test_showing_the_field_does_not_start_it(window, qapp):
+    """showEvent re-arms on both renderers. It must find _arm() closed."""
+    glow = window._glow
+    glow.hide()
+    settle(qapp, 60)
+    glow.show()
+    settle(qapp, 120)
+    assert not glow._timer.isActive()
+
+
+def test_a_tick_cannot_advance_the_field(window):
+    """Nothing schedules _tick, and _tick refuses anyway.
+
+    "Nothing can move the field" is a stronger guarantee than "nothing
+    currently schedules the thing that moves it", and the two renderers
+    share this `_t` — a direct call that advanced it would desynchronise
+    them from the single frozen frame both are drawing.
+    """
+    glow = window._glow
+    before_t = glow._t
+    before = [(p["x"], p["y"]) for p in glow._particles]
+    glow._armed_at = time.perf_counter() - 0.5
     glow._tick()
+    assert glow._t == before_t, "_tick advanced the clock on a static field"
+    after = [(p["x"], p["y"]) for p in glow._particles]
+    assert after == before, "a star moved"
 
 
-def test_a_deferred_tick_still_advances_the_field(window):
-    """The whole fix in one assertion: a frame we choose not to PAINT is
-    still a frame the field MOVED through."""
+def test_deferral_is_a_no_op(window):
+    """defer() survives as a live method — its callers are asserting "the
+    GUI thread is about to be busy", which stays true — but there are no
+    ambient frames left to skip, so it must not arm any state."""
     glow = window._glow
-    try:
-        before_t = glow._t
-        before_y = [p["y"] for p in glow._particles]
-        _deferred_tick(glow, 0.10)
-
-        assert glow._t > before_t, (
-            "a deferred tick did not advance _t — the field is losing wall "
-            "time on every page transition and will resume from a stale "
-            "position, which is the reported 'freeze and snap back'")
-        moved = sum(1 for p, y0 in zip(glow._particles, before_y)
-                    if abs(p["y"] - y0) > 1e-9)
-        assert moved == len(glow._particles), (
-            f"only {moved}/{len(glow._particles)} particles drifted during a "
-            "deferred frame")
-    finally:
-        glow._defer_until = 0.0
+    glow.defer(5000)
+    assert glow._defer_until == 0.0
 
 
-def test_a_deferred_tick_does_not_repaint(window):
-    """...and the saving the deferral exists for is still banked. If this
-    ever starts painting, navigation gets its 18.5 ms hitch back."""
+def test_the_pointer_no_longer_leans_the_field(window):
+    """The one piece of motion a frozen `_t` would NOT have stopped: the
+    lean is integrated from QCursor.pos(), not from the clock, so the orbs
+    would have kept sliding under a static simulation. Neutered at the
+    gain, so the arithmetic both renderers share stays identical."""
     glow = window._glow
-    calls = []
+    assert glow._POINTER_GAIN == 0.0
+    assert glow._bias_x == 0.0 and glow._bias_y == 0.0
+
+
+def test_an_idle_window_never_repaints_the_wash(window, qapp):
+    """The end-to-end assertion, and the one the whole change is for: an
+    app sitting still costs nothing at the bottom of its z-order."""
+    glow = window._glow
+    settle(qapp, 200)          # let any pending layout-driven paints land
+    painted = []
     original = glow.update
-    glow.update = lambda *a, **k: calls.append(1)
+    glow.update = lambda *a, **k: painted.append(1)
     try:
-        _deferred_tick(glow, 0.10)
-        assert not calls, (
-            "a deferred tick repainted — the deferral buys nothing and the "
-            "page transition pays the full-window repaint it was meant to "
-            "step out of the way of")
+        settle(qapp, 700)
+        assert not painted, (
+            f"{len(painted)} ambient repaint(s) in 700ms of an idle window — "
+            "each one re-rasterises every translucent surface above the "
+            "wash (18.5ms measured at 1300x860)")
     finally:
         glow.update = original
-        glow._defer_until = 0.0
 
 
-def test_the_governor_ignores_deferred_ticks(window):
-    """Lateness means 'adding a repaint here would hurt'. A deferred tick
-    is not adding one, so it must not ratchet the field toward the ceiling
-    — that is what left the wash crawling at 4.5fps for ~1s AFTER a switch
-    had already finished."""
-    glow = window._glow
-    try:
-        glow._interval = float(glow._INTERVAL_MS)
-        # a tick arriving far beyond _LATE_MS, but deferred
-        _deferred_tick(glow, (glow._LATE_MS + 200.0) / 1000.0)
-        assert glow._interval == float(glow._INTERVAL_MS), (
-            f"the governor backed off to {glow._interval:.0f}ms on a frame "
-            "that never painted")
-    finally:
-        glow._defer_until = 0.0
-        glow._interval = float(glow._INTERVAL_MS)
-
-
-def test_navigation_does_not_freeze_the_field(window, qapp):
-    """End-to-end: sweep every module and assert the field keeps up with
-    the wall clock. Pre-fix this ran at 17-25% and is the user-visible
-    symptom; the threshold is deliberately loose so it fails on a
-    regression rather than on scheduler noise."""
+def test_navigation_leaves_the_constellation_where_it_was(window, qapp):
+    """End-to-end the other way: sweep every module and assert the field
+    is bit-for-bit where it started. Under the animated field this was the
+    opposite test — that the wash kept up with the wall clock across a
+    sweep — and inverting it is the clearest statement of what changed."""
     from frontend.menu_structure import CATEGORIES
 
-    window._revealed.clear()          # force the 360 ms first-visit defer
+    window._revealed.clear()
     window.go_home()
-    settle(qapp, 500)
+    settle(qapp, 400)
 
-    t_start = glow_t0 = window._glow._t
-    wall_start = time.perf_counter()
+    t_before = window._glow._t
+    before = [(p["x"], p["y"]) for p in window._glow._particles]
     for _ in range(2):
         for index in range(len(CATEGORIES)):
             window.open_category(index)
-            settle(qapp, 180)
-    wall = time.perf_counter() - wall_start
-    advanced = window._glow._t - t_start
+            settle(qapp, 120)
+    window.go_home()
+    settle(qapp, 200)
 
-    assert advanced > wall * 0.70, (
-        f"the ambient field advanced {advanced * 1000:.0f} ms across a "
-        f"{wall * 1000:.0f} ms navigation sweep "
-        f"({advanced / wall * 100:.0f}% — pre-fix this was 17-25%). The wash "
-        "is freezing through page transitions instead of only skipping the "
-        "repaint.")
-    assert glow_t0 == t_start          # guard the measurement itself
+    assert window._glow._t == t_before, "navigation advanced the field"
+    assert [(p["x"], p["y"]) for p in window._glow._particles] == before

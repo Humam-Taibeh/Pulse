@@ -38,7 +38,7 @@ Setting up or rescuing a Windows machine is a long tail of manual work: install 
 
 | Layer | Technology | Role |
 |---|---|---|
-| 🖥️ **Frontend** | Python 3.10+ · PySide6 (Qt 6) · OpenGL 3.3 | Frameless glass shell, dual themes, 60 fps ambient field, real-time streaming console, global kill switch, command palette, toasts |
+| 🖥️ **Frontend** | Python 3.10+ · PySide6 (Qt 6) · OpenGL 3.3 | Frameless glass shell, dual themes, static ambient field, real-time streaming console with live phase reporting, global kill switch, command palette, toasts |
 | ⚙️ **Backend** | PowerShell 5.1+ — 19 modules, ~10k lines | Data-driven engine for deployment, tweaks, maintenance, privacy, recovery and read-only reporting |
 
 **The GUI never touches the system itself.** Every card dispatches a *named task* to `core.ps1` on a background `QThread`; the engine executes it, streams progress to the UI as it happens, and closes with exactly one machine-parseable verdict line. The same engine also runs **fully standalone** as a self-elevating terminal application with a hierarchical menu — no Python required.
@@ -108,7 +108,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 - **Session log** at `%LOCALAPPDATA%\Pulse\logs\` (5 MB rotation, 5 archives), viewable in-app
 
 ### 🎛️ Experience
-- **GPU-accelerated ambient field** — five parallax orbs and 126 depth-tiered stars rendered by an OpenGL 3.3 shader at 60 fps, measured at ~10.9% of one core against 40.2% for the equivalent raster path;<sup>[†](#-a-note-on-the-gpu-measurement)</sup> falls back to raster automatically on software-emulated GL
+- **Static ambient field** — five aurora orbs and 126 depth-tiered stars, composed once and never animated. Motion was removed in v10.5 by *freezing the simulation* rather than deleting the field, so what is on screen is the exact frame the animated version rendered at t=0, and an idle window costs nothing at the bottom of its z-order. Renders through the same OpenGL 3.3 path when the GPU supports it, falling back to raster automatically on software-emulated GL
 - **Dual themes** (Premium Dark / Clean Light) with semantic per-module accent tokens that resolve differently per theme, so light mode clears its contrast floors
 - **`Ctrl+K` command palette** over the whole catalog, plus a full keyboard layer (grid navigation, module jumps, filter, shortcut sheet)
 - **Durable preferences** — theme, window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
@@ -132,7 +132,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task. v10.4 is the first release built by this pipeline end to end — see [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (838) + **Pester 5+** (101) | 115 tests marked `native` need a real window station |
+| Tests | **pytest 8** (893) + **Pester 5+** (126) | 119 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -518,10 +518,10 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 
 ```powershell
 python -m pytest tests -v          # 838 collected tests
-Invoke-Pester -Path tests\backend  # 101 tests
+Invoke-Pester -Path tests\backend  # 126 tests
 ```
 
-The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **115 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
+The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **119 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
 
 The Pester suite does **real registry I/O**, deliberately — mocking the registry would test the mock, and invariants like first-write-wins and the `__NOTSET__` sentinel only bite against a real hive. Everything is confined to a throwaway key and removed in `AfterAll`; nothing needs elevation.
 
@@ -538,7 +538,7 @@ Gate 4's floor exists because a runner that lost its desktop session would still
 
 ### † A note on the GPU measurement
 
-The ambient-field figures quoted above — ~10.9% of one core on the GPU path against 40.2% for raster at 60 fps — are **a one-off measurement taken by the author on a single personal reference machine**, at 1300×860, in a real event loop with real idle between frames. They are recorded in the [ambient_gl.py](src/frontend/ambient_gl.py) module docstring, which also documents the discarded first attempt: a tight `update`/`processEvents` loop returned exactly 5.556 ms for every arm, i.e. it measured the vsync swap interval rather than any actual work.
+The ambient-field figures recorded in the source — ~10.9% of one core on the GPU path against 40.2% for raster at 60 fps — are **a one-off measurement taken by the author on a single personal reference machine**, at 1300×860, in a real event loop with real idle between frames. They describe the field as it ran through v10.4; since v10.5 it does not animate at all, so they survive as the reasoning behind the renderer's design rather than as a cost anyone pays today. They are recorded in the [ambient_gl.py](src/frontend/ambient_gl.py) module docstring, which also documents the discarded first attempt: a tight `update`/`processEvents` loop returned exactly 5.556 ms for every arm, i.e. it measured the vsync swap interval rather than any actual work.
 
 **There is no committed benchmark harness, and these numbers are not reproducible from this repository.** No hardware, OS or driver version was recorded. The performance tests that *are* in the suite ([test_ambient.py](tests/test_ambient.py), [test_shell_budget.py](tests/test_shell_budget.py)) measure per-paint cost in milliseconds against a frame budget — a different metric, which does not corroborate a CPU-percentage claim. Treat the ratio as directionally indicative of the author's hardware, not as a benchmark. The same caveat applies to the "0.000 card repaints per frame" figure in that docstring.
 
@@ -557,7 +557,7 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Structured `##PULSE##META` verdict payloads
 - [x] Playbooks — declarative, validated, previewable machine baselines
 - [x] Health & Drift Report with a self-contained HTML export
-- [x] GPU ambient field — 60 fps at a quarter of the raster cost
+- [x] GPU ambient field — now composed once and static (v10.5)
 - [x] Onedir bundle and Inno Setup installer (see [Building](#-building) for a caveat on the current release asset)
 - [x] CI: parse, lint at zero, Pester, pytest with a coverage floor
 - [x] Self-updater wired into the GUI — background check on launch, sidebar-footer manual check, `SelfUpdateDialog` owning download/verify/apply (still needs `SHA256SUMS` published on a release to be usable end-to-end — see [Safety Model](#-safety-model))

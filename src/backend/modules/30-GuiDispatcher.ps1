@@ -93,7 +93,15 @@ function Invoke-GuiBulkDeploy {
         return
     }
 
+    $Index = 0
     foreach ($App in $Queue) {
+        # WHERE THE RUN IS, before what it is doing. Smart-Deploy narrates
+        # its own phases (closing, downloading, verifying), but none of
+        # those say how much is left - and a fourteen-app update that
+        # reports only "Downloading Firefox" for the ninth time in a row is
+        # indistinguishable from one that is stuck on the first.
+        $Index++
+        Write-GuiStage "[$Index/$($Queue.Count)] $($App[1])"
         $res = Smart-Deploy -AppId $App[0] -AppName $App[1] -Bulk -BulkMethod 'auto'
         switch ($res.Status) {
             'Success' { if ($res.AlreadyCurrent) { $current++ } else { $ok++ } }

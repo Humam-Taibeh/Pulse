@@ -243,8 +243,8 @@ jobs:
       # suite grew to 838 with 115 native. A headless runner would have run
       # ~716 — comfortably OVER the old floor — so the guard would have
       # passed while testing none of the Win32 behaviour it exists to
-      # protect. 800 sits above the headless figure and below the ~831 a
-      # healthy run executes (838 collected, 5 environment skips, and the
+      # protect. 850 sits above the headless figure and below the ~886 a
+      # healthy run executes (893 collected, 5 environment skips, and the
       # 2 playbook tests that skip on an elevated runner by design).
       - name: Assert the native tests actually ran
         shell: powershell
@@ -255,8 +255,8 @@ jobs:
           $skipped = [int]$suite.skipped
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
-          if ($ran -lt 800) {
-            Write-Error "Only $ran test(s) executed - expected the full native suite (>=800). The runner is probably headless, or collection broke."
+          if ($ran -lt 850) {
+            Write-Error "Only $ran test(s) executed - expected the full native suite (>=850). The runner is probably headless, or collection broke."
             exit 1
           }
 

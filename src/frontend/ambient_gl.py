@@ -348,14 +348,18 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
         self._last_orb_t = -1e9
         self._gl_frames = 0
 
-        # THE WHOLE POINT: this renderer runs at the display's refresh
-        # rate, where the raster one runs at 10Hz. Shadowing the class
-        # constant per-instance is what makes the governor, _arm() and
-        # resume() all pick the new base up without a second knob.
+        # DORMANT SINCE v10.5, kept for the same reason the base class
+        # keeps its cadence constants: the field is static (see
+        # _AmbientSimulation.STATIC), so _arm() never starts this timer and
+        # the interval below describes a frame rate nothing asks for. It
+        # stays because it is the measured answer to "what would this
+        # renderer run at", and because shadowing the class constant
+        # per-instance is still what would make the governor, _arm() and
+        # resume() pick the GPU base up without a second knob.
         #
-        # Clamped to [30, 60]. The ceiling is deliberate — a 144Hz panel
-        # gets 60, because past that the field is spending a laptop's
-        # battery on motion nobody asked to be smoother. The floor keeps a
+        # Clamped to [30, 60]. The ceiling was deliberate — a 144Hz panel
+        # got 60, because past that the field would be spending a laptop's
+        # battery on motion nobody asked to be smoother. The floor kept a
         # 24Hz projector from making the drift visibly step.
         self._INTERVAL_MS = self._refresh_interval_ms()
         self._interval = float(self._INTERVAL_MS)
@@ -479,7 +483,26 @@ class GLAmbientField(_AmbientSimulation, QOpenGLWidget):
         self._absorb_theme(t)       # shared with the raster field
         self._canvas_top = TH.to_qcolor(t["bg_grad_top"])
         self._canvas_bottom = TH.to_qcolor(t["bg_grad_bottom"])
+        # THE ORB TEXTURE IS PER-THEME AND MUST BE INVALIDATED HERE, which
+        # only became load-bearing when the field went static (v10.5). The
+        # low-res orb buffer is rebuilt on a CADENCE (_ORB_MS, measured
+        # against `_t`), so under the animated field a theme toggle was
+        # repainted correctly within 100ms whether or not anything said so.
+        # Against a frozen `_t` that cadence never comes due again: without
+        # this line the toggle would leave the previous theme's aurora
+        # baked into the texture for the life of the process. Mirrors the
+        # raster field's `self._layer = None`.
+        self._last_orb_t = -1e9
         self.update()
+
+    def _on_thaw(self):
+        """The OS move/resize loop is over: rebuild the orb buffer once.
+
+        Same contract as the raster field's (which drops its composited
+        layer here), and the same reason it cannot be left implicit under a
+        static field — see the cadence note in apply_theme.
+        """
+        self._last_orb_t = -1e9
 
     def set_radius(self, radius: int):
         # DWM rounds the window; this widget is a square opaque canvas. Kept

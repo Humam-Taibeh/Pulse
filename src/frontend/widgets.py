@@ -666,6 +666,47 @@ _SELECTOR_HEIGHT_MIN = 460
 #: list without scrolling; past that a panel is only buying margin.
 _SELECTOR_HEIGHT_MAX = 900
 
+# ------------------------------------------------------------------
+#  THE ACTION BAND (v10.5) — the second, deliberately narrow geometry
+# ------------------------------------------------------------------
+#: A dialog that offers a HANDFUL OF ACTIONS is not a selector, and sizing
+#: it like one is what produced the app's worst remaining layout defect.
+#:
+#: The Microsoft Edge and Microsoft OneDrive hubs offer TWO actions each
+#: (remove / reinstall). Built on the selector band they opened at up to
+#: 1280 x 900 — a two-row list in a panel sized for a fourteen-card page,
+#: with the rows stretched, centred and swimming in several hundred pixels
+#: of nothing in every direction. That is the "empty stretched layout"
+#: complaint exactly, and it is not fixable by tuning the selector band:
+#: the band is CORRECT for a scrolling list of thirty rows, and those two
+#: shapes cannot share one number.
+#:
+#: 580-640 is the width at which a row of [icon | title over description |
+#: button] is comfortable and a line of description text lands near the
+#: 60-75 character measure that prose is legible at. Past ~640 the
+#: description's line length starts to hurt readability rather than help
+#: it, which is why this band has a hard ceiling where the selector band
+#: has a merely practical one.
+#:
+#: HEIGHT IS NOT BANDED AT ALL: an action dialog HUGS ITS CONTENT (see
+#: _apply_panel_size). A fixed height is what forces a two-row dialog to
+#: invent something to put in the space, and there is nothing to put.
+_ACTION_WIDTH_MIN = 580
+_ACTION_WIDTH_MAX = 640
+
+#: Where inside the band a given window lands. The 60px the band spans is
+#: small enough that this is a nicety rather than a layout mechanism — but
+#: a dialog pinned to one literal on every display is the thing the app
+#: already fixed once for selectors, and re-introducing it here for the
+#: sake of a narrower number would be the same mistake at a smaller scale.
+#: Measured: 752px (the app minimum) -> 580, 1300 -> 585, 1600 and up -> 640.
+_ACTION_WIDTH_FRACTION = 0.45
+
+#: ...but the content it hugs still may not outgrow the window. The panel
+#: is capped at this fraction of the host BODY, and anything past it
+#: scrolls inside the panel instead of hanging off the app.
+_ACTION_HEIGHT_FRACTION = 0.86
+
 
 def _resolve_host_window(dialog: QDialog) -> QWidget | None:
     """Climb from `dialog` to the real top-level app window — nested
@@ -728,6 +769,60 @@ def _selector_panel_size(dialog: QDialog) -> tuple[int, int]:
                  min(_SELECTOR_HEIGHT_MAX,
                      round(host.height() * _SELECTOR_HEIGHT_FRACTION)))
     return (width, height)
+
+
+def _action_panel_width(dialog: QDialog) -> int:
+    """Width for an ACTION-band panel: inside 580-640, and never under what
+    the panel's own content needs.
+
+    The content floor overrides the ceiling for the same reason it does in
+    the selector band (see _content_width_floor): a cap that clipped
+    content would be choosing empty margins over legibility. In practice it
+    never bites here — an ActionRow reports a small minimum by design — but
+    a dialog that grew a wide control would widen rather than clip.
+    """
+    floor = _content_width_floor(dialog)
+    host = _resolve_host_window(dialog)
+    if host is not None:
+        floor = max(floor, round(host.width() * _ACTION_WIDTH_FRACTION))
+        # Never wider than the window, whatever the band says. The app's
+        # minimum is 752px, so the band fits comfortably — but a dialog is
+        # opened INSIDE the window and must stay there at any size.
+        floor = min(floor, max(_ACTION_WIDTH_MIN, host.width() - TH.SPACE["xxl"]))
+    return max(_ACTION_WIDTH_MIN, min(_ACTION_WIDTH_MAX, floor))
+
+
+def _apply_panel_size(dialog: QDialog):
+    """Size `dialog.panel` for whichever band it declared. Called at
+    construction and again from refit_dialog on every host resize, so an
+    open dialog tracks the window instead of freezing at its opening size.
+
+    The two bands differ in KIND, not only in numbers:
+
+      "selector"  fixed width AND height, both derived from the host. A
+                  scrolling list wants a stable viewport; letting it hug
+                  its content would make the panel jump every time a filter
+                  changed the row count.
+
+      "action"    fixed width, FREE height. The panel is laid out between
+                  two stretches, so a free height resolves to the layout's
+                  own sizeHint — the dialog is exactly as tall as the two
+                  to four rows it offers, and not one pixel taller. The
+                  maximum is the only thing the host contributes.
+    """
+    band = getattr(dialog, "_responsive_panel", False)
+    panel = getattr(dialog, "panel", None)
+    if not band or panel is None:
+        return
+    if band == "action":
+        panel.setFixedWidth(_action_panel_width(dialog))
+        host = _resolve_host_window(dialog)
+        if host is not None:
+            panel.setMaximumHeight(
+                max(TH.SPACE["xxl"] * 4,
+                    round(host.height() * _ACTION_HEIGHT_FRACTION)))
+    else:
+        panel.setFixedSize(*_selector_panel_size(dialog))
 
 
 #: Height of a pill in a _chip_strip, and of every control that has to
@@ -802,7 +897,7 @@ def _chip_strip(t: dict,
 def _dialog_chrome(dialog: PulseDialog, t: dict, accent: str,
                    width: int = 0, radius: int = TH.RADIUS["panel"],
                    anchor: str = "center",
-                   responsive: bool = False) -> "DepthCard":
+                   responsive: bool | str = False) -> "DepthCard":
     """One shared construction path for every Pulse dialog: the frosted
     DepthCard panel, laid out centered (or top-anchored for the command
     palette) inside the dialog's full-body scrim, plus a soft elevation
@@ -811,19 +906,36 @@ def _dialog_chrome(dialog: PulseDialog, t: dict, accent: str,
     transient surfaces that repaint a handful of times — not steady-state
     60fps chrome.
 
-    `responsive=True` sizes the panel dynamically off the host window (see
-    _selector_panel_size) and keeps it that way as the window resizes;
-    `width` (a fixed pixel value) is used only when `responsive=False`.
+    `responsive` picks one of two dynamic geometries, both derived from the
+    host window and both re-applied live as it resizes (see
+    _apply_panel_size):
+
+        True / "selector"   a scrolling list of rows — fixed width AND
+                            height inside the selector band.
+        "action"            a handful of offered actions — fixed width in
+                            the narrow ACTION band, height hugging content.
+
+    `width` (a fixed pixel value) is used only when `responsive` is False.
 
     Returns the panel; the caller builds its content layout inside it."""
-    panel = DepthCard(radius=radius, parent=dialog)
-    dialog._responsive_panel = responsive
+    # `t` is handed to the DepthCard, which is what lights its top face and
+    # paints the CONTACT half of the two-layer elevation (see
+    # TH.DIALOG_SHADOW). Every dialog panel had been built without it since
+    # the depth tokens landed, so panels were casting an outer shadow with
+    # no top face — a shadow printed behind a flat shape, which is the one
+    # failure DepthCard's own docstring calls out.
+    panel = DepthCard(radius=radius, parent=dialog, t=t)
+    dialog._responsive_panel = ("selector" if responsive is True
+                               else responsive)
+    # Published BEFORE sizing: _apply_panel_size resolves the panel through
+    # the dialog (it is also the resize path, which only has the dialog), so
+    # it has to be reachable from there by the time it is called.
+    dialog.panel = panel
     if responsive:
-        panel.setFixedSize(*_selector_panel_size(dialog))
+        _apply_panel_size(dialog)
     else:
         panel.setFixedWidth(width)
     panel.setStyleSheet(TH.dialog_panel_qss(t, accent))
-    dialog.panel = panel
 
     outer = QVBoxLayout(dialog)
     outer.setContentsMargins(0, 0, 0, 0)
@@ -839,10 +951,14 @@ def _dialog_chrome(dialog: PulseDialog, t: dict, accent: str,
     outer.addLayout(row)
     outer.addStretch(1)
 
+    # The AMBIENT half of the elevation. Values come off TH.DIALOG_SHADOW so
+    # the dialog panel, the command palette and any future popup cast the
+    # same shadow by construction rather than by three matching literals.
+    dx, dy, blur, opacity = TH.DIALOG_SHADOW
     shadow = QGraphicsDropShadowEffect(panel)
-    shadow.setBlurRadius(42)
-    shadow.setOffset(0, 12)
-    shadow.setColor(QColor(0, 0, 0, 150))
+    shadow.setBlurRadius(blur)
+    shadow.setOffset(dx, dy)
+    shadow.setColor(QColor(0, 0, 0, round(255 * opacity)))
     panel.setGraphicsEffect(shadow)
     return panel
 
@@ -866,6 +982,79 @@ def dialog_body(panel: "DepthCard", spacing: str = "md") -> QVBoxLayout:
                            TH.SPACE["xl"], TH.SPACE["lg"])
     lay.setSpacing(TH.SPACE[spacing])
     return lay
+
+
+def dialog_footer(lay: QVBoxLayout, *buttons: QPushButton) -> QHBoxLayout:
+    """The action bar every dialog closes with: a single step of air, then
+    the buttons right-aligned in the order given, primary last.
+
+    THIRTEEN DIALOGS BUILT THIS BY HAND and disagreed about all three of
+    its measurements — the gap above it was `addSpacing(TH.SPACE["xs"])`,
+    `addSpacing(TH.SPACE["md"])` or nothing at all; the gap between two
+    buttons was whatever QHBoxLayout's default happened to be in that
+    dialog's font; and the buttons themselves were sized 96x36, 112x26,
+    160x36 and 128x36 depending on how long their label was.
+
+    Button PROPORTIONS are settled here too, and that is the half a shared
+    helper can actually fix. Every dialog button is TH.CONTROL_H tall (the
+    app's one primary-control height, already pinned by
+    test_layout_contract) and at least _FOOTER_BTN_W wide, so a "Close"
+    and an "Update Selected (14)" sit on one baseline as two members of one
+    set rather than as a chip beside a slab. Wider labels still grow — a
+    minimum, never a fixed width, because truncating a button's own verb is
+    the one thing worse than an uneven row.
+
+    Right-aligned with the primary LAST: the caller passes them in reading
+    order and the destructive/secondary/primary ordering falls out of that,
+    matching every native Windows and macOS sheet.
+    """
+    lay.addSpacing(TH.SPACE["xs"])
+    row = QHBoxLayout()
+    row.setSpacing(TH.SPACE["sm"])
+    row.addStretch(1)
+    for button in buttons:
+        row.addWidget(size_dialog_button(button))
+    lay.addLayout(row)
+    return row
+
+
+#: Minimum width of a dialog footer button. 96 is what eleven of the
+#: thirteen hand-built footers had already converged on; the two that had
+#: not were the ones that looked wrong.
+_FOOTER_BTN_W = 96
+
+
+def size_dialog_button(button: QPushButton) -> QPushButton:
+    """Give one dialog action button the app's standard proportions.
+
+    Height is TH.CONTROL_H, the app's single primary-control height, and
+    width is a MINIMUM the label may grow past — which is the half that
+    actually changed. Every one of these used to be `setFixedSize(N, 36)`
+    with N hand-picked per button: 96, 110, 112, 122, 128, 132, 150, 160,
+    170, 214. Ten literals for one element.
+
+    A FIXED width is also wrong on its own terms wherever a button's label
+    is not fixed, and several are not: the Update Center's CTA cycles
+    through "Update Selected", "Update Selected (3)" and "Update All (14)"
+    inside one 160px box, so the same button reads cramped at its longest
+    label and adrift at its shortest. A floor plus sizeHint is the shape
+    that fits both — the row still lines up, because 96 is the floor every
+    short label lands on, and a long label is allowed the room it needs
+    rather than being elided inside a number chosen for a different string.
+
+    Returns the button so it can be used inline.
+    """
+    button.setMinimumWidth(_FOOTER_BTN_W)
+    button.setFixedHeight(TH.CONTROL_H)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    # A MARK, so "is this a dialog action button?" is answerable from
+    # outside. The alternative is inferring it from geometry, and geometry
+    # is precisely what the mark exists to police — a test that guessed by
+    # height would sweep up icon tools and row controls, and would go quiet
+    # about the one button that had drifted, since a drifted button is
+    # exactly the one the guess stops recognising.
+    button.setProperty("dialogAction", True)
+    return button
 
 
 def scroll_host_layout(host: QWidget, spacing: str = "sm") -> QVBoxLayout:
@@ -905,8 +1094,7 @@ def refit_dialog(dialog: PulseDialog):
     # before _content_width_floor can know what that content needs. The
     # host governs how the panel scales; it does not govern whether the
     # panel is allowed to fit its own contents.
-    if getattr(dialog, "_responsive_panel", False) and dialog.panel is not None:
-        dialog.panel.setFixedSize(*_selector_panel_size(dialog))
+    _apply_panel_size(dialog)
 
 
 def _present_dialog(dialog: PulseDialog, duration_ms: int = 130):
@@ -943,6 +1131,12 @@ def _caption_icon_font() -> QFont | None:
     for family in ("Segoe Fluent Icons", "Segoe MDL2 Assets"):
         if family in QFontDatabase.families():
             font = QFont(family)
+            # NOT TH.ICON. These are the OS's own minimize / maximize /
+            # close glyphs, drawn to Windows' caption-button metrics rather
+            # than to this app's icon scale — the point of using Segoe
+            # Fluent Icons here at all is that the buttons are
+            # indistinguishable from every other window's. A scale defined
+            # for Pulse's own chrome has no authority over them.
             font.setPixelSize(13)
             return font
     return None
@@ -1192,7 +1386,7 @@ class NavButton(QPushButton):
         self._glow.set_alphas(*TH.glow_alphas(t))
         self._accent2 = QColor(t["accent2"])
         self._glyph_char, self._glyph_fluent = TH.glyph(self._glyph_key)
-        self._icon_font = TH.icon_font(16) if self._glyph_fluent else None
+        self._icon_font = TH.icon_font(TH.ICON["plaque"]) if self._glyph_fluent else None
         self._plaque_fill = QColor(self._accent)
         self._plaque_fill.setAlphaF(0.12)
         self._plaque_line = QColor(self._accent)
@@ -1282,7 +1476,7 @@ class NavButton(QPushButton):
             p.setFont(self._icon_font)
         else:
             f = QFont(self.font())
-            f.setPixelSize(15)
+            f.setPixelSize(TH.ICON["inline"])
             p.setFont(f)
         p.drawText(box, Qt.AlignmentFlag.AlignCenter, self._glyph_char)
 
@@ -1557,7 +1751,26 @@ class ElidedCaption(QLabel):
             # caption text could spring — and did.
             hint.setWidth(self.fontMetrics().horizontalAdvance(self._full) + 1)
         hint.setWidth(min(hint.width(), self._max_width))
+        # Plus whatever the stylesheet reserves around the text. QLabel's
+        # own hint measures the TEXT, and for every caller until v10.5 the
+        # two were the same thing because none of them had padding — the
+        # class was written for bare footer captions on a transparent
+        # background. The Activity drawer's phase chip is the first one on
+        # a PLATE (theme.stage_chip_qss: 8px each side plus a 1px border),
+        # and without this the widget asks for exactly the text's width,
+        # gets it, and then has 18px less room to draw in than it measured
+        # against — so the line clipped mid-glyph instead of eliding.
+        hint.setWidth(hint.width() + self._chrome())
         return hint
+
+    def _chrome(self) -> int:
+        """Horizontal space the style takes before the text starts.
+
+        Read off contentsRect rather than parsed out of the stylesheet:
+        padding, border and frame all land here, and Qt is the only thing
+        that knows how a given style resolves them.
+        """
+        return max(0, self.width() - self.contentsRect().width())
 
     def minimumSizeHint(self):     # noqa: N802 - Qt casing
         """The whole point: a caption is decoration and may collapse to
@@ -1574,7 +1787,14 @@ class ElidedCaption(QLabel):
         if not self._full:
             super().setText("")
             return
-        available = self.width()
+        # THE CONTENTS RECT, NOT width(). They differ by exactly the
+        # padding and border the stylesheet reserves, and eliding against
+        # the outer width means measuring the text against room the text is
+        # not allowed to use: the string "fits", Qt draws it into a
+        # narrower rect, and the tail is CLIPPED rather than elided —
+        # the one failure mode this class exists to prevent, reintroduced
+        # by putting it on a plate.
+        available = self.contentsRect().width()
         if available <= 0:
             super().setText(self._full)
             return
@@ -1876,7 +2096,7 @@ class GlassCard(QFrame):
     # page that owns the grid resolves that (see main._focus_neighbour).
     navigate = Signal(str)
 
-    _ICON_BASE_PX = 21
+    _ICON_BASE_PX = TH.ICON["plaque"]
     _ICON_GROW_PX = 2   # subtle hover "pop" — see _sync_icon_scale()
     #: Icon plaque FOOTPRINT — the widget, not the well. IconPlaque
     #: reserves _PAD on each side for its halo to bleed into, so the well
@@ -2064,9 +2284,9 @@ class GlassCard(QFrame):
         self._chevron: QLabel | None = None
         if self._meta_texts:
             self._chevron = QLabel(TH.glyph("chevron")[0])
-            cf = TH.icon_font(15) if TH.glyph("chevron")[1] else QFont()
+            cf = TH.icon_font(TH.ICON["inline"]) if TH.glyph("chevron")[1] else QFont()
             if cf is not None:
-                cf.setPixelSize(15)
+                cf.setPixelSize(TH.ICON["inline"])
                 self._chevron.setFont(cf)
             head.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
         # admin-gated lock indicator (v9.4): a quiet warn-tinted lock glyph
@@ -2076,9 +2296,9 @@ class GlassCard(QFrame):
         if self._locked:
             lock_char, lock_fluent = TH.glyph("lock")
             self._lock = QLabel(lock_char)
-            lf = TH.icon_font(13) if lock_fluent else QFont()
+            lf = TH.icon_font(TH.ICON["micro"]) if lock_fluent else QFont()
             if lf is not None:
-                lf.setPixelSize(13)
+                lf.setPixelSize(TH.ICON["micro"])
                 self._lock.setFont(lf)
             self._lock.setToolTip(
                 "Needs Administrator — clicking will offer to relaunch Pulse elevated.")
@@ -2597,8 +2817,49 @@ class _AmbientSimulation:
     """
 
     # ================================================================
+    #  STATIC BY CONTRACT (v10.5) — THE FIELD NO LONGER MOVES
+    # ================================================================
+    # The ambient field shipped as a LIVING canvas: five orbs drifting and
+    # breathing on independent sine paths, 126 stars rising and twinkling,
+    # the whole sheet leaning toward the pointer. Every one of those is
+    # gone as of v10.5, and this flag is the single switch that removes
+    # them — not by deleting the field, but by STOPPING TIME.
+    #
+    # WHY A FROZEN SIMULATION RATHER THAN A DELETED ONE. Everything the
+    # field draws is a pure function of `_t`, the seeded scatter and the
+    # theme. Pinning `_t` at 0.0 therefore yields the EXACT frame the
+    # animated field rendered at t=0: the same orb composition, the same
+    # constellation, the same per-star brightness (each star's twinkle
+    # phase is seeded, so `sin(phase)` still spreads them across the whole
+    # brightness range — a static field, not 126 identical dots). Nothing
+    # about the wash's measured qualities changes, which is why the star
+    # weight, wash neutrality and contrast tests below all still hold: the
+    # pixels are the ones that were already being solved for.
+    #
+    # WHAT IT BUYS. A background decoration that costs ZERO at idle. The
+    # animated field's cheapest configuration was a full-window repaint ten
+    # times a second, and a full-window repaint here is never "repaint the
+    # wash" — every surface above this widget is translucent, so Qt
+    # re-rasterises the whole stack (measured 18.5ms/frame at 1300x860, of
+    # which the card grid alone is 10.9ms). Static, the field paints on
+    # resize, theme change and expose, and at no other time.
+    #
+    # THE API IS UNCHANGED. suspend()/resume()/defer()/set_occluders() all
+    # still exist and still mean something coherent — suspend/resume still
+    # freeze and rebuild the composited layer across an OS resize loop,
+    # which is a real cost even for a field that does not animate. defer()
+    # becomes a no-op, because there are no frames left to defer.
+    STATIC = True
+
+    # ================================================================
     #  FRAME RATE — matched to the signal, and governed under load
     # ================================================================
+    # DORMANT WHILE `STATIC` IS TRUE, and kept rather than deleted: these
+    # are the measured numbers behind the field's animated cadence, the
+    # governor still reads them if the field is ever unfrozen, and the GPU
+    # renderer still shadows _INTERVAL_MS per instance. They describe a
+    # timer that is never started.
+    #
     # These are the RASTER path's numbers and the reasoning behind them is
     # in AmbientGlow's own docstring. The GPU path overrides the cadence
     # (it can afford the display's refresh rate); everything else here —
@@ -2672,11 +2933,19 @@ class _AmbientSimulation:
     # atmosphere at the higher weight.
     _STAR_SPAN_MUL = {"dark": 3.0, "light": 3.6}
 
-    #: v1.0 pointer-biased drift: the orb field leans almost imperceptibly
+    #: v1.0 pointer-biased drift: the orb field leaned almost imperceptibly
     #: toward the cursor. GAIN is the fraction of the widget dimension one
-    #: full lean can move an orb (the bias caps at +/-0.5, so the real
-    #: maximum is GAIN/2 ~ 2%). Set to 0.0 to neuter the behaviour.
-    _POINTER_GAIN = 0.04
+    #: full lean could move an orb (the bias caps at +/-0.5, so the real
+    #: maximum was GAIN/2 ~ 2%).
+    #:
+    #: ZERO AS OF v10.5, the documented way to neuter the behaviour. A lean
+    #: that tracks the cursor is motion whatever its amplitude, and it is
+    #: the one piece of the field a frozen `_t` would NOT have stopped:
+    #: the bias is integrated from QCursor.pos(), not from the clock, so it
+    #: would have kept the orbs sliding under a static simulation. Set here
+    #: rather than by deleting the term, so the arithmetic both renderers
+    #: share stays identical and the two cannot drift apart.
+    _POINTER_GAIN = 0.0
 
     #: Orb peak alpha, per theme. NEITHER MODE MAY DYE ITS CANVAS: the
     #: wash shades the base colour, it does not replace it.
@@ -2876,7 +3145,17 @@ class _AmbientSimulation:
     # -- frame governor ---------------------------------------
     def _arm(self, delay_ms: float | None = None):
         """Schedule the next ambient frame. `_armed_at` is what the next
-        tick measures its own lateness against."""
+        tick measures its own lateness against.
+
+        A NO-OP WHILE `STATIC` (v10.5), and this is the single choke point
+        that makes the field static rather than a dozen edited call sites.
+        Both renderers' showEvent, resume() and _tick() itself re-arm
+        through here and nowhere else, so refusing here means the timer is
+        never started by any path — including one added later that forgets
+        the field is meant to be still.
+        """
+        if self.STATIC:
+            return
         delay = self._interval if delay_ms is None else delay_ms
         self._armed_at = time.perf_counter()
         self._timer.start(int(max(1.0, delay)))
@@ -2915,7 +3194,15 @@ class _AmbientSimulation:
 
         Extends an existing deferral rather than shortening it, so
         overlapping callers cannot cut each other short.
+
+        A NO-OP WHILE `STATIC` (v10.5): there are no ambient frames left to
+        skip. Kept as a live method rather than removed because the callers
+        — every page transition and cascade in main.py — are asserting
+        "the GUI thread is about to be busy", which stays true and stays
+        worth saying even when this layer no longer competes for it.
         """
+        if self.STATIC:
+            return
         self._defer_until = max(self._defer_until,
                                 time.perf_counter() + max(0.0, ms) / 1000.0)
 
@@ -2951,6 +3238,17 @@ class _AmbientSimulation:
         """Renderer hook: drop whatever was frozen for the drag."""
 
     def _tick(self):
+        """Advance the simulation by one frame and ask for a repaint.
+
+        UNREACHABLE WHILE `STATIC` — _arm() never starts the timer that
+        calls this — and it refuses anyway, because "nothing can move the
+        field" is a stronger guarantee than "nothing currently schedules
+        the thing that moves it". A direct call (a test, a future caller)
+        therefore cannot desynchronise the two renderers' shared `_t` from
+        the frozen frame both are drawing.
+        """
+        if self.STATIC:
+            return
         now = time.perf_counter()
         # Elapsed is MEASURED, never assumed. The interval is not a
         # constant (see _govern), and the drift/twinkle/wrap maths below
@@ -3025,33 +3323,36 @@ class _AmbientSimulation:
 #  AMBIENT GLOW — static brand-pair light wash behind the shell
 # ============================================================
 class AmbientGlow(_AmbientSimulation, QWidget):
-    """A LIVING canvas behind the sidebar/content frames (lowest widget in
+    """A STILL canvas behind the sidebar/content frames (lowest widget in
     the shell's z-order, transparent to mouse events).
 
-    Two motion layers, both engineered to stay cheap:
+    Two composed layers, neither of which moves (see _AmbientSimulation.
+    STATIC — the field is the frame the old animated one rendered at t=0):
 
     1. Aurora orbs — FIVE soft brand-tinted radial blobs (indigo / violet /
-       magenta) that slowly DRIFT on independent sine paths and BREATHE (a
-       gentle opacity pulse). Three are the large foreground wash; two are
-       smaller, dimmer and lean harder on the pointer parallax, which is
-       what gives the field a front and a back instead of one flat sheet.
-       Each orb is a radial-gradient PIXMAP rendered once and cached, then
-       blitted at its drifting position — a GPU-friendly blit, not a
-       per-frame gradient rasterization, so the animation costs
-       microseconds even full-screen.
-    2. Particle field — a scatter of soft 'stars' drifting upward and
-       twinkling, wrapping around the top. Three DEPTH TIERS (see
-       _PARTICLE_TIERS): far stars are small, dim and slow, near ones
-       larger, brighter and quicker, so the field has parallax rather than
-       uniform noise. Each star is a cached soft-glow texture blitted at
-       its own scale, not a hard-edged ellipse.
+       magenta) at fixed positions, three forming the large foreground wash
+       and two smaller and dimmer behind it, so the field reads as having a
+       front and a back rather than as one flat sheet. Each orb is a
+       radial-gradient PIXMAP rendered once and cached, then blitted — and
+       the five are composited into ONE widget-sized layer that is now
+       rebuilt only when the size or the theme changes.
+    2. Particle field — a fixed scatter of soft 'stars'. Three DEPTH TIERS
+       (see _PARTICLE_TIERS): far stars are small and dim, near ones larger
+       and brighter, so the field has depth rather than uniform noise. Each
+       star's brightness comes from its own SEEDED phase, which is what
+       keeps a still field from reading as 126 identical dots. Each is a
+       cached soft-glow texture blitted at its own scale, not a hard-edged
+       ellipse.
 
-    Driven by ONE self-rescheduling timer (see _INTERVAL_MS and _arm) that
-    suspends whenever the widget is hidden, so a minimized or backgrounded
-    window pays nothing. DENSITY IS NOT INTENSITY: the count went up 3x,
-    the per-star peak alpha did not (theme.py documents why the brand pair
-    reads neon past ~0.16) — this is ambient luminescence, never a light
-    show."""
+    NOTHING DRIVES IT. The self-rescheduling timer is built but never
+    started (_arm), so an idle window costs exactly zero — where the
+    animated field's cheapest configuration was a full-window repaint ten
+    times a second through every translucent surface above it. Repaints
+    now come only from Qt: expose, resize, and a theme toggle.
+
+    DENSITY IS NOT INTENSITY: the count went up 3x, the per-star peak alpha
+    did not (theme.py documents why the brand pair reads neon past ~0.16) —
+    this is ambient luminescence, never a light show."""
 
     # ================================================================
     #  FRAME RATE — matched to the signal, and governed under load
@@ -3279,9 +3580,16 @@ class AmbientGlow(_AmbientSimulation, QWidget):
             return None
         if self._frozen and self._layer is not None:
             return self._layer          # mid-drag: stretch, never rebuild
+        # SIZE AND THEME ONLY WHILE STATIC. The cadence clause below exists
+        # to resample a MOVING aurora; against a frozen `_t` it would keep
+        # re-rasterising a full-window pixmap to reproduce the identical
+        # image. Stated rather than left to fall out of the arithmetic
+        # (`_t - _layer_t` does happen to settle at 0), because relying on
+        # that would make the field's cost depend on a coincidence.
         stale = (self._layer is None
                  or self._layer_size != (w, h)
-                 or (self._t - self._layer_t) * 1000.0 >= self._LAYER_MS)
+                 or (not self.STATIC
+                     and (self._t - self._layer_t) * 1000.0 >= self._LAYER_MS))
         if stale:
             self._layer = self._build_layer(w, h)
             self._layer_t = self._t
@@ -3378,7 +3686,7 @@ class AmbientGlow(_AmbientSimulation, QWidget):
                 QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setOpacity(1.0)
 
-        # --- particle field: slow upward drift + twinkle -----------------
+        # --- particle field: a fixed constellation -----------------------
         # Peak alpha and sprite span are per-theme and SOLVED, not picked —
         # see _STAR_PMAX / _STAR_SPAN_MUL for the measurement and why light
         # needs both a higher alpha and a wider tail to land at the same
@@ -3413,11 +3721,15 @@ class AmbientGlow(_AmbientSimulation, QWidget):
                                           int(y - span / 2.0) - 1,
                                           span + 2, span + 2)):
                 continue
+            # `_t` is frozen at 0 (see _AmbientSimulation.STATIC), so this
+            # resolves to sin(phase) — the star's own SEEDED offset. That
+            # is what makes a motionless field read as a sky rather than as
+            # 126 identical dots: the seed spreads the 126 stars across the
+            # whole 0.22-1.00 brightness range and pins each one there.
             tw = 0.5 + 0.5 * math.sin(self._t * pt["tws"] * math.tau + pt["tw"])
-            # Twinkle is carried entirely by OPACITY: a star that visibly
-            # swells and shrinks reads as a pulsing dot, where one that
-            # only brightens reads as atmosphere — and a fixed size is
-            # what keeps every blit on the native-size fast path.
+            # Brightness is carried entirely by OPACITY, never by size: a
+            # fixed sprite size is what keeps every blit on the native-size
+            # fast path (see _star_pixmap).
             p.setOpacity(pmax * pt["dim"] * (0.22 + 0.78 * tw))
             p.drawPixmap(QPointF(x - span / 2.0, y - span / 2.0),
                          self._star_pixmap(base, span))
@@ -3579,6 +3891,138 @@ class DepthCard(QFrame):
         p.end()
 
 
+class ActionRow(QFrame):
+    """ONE OFFERED ACTION, on one row: icon, what it is, and the button
+    that does it.
+
+    THE SHAPE, AND WHY IT IS NOT A CARD. A GlassCard is a tile in a grid —
+    it competes for attention with thirteen siblings, so it earns a 42px
+    plaque, a three-line description, a meta footer, a hover lift and a
+    156px height envelope. A hub offers TWO actions. Rendering two of those
+    as full cards is what left the Microsoft Edge and Microsoft OneDrive
+    dialogs as a pair of tiles adrift in a panel sized for a whole page,
+    which is the "empty stretched layout" defect in its purest form.
+
+    Three things read left to right, which is the order the eye wants them:
+
+        [ icon ]  Title                                   [ Action ]
+                  One line of description.
+
+    THE ICON IS LEFT-ALIGNED AND THE BUTTON IS RIGHT-ALIGNED, and the text
+    between them is the only elastic part. That gives a column of rows two
+    hard vertical rules — the glyph edge and the button edge — which is
+    what makes a list of them scan as a list rather than as three
+    independent boxes. The plaque is the same TH.PLAQUE_SIZE well the cards
+    and the sidebar use, so the same module is the same object at every
+    scale in the app.
+
+    THE BUTTON IS THE ONLY AFFORDANCE, deliberately. The whole row is
+    clickable as a convenience (a native settings list behaves that way),
+    but a destructive action must never be something a stray click on a
+    description can trigger — so `danger` rows are button-only, and the
+    row-wide click is dropped for them.
+
+    DESTRUCTIVE STYLING is a translucent tinted FILL plus a hairline (see
+    theme.action_row_qss / DANGER_TINT), replacing the high-contrast red
+    wireframe these rows used to wear. A wireframe makes the teardown the
+    loudest thing on a dialog whose other option is the safe one — it
+    advertises exactly the action the user is least likely to want.
+    """
+
+    activated = Signal()
+
+    #: Icon plaque FOOTPRINT — the widget, not the well. Identical to
+    #: GlassCard._PLAQUE, and identical for the reason IconPlaque._PAD
+    #: exists: the halo bleeds into the padding, so the WELL still measures
+    #: TH.PLAQUE_SIZE and a row's glyph is the same object as a card's.
+    _PLAQUE = TH.PLAQUE_SIZE + 2 * IconPlaque._PAD
+    _ICON_PX = TH.ICON["plaque"]
+
+    def __init__(self, item: dict, t: dict, accent: str,
+                 action_label: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("actionRow")
+        self.item = item
+        self._danger = bool(item.get("danger"))
+        self._accent = t["err"] if self._danger else accent
+
+        row = QHBoxLayout(self)
+        # Asymmetric on purpose, and it is the one asymmetry in the app's
+        # padding that is a decision rather than a leftover: the left inset
+        # sits before a 42px plaque and the right inset sits after a 36px
+        # button, so equal insets would leave the button visibly closer to
+        # the edge than the glyph is. lg/md restores the optical balance.
+        row.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
+                               TH.SPACE["md"], TH.SPACE["md"])
+        row.setSpacing(TH.SPACE["md"])
+
+        char, fluent = (TH.glyph(item["glyph"]) if item.get("glyph")
+                        else (item.get("icon", "•"), False))
+        self._icon = IconPlaque(char)
+        self._icon.setFixedSize(self._PLAQUE, self._PLAQUE)
+        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_font = TH.icon_font(self._ICON_PX) if fluent else QFont()
+        if icon_font is None:
+            icon_font = QFont()
+        icon_font.setPixelSize(self._ICON_PX)
+        self._icon.setFont(icon_font)
+        row.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(TH.SPACE["xxs"])
+        self._title = QLabel(item.get("title", ""))
+        text.addWidget(self._title)
+        # ClampedLabel, not a plain wrapped QLabel: the row's height must be
+        # a function of its LINE BUDGET rather than of how long somebody's
+        # description happened to be, or one verbose entry silently makes
+        # its whole dialog taller than the rest.
+        self._desc = ClampedLabel(item.get("desc", ""), max_lines=2)
+        text.addWidget(self._desc)
+        row.addLayout(text, 1)
+
+        self.button = QPushButton(action_label or self._default_label())
+        self.button.setFixedHeight(TH.CONTROL_H)
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.clicked.connect(self.activated.emit)
+        row.addWidget(self.button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        if not self._danger:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_theme(t, accent)
+
+    def _default_label(self) -> str:
+        """The verb, taken from the action itself.
+
+        A generic "Open" on every row would make the list of buttons
+        useless as a list — the button is the second place the user reads
+        what a row does, so it has to say something different per row.
+        `action` lets a caller override; otherwise the destructive tone
+        gets the blunt word and everything else gets the neutral one.
+        """
+        return str(self.item.get("action")
+                   or ("Remove" if self._danger else "Run"))
+
+    def apply_theme(self, t: dict, accent: str | None = None):
+        if accent is not None:
+            self._accent = t["err"] if self._danger else accent
+        base = accent if accent is not None else t["accent"]
+        self.setStyleSheet(TH.action_row_qss(t, base, self._danger))
+        self._icon.apply_theme(t, self._accent)
+        self._title.setStyleSheet(TH.label_qss(t, "card"))
+        self._desc.setStyleSheet(TH.label_qss(t, "body"))
+        self.button.setStyleSheet(
+            TH.action_button_qss(t, base, self._danger))
+
+    def mouseReleaseEvent(self, e):
+        # Click-anywhere, EXCEPT on a destructive row (see the class note)
+        # and except on the button, which emits for itself.
+        if (e.button() == Qt.MouseButton.LeftButton and not self._danger
+                and self.childAt(e.position().toPoint()) is not self.button):
+            self.activated.emit()
+        super().mouseReleaseEvent(e)
+
+
 # ============================================================
 #  DIALOGS
 # ============================================================
@@ -3616,24 +4060,15 @@ class ConfirmDialog(PulseDialog):
                 "background: transparent; border: none;")
             lay.addWidget(warn)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        row = QHBoxLayout()
-        row.addStretch()
-
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
-        row.addWidget(cancel)
 
         go = QPushButton("Proceed")
-        go.setFixedSize(96, 36)
-        go.setCursor(Qt.CursorShape.PointingHandCursor)
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
-        row.addWidget(go)
-        lay.addLayout(row)
+
+        dialog_footer(lay, cancel, go)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -3669,16 +4104,10 @@ class NoticeDialog(PulseDialog):
         text.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(text)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        row = QHBoxLayout()
-        row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         close.clicked.connect(self.reject)
-        row.addWidget(close)
-        lay.addLayout(row)
+        dialog_footer(lay, close)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -3723,32 +4152,19 @@ class RevertChoiceDialog(PulseDialog):
         body.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(body)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        row = QHBoxLayout()
-        row.setSpacing(TH.SPACE["sm"])
-        row.addStretch()
-
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
-        row.addWidget(cancel)
 
         revert = QPushButton("Revert to Default")
-        revert.setFixedSize(150, 36)
-        revert.setCursor(Qt.CursorShape.PointingHandCursor)
         revert.setStyleSheet(TH.dialog_secondary_go_qss(t, accent))
         revert.clicked.connect(lambda: self._pick("revert"))
-        row.addWidget(revert)
 
         apply_btn = QPushButton("Re-apply")
-        apply_btn.setFixedSize(110, 36)
-        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         apply_btn.clicked.connect(lambda: self._pick("apply"))
-        row.addWidget(apply_btn)
-        lay.addLayout(row)
+
+        dialog_footer(lay, cancel, revert, apply_btn)
 
     def _pick(self, choice: str):
         self.choice = choice
@@ -3950,15 +4366,13 @@ class PlaybookDialog(PulseDialog):
         row.addStretch()
 
         self._close_btn = QPushButton("Close")
-        self._close_btn.setFixedSize(96, 36)
-        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._close_btn)
         self._close_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._close_btn.clicked.connect(self.reject)
         row.addWidget(self._close_btn)
 
         self._preview_btn = QPushButton("Preview")
-        self._preview_btn.setFixedSize(112, 36)
-        self._preview_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._preview_btn)
         self._preview_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._preview_btn.setToolTip(
             "Run every step with -WhatIf: reports what would happen and "
@@ -3968,8 +4382,7 @@ class PlaybookDialog(PulseDialog):
         row.addWidget(self._preview_btn)
 
         self._run_btn = QPushButton("Run Playbook")
-        self._run_btn.setFixedSize(132, 36)
-        self._run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._run_btn)
         self._run_btn.setStyleSheet(TH.dialog_go_qss(t, self._accent))
         self._run_btn.clicked.connect(lambda: self._launch(dry_run=False))
         self._run_btn.setVisible(runnable)
@@ -4273,23 +4686,20 @@ class HealthReportDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(close)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         row.addWidget(close)
 
         self._json_btn = QPushButton("Export JSON")
-        self._json_btn.setFixedSize(122, 36)
-        self._json_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._json_btn)
         self._json_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._json_btn.setEnabled(False)
         self._json_btn.clicked.connect(lambda: self._export("json"))
         row.addWidget(self._json_btn)
 
         self._html_btn = QPushButton("Export HTML")
-        self._html_btn.setFixedSize(128, 36)
-        self._html_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._html_btn)
         self._html_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._html_btn.setEnabled(False)
         self._html_btn.clicked.connect(lambda: self._export("html"))
@@ -4871,7 +5281,7 @@ class InspectorDialog(PulseDialog):
         (the Storage Analyzer's drive picker). Default: nothing."""
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
-        return [self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88)]
+        return [self._button("Close", TH.dialog_cancel_qss(t), self.reject)]
 
     def _render(self, report: dict):
         raise NotImplementedError
@@ -4881,12 +5291,20 @@ class InspectorDialog(PulseDialog):
         return {}
 
     # -- shared plumbing ------------------------------------------
-    def _button(self, text: str, style: str, slot, minimum: int) -> QPushButton:
+    def _button(self, text: str, style: str, slot) -> QPushButton:
+        """An inspector's action button.
+
+        `minimum` used to be a parameter, passed as 88, 110, 120 or 150 at
+        fourteen call sites — the same per-button pixel count that
+        size_dialog_button deletes everywhere else, carried here through a
+        function signature instead of written at each button. 88 also put
+        the inspectors' Close buttons under the app's own footer floor, so
+        the three read-only panels were the one family whose Close was
+        visibly narrower than every other dialog's.
+        """
         btn = QPushButton(text)
-        btn.setFixedHeight(36)
-        btn.setMinimumWidth(minimum)
+        size_dialog_button(btn)
         btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(style)
         btn.clicked.connect(slot)
         return btn
@@ -4983,11 +5401,11 @@ class PowerHealthDialog(InspectorDialog):
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88),
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
             self._button("Re-check", TH.dialog_secondary_go_qss(t, accent),
-                         self._start, 110),
+                         self._start),
             self._button("Power & Sleep Settings", TH.dialog_go_qss(t, accent),
-                         self._open_settings, 190),
+                         self._open_settings),
         ]
 
     def _open_settings(self):
@@ -5098,11 +5516,11 @@ class RestorePointDialog(InspectorDialog):
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88),
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
             self._button("Re-check", TH.dialog_secondary_go_qss(t, accent),
-                         self._start, 110),
+                         self._start),
             self._button("Open System Restore", TH.dialog_go_qss(t, accent),
-                         self._open_restore, 190),
+                         self._open_restore),
         ]
 
     def _open_restore(self):
@@ -5201,10 +5619,10 @@ class StorageAnalyzerDialog(InspectorDialog):
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88),
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
             self._button("Scan a Folder…", TH.dialog_secondary_go_qss(t, accent),
-                         self._choose_folder, 150),
-            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start, 120),
+                         self._choose_folder),
+            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start),
         ]
 
     def _choose_folder(self):
@@ -5412,9 +5830,9 @@ class DnsSwitcherDialog(InspectorDialog):
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88),
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
             self._button("Re-scan", TH.dialog_secondary_go_qss(t, accent),
-                         self._start, 120),
+                         self._start),
         ]
 
     # -- rendering ------------------------------------------------
@@ -5581,15 +5999,15 @@ class ContextMenuDialog(InspectorDialog):
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         self._restore_btn = self._button(
             "Restore All", TH.dialog_secondary_go_qss(t, accent),
-            self._restore, 140)
+            self._restore)
         self._restore_btn.setToolTip(
             "Put every context-menu entry back exactly as it was before "
             "Pulse changed anything.")
         self._restore_btn.setEnabled(False)
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject, 88),
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
             self._restore_btn,
-            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start, 120),
+            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start),
         ]
 
     def _render(self, report: dict):
@@ -5750,33 +6168,24 @@ class CloseConfirmDialog(PulseDialog):
         body.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(body)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        row = QHBoxLayout()
-        row.addStretch()
-
         # The safe option is the default: Enter and Escape both keep the
         # task alive, so no reflexive keypress can end a long install.
         keep = QPushButton("Keep Running")
-        keep.setFixedSize(128, 36)
-        keep.setCursor(Qt.CursorShape.PointingHandCursor)
         keep.setStyleSheet(TH.dialog_cancel_qss(t))
         keep.setDefault(True)
         keep.setAutoDefault(True)
         keep.clicked.connect(self.reject)
-        row.addWidget(keep)
 
         # "&&" is not a typo: Qt reads a single & in button text as a
         # mnemonic marker, so "Stop & Close" renders as "Stop _Close" with
         # the C underlined, which looks like a broken label. The doubled
         # ampersand is the escape that paints a literal "&".
         stop = QPushButton("Stop && Close")
-        stop.setFixedSize(128, 36)
-        stop.setCursor(Qt.CursorShape.PointingHandCursor)
         stop.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
         stop.setAutoDefault(False)
         stop.clicked.connect(self.accept)
-        row.addWidget(stop)
-        lay.addLayout(row)
+
+        dialog_footer(lay, keep, stop)
 
         self._keep_btn = keep
         self._stop_btn = stop
@@ -5818,24 +6227,15 @@ class ElevatePromptDialog(PulseDialog):
         body.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(body)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        row = QHBoxLayout()
-        row.addStretch()
-
         cancel = QPushButton("Not now")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
-        row.addWidget(cancel)
 
         go = QPushButton("Relaunch as Administrator")
-        go.setFixedSize(214, 36)
-        go.setCursor(Qt.CursorShape.PointingHandCursor)
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
-        row.addWidget(go)
-        lay.addLayout(row)
+
+        dialog_footer(lay, cancel, go)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -5880,16 +6280,10 @@ class ShortcutSheetDialog(PulseDialog):
             row.addWidget(desc, 1)
             lay.addLayout(row)
 
-        lay.addSpacing(TH.SPACE["sm"])
-        foot = QHBoxLayout()
-        foot.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
-        foot.addWidget(close)
-        lay.addLayout(foot)
+        dialog_footer(lay, close)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -5900,16 +6294,28 @@ class ShortcutSheetDialog(PulseDialog):
 #  HUB DIALOG — a hub card's landing screen (drill-down navigation)
 # ============================================================
 class HubDialog(PulseDialog):
-    """A primary hub card's landing screen: its sub-actions rendered as
-    the exact same GlassCard a category page uses — zero new card design,
-    100% visual parity with the page this modal is standing in for. Each
-    hub is just a focused, one-level-deeper page.
+    """A primary hub card's landing screen: its sub-actions rendered as a
+    short column of ActionRows — icon, title over description, and the one
+    button that runs it.
 
     TWO hubs remain as of v1.1, both in Software Management: Microsoft
     Edge (remove / reinstall) and Microsoft OneDrive (purge / restore /
     open the rescued files). Both exist for the same reason — a teardown
     is only safe to offer BESIDE its counterpart restore — and both are
-    the 2-4 sub-action shape the flat branch below is tuned for.
+    the 2-4 sub-action shape this dialog is tuned for.
+
+    THE GEOMETRY IS THE v10.5 FIX. This used to be built on the SELECTOR
+    band and rendered each sub-action as a full GlassCard, so a two-action
+    hub opened at up to 1280 x 900: two tiles, stretched and centred, in a
+    panel sized for a fourteen-card page, with several hundred pixels of
+    nothing around them. Card-shaped rows made that unfixable — a GlassCard
+    caps at 156px and cannot absorb a panel's worth of slack, so the
+    surplus fell into the gaps whatever the layout did with it.
+
+    The dialog now takes the ACTION band (580-640 wide, height hugging its
+    content — see _apply_panel_size) and the rows are ActionRows, which
+    state the same three things in a third of the height. A two-action hub
+    is now a ~300px panel containing exactly two actions and nothing else.
 
     A hub is NOT a way to thin a busy page; section bands do that without
     costing a click. The v1.1 reorganization deleted the hub that was
@@ -5917,19 +6323,28 @@ class HubDialog(PulseDialog):
     the Utilities & Tools module) and promoted its three tools onto the
     page — see menu_structure's `hub` documentation.
 
-    Picking a sub-card closes this dialog and hands it back via
+    Picking a sub-action closes this dialog and hands it back via
     `chosen_item`; the caller runs it through the normal request_task()
-    pipeline exactly as if the card lived directly on a category page."""
+    pipeline exactly as if the row lived directly on a category page.
+    """
+
+    #: Rows past this many get a scroll area instead of growing the panel.
+    #: No shipped hub reaches it — it is the ceiling that keeps a
+    #: content-hugging dialog from being able to outgrow its window if one
+    #: ever does, and _fit_scroll caps the viewport at the same count.
+    _SCROLL_AFTER = 5
 
     def __init__(self, parent: QWidget, hub: dict, t: dict):
         super().__init__(parent)
+        self._t = t
         self.chosen_item: dict | None = None
         accent = t["accent"]
-        panel = _dialog_chrome(self, t, accent, responsive=True)
+        panel = _dialog_chrome(self, t, accent, responsive="action")
 
         lay = dialog_body(panel, "md")
 
         head = QLabel(f"{hub['icon']}  {hub['title']}")
+        head.setWordWrap(True)
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
@@ -5938,34 +6353,77 @@ class HubDialog(PulseDialog):
         sub.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(sub)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet(TH.scroll_area_qss(t))
         host = QWidget()
         host.setStyleSheet("background: transparent;")
-        host_lay = scroll_host_layout(host, "md")
+        host_lay = scroll_host_layout(host, "sm")
+        rows = self._build_rows(host_lay, hub, t, accent)
+        # ONE BUTTON WIDTH FOR THE WHOLE COLUMN. Each button sizes itself
+        # to its own verb, so "Remove" and "Reinstall" came out 78 and 80
+        # wide — a two-pixel stagger on the dialog's right edge, which is
+        # precisely the "almost aligned" class of defect the layout scales
+        # exist to remove. Widened to the widest rather than fixed at a
+        # constant, so a long verb still fits instead of being elided.
+        if rows:
+            widest = max(r.button.sizeHint().width() for r in rows)
+            for row in rows:
+                row.button.setFixedWidth(widest)
+
+        if len(rows) > self._SCROLL_AFTER:
+            # Only a hub that outgrew the band scrolls, and then the panel
+            # stops growing rather than the rows getting shorter. Below the
+            # threshold the column is added DIRECTLY: a QScrollArea reports
+            # a small size hint regardless of what is inside it, so wrapping
+            # a two-row list in one would collapse the very content the
+            # panel is meant to hug.
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setStyleSheet(TH.scroll_area_qss(t))
+            scroll.setWidget(host)
+            scroll.setMinimumHeight(
+                host.sizeHint().height() * self._SCROLL_AFTER // len(rows))
+            lay.addWidget(scroll, 1)
+        else:
+            lay.addWidget(host)
+
+        close = QPushButton("Close")
+        close.setStyleSheet(TH.dialog_cancel_qss(t))
+        close.clicked.connect(self.reject)
+        dialog_footer(lay, close)
+
+    def _build_rows(self, host_lay: QVBoxLayout, hub: dict, t: dict,
+                    accent: str) -> list["ActionRow"]:
+        """Every sub-action as an ActionRow, flat or grouped.
+
+        NO TRAILING STRETCH, and that is the whole difference from the old
+        card layout. The panel now hugs its content (the ACTION band), so
+        there is no surplus for a stretch to distribute — and adding one
+        would hand the panel a reason to grow that its content never gave
+        it, which is the defect this dialog was rebuilt to remove.
+        """
+        rows: list[ActionRow] = []
+
+        def add(item: dict):
+            row = ActionRow(item, t, accent, item.get("action", ""))
+            row.activated.connect(lambda it=item: self._choose(it))
+            host_lay.addWidget(row)
+            rows.append(row)
+
         groups = hub.get("groups")
         if groups:
             # Grouped hub: each group opens with a header ROW — an
             # accent-tinted section title plus a 1px rule fading out to the
-            # right (hub_group_header_qss / hub_group_rule_qss) — then its
-            # cards at natural height, the whole list top-anchored with a
-            # trailing stretch. Rhythm is proximity-correct: a header sits
-            # tight over its own cards and a full extra step away from the
-            # previous group's last card, so the clusters read at a glance.
-            # For a hub long enough to need headers the point is a tidy,
-            # scannable list that scrolls - NOT the equal-stretch "fill the
-            # screen" treatment used for the sparse flat hubs below, which
-            # would balloon each card and swallow the headers.
+            # right — then its rows, tight under it and a full extra step
+            # away from the previous group's last row, so the clusters read
+            # at a glance.
             #
             # No hub declares `groups` as of the v1.0 RC (System Tools was
             # the last, and lost its headers when Edge and OneDrive moved
             # out to their own cards; the hub itself is gone as of v1.1).
             # The branch stays because the shape is still supported and a
             # hub can grow back into it.
-            for gi, group in enumerate(groups):
-                if gi > 0:
+            for index, group in enumerate(groups):
+                if index > 0:
                     host_lay.addSpacing(TH.SPACE["md"])
                 head_row = QHBoxLayout()
                 head_row.setSpacing(TH.SPACE["md"])
@@ -5978,54 +6436,11 @@ class HubDialog(PulseDialog):
                 head_row.addWidget(rule, 1)
                 host_lay.addLayout(head_row)
                 for item in group["items"]:
-                    card = GlassCard(item, accent, t)
-                    card.setMinimumHeight(96)
-                    card.clicked.connect(lambda it=item: self._choose(it))
-                    host_lay.addWidget(card)
-            host_lay.addStretch(1)
+                    add(item)
         else:
-            # Cards at NATURAL height, the whole list centred between two
-            # stretches. Top-anchoring them with dead space below (the
-            # original behaviour) read as an empty, unfinished sub-menu on
-            # the tall responsive panel — but the fix for that, an equal
-            # stretch factor on every card and no spacer, only worked while
-            # a hub had 3+ sub-actions to absorb the surplus.
-            #
-            # v1.0 RC put that to the test: extracting Edge and OneDrive
-            # onto the Software Management page gave the app its first
-            # TWO-item hubs, and two cards cannot absorb a panel's worth of
-            # slack. GlassCard caps at CARD_MAX_H, so the stretch could not
-            # grow them past 156 and the leftover fell into the gaps
-            # instead — two normal cards adrift in ~90px of nothing, the
-            # exact "unfinished sub-menu" look the stretch was meant to
-            # cure. Centring moves the surplus OUTSIDE the list, where it
-            # reads as margin, and it degrades correctly: at 3-4 items the
-            # cards already fill the panel and the stretches collapse to
-            # nothing, leaving that case rendering exactly as before.
-            host_lay.addStretch(1)
             for item in hub.get("items", []):
-                card = GlassCard(item, accent, t)
-                card.setMinimumHeight(110)
-                card.clicked.connect(lambda it=item: self._choose(it))
-                host_lay.addWidget(card)
-            host_lay.addStretch(1)
-        scroll.setWidget(host)
-        # Stretch factor, not a maximumHeight cap: the panel itself is now
-        # a fixed size derived from the host window (see _dialog_chrome's
-        # `responsive=True`), so the scroll area should claim every pixel
-        # left over after the header/footer instead of stopping short.
-        lay.addWidget(scroll, 1)
-
-        lay.addSpacing(TH.SPACE["xs"])
-        row = QHBoxLayout()
-        row.addStretch()
-        close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
-        close.setStyleSheet(TH.dialog_cancel_qss(t))
-        close.clicked.connect(self.reject)
-        row.addWidget(close)
-        lay.addLayout(row)
+                add(item)
+        return rows
 
     def _choose(self, item: dict):
         self.chosen_item = item
@@ -6056,6 +6471,9 @@ class LiveConsole(QPlainTextEdit):
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setFont(QFont("Cascadia Mono", 9))
         self._timestamps = timestamps
+        #: True when the newest line is a MARKER and must survive the next
+        #: carriage-return rewrite. See append_marker.
+        self._protect_last = False
         # No native placeholder text: the empty state is a custom-painted
         # "pulse" waveform motif + message (see paintEvent), not plain text.
         self.apply_theme(t)
@@ -6079,12 +6497,36 @@ class LiveConsole(QPlainTextEdit):
 
     def put_line(self, text: str, replace_last: bool = False):
         """Slot for PowerShellTask.output(text, replace_last)."""
-        if replace_last and not self.document().isEmpty():
+        if replace_last and not self._protect_last and not self.document().isEmpty():
             self._replace_last_line(text)
         else:
             self.append_line(text)
 
+    def append_marker(self, text: str):
+        """Append a line that a carriage-return rewrite may NOT overwrite.
+
+        The problem this solves is specific, and it was silent. Phase
+        markers (the drawer's ##PULSE##STAGE| echo) are interleaved with a
+        stream that uses bare CRs for in-place progress - winget, sfc,
+        DISM. A marker appended just before a progress frame became the
+        "newest line", so the frame rewrote it: the transcript held
+        "Downloading Firefox 145.0..." for exactly as long as it took the
+        next percentage to arrive, and every completed phase vanished from
+        the exported log. Reproduced with the real sequence, only the LAST
+        marker of each app survived, and only because a plain line happened
+        to follow it.
+
+        A CR rewrite means "replace what I just wrote". A marker is not
+        something the stream wrote, so the rewrite has nothing here to
+        replace and must start a new line instead. The flag clears on the
+        next append either way, so a genuine progress sequence still
+        collapses to a single line as soon as it is under way.
+        """
+        self.append_line(text)
+        self._protect_last = True
+
     def append_line(self, text: str):
+        self._protect_last = False
         self.appendPlainText(self._stamp(text))
         if self.blockCount() > self.MAX_LINES:
             cursor = self.textCursor()
@@ -6589,7 +7031,7 @@ class ActivityDrawer(QWidget):
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._toggle.setToolTip("Pin the live output open")
-        tf = TH.icon_font(13) if TH.glyph("chevron")[1] else None
+        tf = TH.icon_font(TH.ICON["micro"]) if TH.glyph("chevron")[1] else None
         if tf is not None:
             self._toggle.setFont(tf)
         self._toggle.toggled.connect(self._on_toggle)
@@ -6614,6 +7056,28 @@ class ActivityDrawer(QWidget):
         head.addWidget(self._console_label)
         self.state_pill = StatePill(t)
         head.addWidget(self.state_pill)
+
+        # -- the live phase line (v10.5) ----------------------
+        # WHAT THE TASK IS DOING RIGHT NOW, in one fixed place. The console
+        # below is the unfiltered stream and stays that way; during a
+        # fourteen-app update it also scrolls faster than anyone reads it,
+        # so "is this actually downloading something, and what?" is a
+        # question the stream answers and cannot be GLANCED at.
+        #
+        # Fed by the backend's ##PULSE##STAGE| channel (see
+        # helpers.PowerShellTask.stage), which already existed for the
+        # Update Center's scan and was simply never wired to the task
+        # pipeline every other operation runs through.
+        #
+        # An ElidedCaption rather than a QLabel, for the reason that class
+        # exists: a long phase line ("Closing Steam (steam,
+        # steamwebhelper)...") must degrade to an ellipsis in the room the
+        # header actually has, not become a floor the drawer is obliged to
+        # honour - and a QLabel squeezed below its hint CLIPS rather than
+        # eliding. The untruncated line goes to the tooltip.
+        self.stage_label = ElidedCaption(max_width=320)
+        self.stage_label.hide()
+        head.addWidget(self.stage_label)
         head.addStretch()
 
         # -- v10 output actions -------------------------------
@@ -6633,7 +7097,7 @@ class ActivityDrawer(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setToolTip(tip)
-            font = TH.icon_font(12) if fluent else None
+            font = TH.icon_font(TH.ICON["micro"]) if fluent else None
             if font is not None:
                 btn.setFont(font)
             btn.clicked.connect(slot)
@@ -6722,9 +7186,35 @@ class ActivityDrawer(QWidget):
         self._tell("success", f"Saved {lines} line(s) to {os.path.basename(path)}")
 
     # -- theming ----------------------------------------------
+    # -- live phase ------------------------------------------
+    def set_stage(self, text: str):
+        """Show one backend phase line, or hide the chip when `text` is
+        empty. Also echoes into the console, deliberately: the STAGE
+        channel is a payload channel and helpers.py keeps it OUT of the
+        stream, so without this the exported log would carry winget's
+        output with no record of which app it belonged to or which phase
+        produced it."""
+        text = (text or "").strip()
+        if not text:
+            self.clear_stage()
+            return
+        self.stage_label.setFullText(text)
+        self.stage_label.setToolTip(text)
+        self.stage_label.show()
+        # append_MARKER, not append_line: the stage echo lands in the
+        # middle of a carriage-return progress stream, and a plain
+        # append is overwritten by the very next percentage frame.
+        self.console.append_marker(f"\u25b8  {text}")
+
+    def clear_stage(self):
+        self.stage_label.setFullText("")
+        self.stage_label.setToolTip("")
+        self.stage_label.hide()
+
     def apply_theme(self, t: dict):
         self._rail.setStyleSheet(TH.activity_rail_qss(t))
         self._console_label.setStyleSheet(TH.console_header_qss(t))
+        self.stage_label.setStyleSheet(TH.stage_chip_qss(t))
         for btn in self._tools:
             btn.setStyleSheet(TH.activity_toggle_qss(t))
         self.status_text.setStyleSheet(TH.label_qss(t, "status"))
@@ -7187,15 +7677,13 @@ class SoftwareCatalogDialog(PulseDialog):
         footer = QHBoxLayout()
         footer.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
 
         self._deploy_btn = QPushButton("Deploy Selected")
-        self._deploy_btn.setFixedSize(170, 36)
-        self._deploy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(self._deploy_btn)
         self._deploy_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._deploy_btn.clicked.connect(self._accept_selection)
         footer.addWidget(self._deploy_btn)
@@ -7663,16 +8151,18 @@ class OfficeWizardDialog(PulseDialog):
     # -- small shared button factories --------------------------
     def _back_button(self, slot) -> QPushButton:
         b = QPushButton("‹  Back")
-        b.setFixedSize(90, 36)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(b)
         b.setStyleSheet(TH.dialog_cancel_qss(self._t))
         b.clicked.connect(slot)
         return b
 
-    def _primary_button(self, text: str, slot, width: int = 130) -> QPushButton:
+    def _primary_button(self, text: str, slot) -> QPushButton:
+        """The wizard's CTA. `width` used to be a parameter, defaulting to
+        130 and overridden to 190 at one call site — a per-button pixel
+        count carried through a function signature, which is the same
+        hand-picked width size_dialog_button exists to delete."""
         b = QPushButton(text)
-        b.setFixedSize(width, 36)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(b)
         b.setStyleSheet(TH.dialog_go_qss(self._t, self._t["accent"]))
         b.clicked.connect(slot)
         return b
@@ -7750,8 +8240,7 @@ class OfficeWizardDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
@@ -7803,7 +8292,7 @@ class OfficeWizardDialog(PulseDialog):
         row.addWidget(self._back_button(lambda: self._goto("choice")))
         row.addStretch()
         row.addWidget(self._primary_button(
-            "Download && Install Now", self._accept_auto, width=190))
+            "Download && Install Now", self._accept_auto))
         lay.addLayout(row)
         return page
 
@@ -7860,7 +8349,7 @@ class OfficeWizardDialog(PulseDialog):
         row.addWidget(self._back_button(lambda: self._goto("choice")))
         row.addStretch()
         row.addWidget(self._primary_button(
-            "I have the files now  ›", self._enter_locate_from_guide, width=170))
+            "I have the files now  ›", self._enter_locate_from_guide))
         lay.addLayout(row)
         return page
 
@@ -8061,7 +8550,7 @@ class OfficeWizardDialog(PulseDialog):
         row = QHBoxLayout()
         row.addWidget(self._back_button(lambda: self._goto("locate")))
         row.addStretch()
-        row.addWidget(self._primary_button("Install Now", self.accept, width=130))
+        row.addWidget(self._primary_button("Install Now", self.accept))
         lay.addLayout(row)
 
     # -- file-system detection (client-side, no PowerShell spawned) --
@@ -8199,8 +8688,7 @@ class ToolInstallWizardDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
@@ -8341,12 +8829,16 @@ class UpdateRow(QFrame):
 
     options_requested = Signal(str)  # app_id
 
-    def __init__(self, app_id: str, name: str, current: str, available: str, t: dict):
+    def __init__(self, app_id: str, name: str, current: str, available: str,
+                 t: dict, running: list[str] | None = None):
         super().__init__()
         self.app_id = app_id
         self.app_name = name
         self.current_version = current
         self.available_version = available
+        #: Process names the backend found running for this app at scan
+        #: time (see Resolve-AppProcesses). Empty is the normal case.
+        self.running_processes = list(running or [])
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         outer = QVBoxLayout(self)
@@ -8360,6 +8852,24 @@ class UpdateRow(QFrame):
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.checkbox.setChecked(True)
         row.addWidget(self.checkbox)
+
+        # -- the running flag (v10.5) -------------------------
+        # SAID BEFORE THE BUTTON IS PRESSED, which is the only time it is
+        # actionable. Windows cannot replace a file that is open for
+        # execution, so the engine closes a running target before updating
+        # it - gracefully first, then by force. That is the right behaviour
+        # and it is still a surprise if the first the user hears of it is
+        # their editor disappearing. A row that says so up front turns it
+        # into a decision: untick this one, or go and save your work.
+        self._running_chip: QLabel | None = None
+        if self.running_processes:
+            self._running_chip = QLabel("RUNNING")
+            self._running_chip.setToolTip(
+                "This app is running and will be closed before it is "
+                "updated.\nProcesses: "
+                + ", ".join(self.running_processes))
+            row.addWidget(self._running_chip)
+
         row.addStretch()
 
         self._current = QLabel(current or "—")
@@ -8391,6 +8901,14 @@ class UpdateRow(QFrame):
         self._arrow.setStyleSheet(TH.label_qss(t, "faint"))
         self.options_btn.setStyleSheet(TH.icon_ghost_button_qss(t, t["accent"]))
         self._id_label.setStyleSheet(TH.label_qss(t, "caption"))
+        if self._running_chip is not None:
+            # WARN, not ERR. A running app is a heads-up the user acts on,
+            # not the failure of anything - the same distinction the hero
+            # masthead's state pills already make (see strip_status_qss).
+            self._running_chip.setStyleSheet(TH.micro_chip_qss(t, "warn"))
+
+    def is_running(self) -> bool:
+        return bool(self.running_processes)
 
     def is_checked(self) -> bool:
         return self.checkbox.isChecked()
@@ -8489,15 +9007,10 @@ class UpdateCenterDialog(PulseDialog):
         self._loading_label.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._loading_label)
         lay.addStretch()
-        row = QHBoxLayout()
-        row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
-        row.addWidget(cancel)
-        lay.addLayout(row)
+        dialog_footer(lay, cancel)
         return page
 
     def _build_empty_page(self) -> QWidget:
@@ -8517,21 +9030,13 @@ class UpdateCenterDialog(PulseDialog):
         msg.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(msg)
         lay.addStretch()
-        row = QHBoxLayout()
-        row.addStretch()
         rescan = QPushButton("Rescan")
-        rescan.setFixedSize(96, 36)
-        rescan.setCursor(Qt.CursorShape.PointingHandCursor)
         rescan.setStyleSheet(TH.dialog_cancel_qss(t))
         rescan.clicked.connect(self._start_scan)
-        row.addWidget(rescan)
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         close.clicked.connect(self.reject)
-        row.addWidget(close)
-        lay.addLayout(row)
+        dialog_footer(lay, rescan, close)
         return page
 
     def _build_error_page(self) -> QWidget:
@@ -8551,21 +9056,13 @@ class UpdateCenterDialog(PulseDialog):
         self._error_label.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._error_label)
         lay.addStretch()
-        row = QHBoxLayout()
-        row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
-        row.addWidget(close)
         retry = QPushButton("Retry")
-        retry.setFixedSize(96, 36)
-        retry.setCursor(Qt.CursorShape.PointingHandCursor)
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_scan)
-        row.addWidget(retry)
-        lay.addLayout(row)
+        dialog_footer(lay, close, retry)
         return page
 
     def _build_results_page(self) -> QWidget:
@@ -8616,24 +9113,15 @@ class UpdateCenterDialog(PulseDialog):
         scroll.setWidget(self._host)
         lay.addWidget(scroll, 1)
 
-        lay.addSpacing(TH.SPACE["xs"])
-        row = QHBoxLayout()
-        row.addStretch()
-
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
-        row.addWidget(cancel)
 
         self._deploy_btn = QPushButton("Update Selected")
-        self._deploy_btn.setFixedSize(160, 36)
-        self._deploy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._deploy_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._deploy_btn.clicked.connect(self._accept_selection)
-        row.addWidget(self._deploy_btn)
-        lay.addLayout(row)
+
+        dialog_footer(lay, cancel, self._deploy_btn)
         return page
 
     # -- scan lifecycle -----------------------------------------------
@@ -8762,7 +9250,16 @@ class UpdateCenterDialog(PulseDialog):
         name = str(entry.get("Name") or app_id)
         current = str(entry.get("CurrentVersion") or "—")
         available = str(entry.get("AvailableVersion") or "—")
-        row = UpdateRow(app_id, name, current, available, self._t)
+        # Present on BOTH the streamed preview rows and the final DATA
+        # payload (see Invoke-DeepUpdateScan's $Collect), so the flag does
+        # not flicker off when the authoritative document lands. Defensive
+        # about shape: a backend that predates the field simply reports
+        # nothing running, which is the correct degradation.
+        running = entry.get("RunningProcesses")
+        running = [str(n) for n in running] if isinstance(running, list) else []
+        if entry.get("Running") and not running:
+            running = ["(unknown)"]
+        row = UpdateRow(app_id, name, current, available, self._t, running)
         row.checkbox.toggled.connect(self._update_count)
         row.options_requested.connect(self._open_tool_wizard)
         self._rows[app_id] = row
@@ -8820,7 +9317,47 @@ class UpdateCenterDialog(PulseDialog):
         self.selected_ids = [aid for aid, row in self._rows.items() if row.is_checked()]
         if not self.selected_ids:
             return
+        if not self._confirm_running_apps():
+            return
         self.accept()
+
+    def _confirm_running_apps(self) -> bool:
+        """Ask before anything gets closed. True to proceed.
+
+        THE POINT IS THE TIMING, not the dialog. The engine closes a
+        running target before replacing it (Stop-AppProcesses) because
+        Windows will not overwrite a file that is open for execution -
+        gracefully first, by force after six seconds. That is correct, and
+        it is still a nasty surprise if the first the user hears of it is
+        their editor vanishing mid-sentence.
+
+        Said here, it is a decision instead: proceed, or cancel and untick
+        the row. The apps are NAMED rather than counted, because "3 apps
+        will be closed" is not enough to decide with - the whole question
+        is WHICH ones.
+
+        Silent when nothing selected is running, which is the common case:
+        a confirmation that always appears is one nobody reads.
+        """
+        running = [row for aid, row in self._rows.items()
+                   if row.is_checked() and row.is_running()]
+        if not running:
+            return True
+        names = ", ".join(sorted(r.app_name for r in running))
+        confirm = ConfirmDialog(self, {
+            "icon": "\u26a0\ufe0f",
+            "title": "Some of these apps are running",
+            "desc": (
+                f"{names} {'is' if len(running) == 1 else 'are'} open right "
+                "now. Windows cannot replace files that are in use, so "
+                f"{'this app' if len(running) == 1 else 'these apps'} will "
+                "be closed before the update is applied — you will be asked "
+                "to save any unsaved work first.\n\n"
+                "Cancel if you would rather untick "
+                f"{'it' if len(running) == 1 else 'them'} and update the "
+                "rest."),
+        }, self._t)
+        return confirm.exec() == QDialog.DialogCode.Accepted
 
     # -- per-app wizard ("⋯") --------------------------------------------
     def _open_tool_wizard(self, app_id: str):
@@ -8949,19 +9486,18 @@ class SelfUpdateDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         later = QPushButton("Later")
-        later.setFixedSize(96, 36)
-        later.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(later)
         later.setStyleSheet(TH.dialog_cancel_qss(t))
         later.clicked.connect(self.reject)
         row.addWidget(later)
 
         if self._can_apply:
             go = QPushButton("Download && Install")
-            go.setFixedSize(160, 36)
+            size_dialog_button(go)
             go.clicked.connect(self._start_download)
         else:
             go = QPushButton("View Release")
-            go.setFixedSize(120, 36)
+            size_dialog_button(go)
             go.clicked.connect(self._open_release_page)
         go.setCursor(Qt.CursorShape.PointingHandCursor)
         go.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
@@ -8988,8 +9524,7 @@ class SelfUpdateDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
@@ -9018,14 +9553,12 @@ class SelfUpdateDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         later = QPushButton("Later")
-        later.setFixedSize(96, 36)
-        later.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(later)
         later.setStyleSheet(TH.dialog_cancel_qss(t))
         later.clicked.connect(self.reject)
         row.addWidget(later)
         go = QPushButton("Restart && Update")
-        go.setFixedSize(140, 36)
-        go.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(go)
         go.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         go.clicked.connect(self.accept)
         row.addWidget(go)
@@ -9052,14 +9585,12 @@ class SelfUpdateDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(close)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         row.addWidget(close)
         retry = QPushButton("Retry")
-        retry.setFixedSize(96, 36)
-        retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(retry)
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_download)
         row.addWidget(retry)
@@ -9314,8 +9845,7 @@ class StartupManagerDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setFixedSize(96, 36)
-        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         row.addWidget(cancel)
@@ -9342,14 +9872,12 @@ class StartupManagerDialog(PulseDialog):
         row = QHBoxLayout()
         row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(close)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         row.addWidget(close)
         retry = QPushButton("Retry")
-        retry.setFixedSize(96, 36)
-        retry.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(retry)
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_scan)
         row.addWidget(retry)
@@ -9432,8 +9960,7 @@ class StartupManagerDialog(PulseDialog):
         row.addWidget(rescan)
         row.addStretch()
         close = QPushButton("Close")
-        close.setFixedSize(96, 36)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        size_dialog_button(close)
         close.setStyleSheet(TH.dialog_secondary_go_qss(t, accent))
         close.clicked.connect(self.accept)
         row.addWidget(close)

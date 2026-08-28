@@ -2685,6 +2685,14 @@ class PulseApp(QMainWindow):
 
         thread.started.connect(worker.run)
         worker.output.connect(self.console.put_line)
+        # THE PHASE CHANNEL, finally wired to the pipeline every operation
+        # runs through. ##PULSE##STAGE| has existed since v10.3 and only
+        # the Update Center's own scan dialog listened to it - so a task
+        # that terminated a running app, downloaded 90MB and verified the
+        # result reported all three as an undifferentiated scroll of winget
+        # output, with a rail that said "Executing: Update Apps" for the
+        # whole eight minutes.
+        worker.stage.connect(self._on_task_stage)
         worker.finished.connect(self._on_task_finished)
         worker.failed.connect(self._on_task_failed)
         worker.cancelled.connect(self._on_task_cancelled)
@@ -2696,6 +2704,22 @@ class PulseApp(QMainWindow):
         self._thread = thread
         self._worker = worker
         thread.start()
+
+    def _on_task_stage(self, text: str):
+        """One backend phase line, shown in the two places it is useful.
+
+        THE RAIL KEEPS THE TASK NAME. A phase line alone ("Downloading
+        Firefox 145.0...") loses which operation is running, which matters
+        most in exactly the case the phase line exists for - a long bulk
+        deploy, where the user came back to the window after five minutes
+        and needs both halves of the answer at once.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        self.activity.set_stage(text)
+        title = (self._running_item or {}).get("title", "")
+        self._set_status("busy", f"{title} - {text}" if title else text)
 
     def _on_task_finished(self, result: TaskResult):
         if result.success:
@@ -2754,6 +2778,10 @@ class PulseApp(QMainWindow):
             self._record_task_history(flash)
         self._run_started_at = None
         self._running_item = None
+        # The phase chip reports something happening NOW; leaving the last
+        # one on screen after the verdict would have it report a phase that
+        # finished, next to a state pill saying the task is over.
+        self.activity.clear_stage()
         # a task may have just changed one of the probed settings
         QTimer.singleShot(400, self._refresh_tweak_state)
         if self._running_card is not None:

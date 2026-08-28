@@ -314,6 +314,45 @@ RADIUS = {
 PLAQUE_SIZE = 36
 CONTROL_H = 36
 
+#: THE GLYPH SCALE — the fifth and last hand-picked dimension in the app.
+#:
+#: Icons shipped at SIX sizes: 12, 13, 15, 16, 19 and 21, every one of them
+#: written straight into a TH.icon_font() call. Three of those (16, 19, 21)
+#: were the SAME ELEMENT — a Fluent glyph centred in a PLAQUE_SIZE well —
+#: drawn at three sizes in three places:
+#:
+#:     sidebar entry (NavButton) ......... 36px well, 16px glyph  (44%)
+#:     category card (GlassCard) ......... 36px well, 21px glyph  (58%)
+#:     dialog action row (ActionRow) ..... 36px well, 19px glyph  (53%)
+#:
+#: PLAQUE_SIZE exists precisely so that "a glyph in a tinted well" is one
+#: object at one size everywhere; letting the WELL agree while the GLYPH
+#: inside it disagreed by five pixels meant the sidebar entry and the card
+#: it opens still read as two different things drawn by two different
+#: people. That is the same defect PLAQUE_SIZE was introduced to fix, one
+#: level further in.
+#:
+#: Three steps, deliberately mirroring the RADIUS ramp's three, and for the
+#: same reason: 12-vs-13 and 15-vs-16 are differences below the threshold
+#: at which a size change reads as a decision and above the threshold at
+#: which it reads as sloppiness.
+#:
+#:   micro   an icon-only control in a header row — a tool button, a lock
+#:           badge, a collapse chevron. Reads as punctuation, not as an
+#:           object.
+#:   inline  a glyph sitting in the text flow at body size: a drill-in
+#:           chevron, a list affordance. Sized to the line it rides on.
+#:   plaque  THE glyph inside a PLAQUE_SIZE well, wherever that well
+#:           appears. 20 in 36 is the 56% ratio the Fluent icon grid is
+#:           drawn for, and it lands between the two extremes it replaces.
+#:
+#: Enforced by test_layout_contract.test_every_icon_size_comes_off_the_scale.
+ICON = {
+    "micro":  13,
+    "inline": 15,
+    "plaque": 20,
+}
+
 
 def inner_radius(outer: int, inset: int = 1) -> int:
     """The radius a child painted `inset` pixels inside a rounded surface
@@ -899,6 +938,22 @@ _DARK = {
     # asks for, kept low so a pointer sweep lights the grid rather than
     # flashing it.
     "card_hover":  "rgba(150, 168, 224, 0.085)",
+    # THE MENU/LIST HOVER PILL, and deliberately NOT `card_hover`.
+    #
+    # A card's hover is an accent-tinted LIFT: the pointer lands on one
+    # surface in a grid of them, and the indigo says which. A row in a
+    # dropdown, a command-palette result or a dialog's action list is a
+    # different question — the list is already one surface, the pointer is
+    # scrubbing down it, and tinting each row toward the brand as it passes
+    # paints a coloured streak down a menu that has nothing to do with the
+    # brand. Every tier-1 system this app is benchmarked against (Fluent 2,
+    # Linear, Raycast) uses a NEUTRAL translucent pill here for exactly
+    # that reason: it reads as "the pointer is here" and as nothing else.
+    #
+    # 0.06 white on the obsidian tiers is the standard weight, and it is
+    # low enough that a row under the pointer never competes with a row
+    # that is genuinely SELECTED (which keeps the accent tint, at 0.16).
+    "row_hover":   "rgba(255, 255, 255, 0.06)",
     # THE CONTENT HAIRLINE, and the one place the v14 spec's flat 0.08 is
     # not taken literally. A card's edge has to separate from the card's OWN
     # FILL, which is a different question from a container's edge separating
@@ -1118,6 +1173,12 @@ _LIGHT = {
     # elevation move this mode can never make.
     "card_hi":     "rgba(255, 255, 255, 1.0)",
     "card_hover":  "rgba(84, 101, 180, 0.055)",
+    # The light twin of dark's neutral hover pill (see the note there).
+    # INVERTED, not merely re-alphaed: white at any weight is invisible on
+    # porcelain, so the pill darkens instead of lightening. 0.05 black
+    # rather than 0.06 white because a subtractive pill on paper reads
+    # heavier than an additive one on obsidian at equal alpha.
+    "row_hover":   "rgba(0, 0, 0, 0.05)",
     # The content hairline — the light twin of dark's, and the same single
     # deviation from the spec's flat 0.08 for the same measured reason. A
     # card's edge must separate from the card's OWN FILL at 1.45:1
@@ -1744,16 +1805,11 @@ def filter_combo_qss(t: dict, accent: str) -> str:
             margin-right: 8px;
         }}
         QComboBox QAbstractItemView {{
-            background: {t['dialog_bg']};
-            border: 1px solid {t['card_line']};
-            border-radius: {RADIUS['control']}px;
-            color: {t['text']};
-            padding: 4px;
-            outline: none;
+            {menu_surface_qss(t)}
             selection-background-color: {alpha(accent, 0.22)};
             selection-color: {t['text']};
         }}
-    """
+    """ + menu_item_qss(t, "QComboBox QAbstractItemView::item")
 
 
 def count_chip_qss(t: dict, accent: str, filtered: bool = False) -> str:
@@ -2458,6 +2514,177 @@ def dev_hub_row_qss(t: dict) -> str:
     """
 
 
+#: THE DESTRUCTIVE TINT, and the number the whole action-row treatment
+#: turns on.
+#:
+#: A destructive action used to be drawn as a WIREFRAME: a hard red
+#: outline around a transparent row, at the full `danger_line` weight. That
+#: reads as an alarm rather than as an option — it is the loudest thing on
+#: a dialog whose other rows are the safe ones, so the eye is pulled to the
+#: button the user is least likely to want, and a hub offering "remove" and
+#: "reinstall" side by side advertised the teardown.
+#:
+#: A translucent tinted FILL inverts that: the row is unmistakably red-
+#: shouldered when you look at it, and quiet when you are not. 0.08 is the
+#: weight at which the tint is legible on both the obsidian card tier and
+#: on porcelain without dyeing either (measured: dark #181A1F -> #1F1A1A,
+#: light #FFFFFF -> #FBF1F1), and it leaves the ROW's text contrast
+#: untouched, which a saturated fill would not.
+DANGER_TINT = 0.08
+
+#: ...and the hairline that goes with it. Crisp enough to close the shape —
+#: a tinted fill with no edge reads as a stain — and well under the 0.30-
+#: 0.35 `danger_line` the wireframe was drawn at.
+DANGER_LINE = 0.22
+
+
+#: THE FLOATING-SURFACE SHADOW — a dialog panel, a command palette, any
+#: popup that sits OVER the page rather than in it.
+#:
+#: (dx, dy, blur, alpha), i.e. CSS `0 12px 32px rgba(0, 0, 0, 0.45)`.
+#:
+#: THIS IS THE OUTER OF TWO LAYERS, and naming that is the point of the
+#: constant. A single shadow can only be one thing: tight and dark enough
+#: to seat a surface, or wide and soft enough to lift it. The panel used to
+#: run one 42px blur at 0.59 alpha and got neither — too heavy to read as
+#: air, too diffuse to read as contact, which is the smudge a dialog looked
+#: like against the frosted backdrop.
+#:
+#: The INNER layer is not another QGraphicsDropShadowEffect (Qt allows a
+#: widget exactly one graphics effect) — it is the contact ramp
+#: animations.paint_drop_shadow already paints just inside the panel's own
+#: edge, which widgets._dialog_chrome now enables by handing the DepthCard
+#: its theme. Two layers, two mechanisms, one cue.
+DIALOG_SHADOW = (0, 12, 32, 0.45)
+
+
+def action_row_qss(t: dict, accent: str, danger: bool = False) -> str:
+    """One offered action inside a compact dialog: icon, text block, and a
+    button, on a single row (widgets.ActionRow).
+
+    A ROW, NOT A CARD, and the distinction is what this factory exists to
+    make. A GlassCard is a tile in a grid — it competes for attention with
+    thirteen others, so it carries a plaque, a three-line description, a
+    meta footer and a hover lift. A hub offers two to four actions and
+    nothing else, and rendering those as full cards is what left the Edge
+    and OneDrive dialogs as two tiles adrift in a panel sized for a
+    fourteen-card page. The row states the same three things in a third of
+    the height, which is what lets the dialog shrink to fit them.
+
+    `danger` swaps the neutral card tier for the translucent destructive
+    tint (see DANGER_TINT). Hover moves the fill and the border together —
+    a border-only hover reads as inert next to a GlassCard, whose hover
+    changes both.
+    """
+    if danger:
+        fill = alpha(t["err"], DANGER_TINT)
+        line = alpha(t["err"], DANGER_LINE)
+        hover_fill = alpha(t["err"], DANGER_TINT * 1.75)
+        hover_line = alpha(t["err"], 0.45)
+    else:
+        fill = t["card"]
+        line = t["card_line"]
+        hover_fill = blend(t["card"], t["card_hover"])
+        hover_line = alpha(accent, 0.40)
+    return f"""
+        QFrame#actionRow {{
+            background: {fill};
+            border: 1px solid {line};
+            border-radius: {RADIUS['card']}px;
+        }}
+        QFrame#actionRow:hover {{
+            background: {hover_fill};
+            border: 1px solid {hover_line};
+        }}
+    """
+
+
+def action_button_qss(t: dict, accent: str, danger: bool = False) -> str:
+    """The button at an ActionRow's right edge — the row's ONE affordance.
+
+    Tinted-ghost in both tones rather than a filled CTA: a compact dialog
+    shows two to four of these at once, and four solid buttons is four
+    competing primaries. The destructive variant is the same shape in the
+    error tone, so "this row removes something" is said by the row's own
+    fill and echoed by its button, never by shouting in a different
+    language."""
+    tone = t["err"] if danger else accent
+    return f"""
+        QPushButton {{
+            background: {alpha(tone, 0.12)};
+            border: 1px solid {alpha(tone, 0.40)};
+            border-radius: {RADIUS['control']}px;
+            color: {tone};
+            font-size: {TYPE['body']}px; font-weight: 600;
+            padding: 0 {SPACE['lg']}px;
+        }}
+        QPushButton:hover {{
+            background: {alpha(tone, 0.22)}; color: {t['text']};
+            border: 1px solid {alpha(tone, 0.65)};
+        }}
+        QPushButton:pressed {{ background: {alpha(tone, 0.32)}; }}
+        QPushButton:disabled {{
+            background: {t['panel']}; border: 1px solid {t['panel_line']};
+            color: {t['text_faint']};
+        }}
+    """
+
+
+def menu_surface_qss(t: dict) -> str:
+    """The shared material for every FLOATING LIST in the app: the command
+    palette's results, a combo box's popup, any dropdown that appears over
+    the page rather than in it.
+
+    Three rules, and they were previously restated (differently) by each
+    surface that needed them:
+
+      * SURFACE RADIUS, not container radius. A popup is a thing you point
+        at, so it takes the 12px tier its rows and buttons take — 16 reads
+        as a dialog that lost its title.
+      * ROWS BREATHE VERTICALLY. 10px of lead above and below a 13px label
+        is the density at which a list scans; the padding is stated on the
+        item so the hover pill inherits it and lands as a PILL rather than
+        as a full-bleed band.
+      * THE HOVER PILL IS NEUTRAL (t['row_hover']). See the token's note:
+        an accent tint here paints a coloured streak down a menu, where a
+        neutral translucent pill says "the pointer is here" and nothing
+        else. SELECTION keeps the accent — that is a state the list is
+        reporting, not a place the pointer happens to be — so the two can
+        never be confused for one another.
+    """
+    return f"""
+        background: {t['dialog_bg']};
+        border: 1px solid {t['card_line']};
+        border-radius: {RADIUS['control']}px;
+        color: {t['text']};
+        padding: {SPACE['xs']}px;
+        outline: none;
+    """
+
+
+def menu_item_qss(t: dict, selector: str) -> str:
+    """The row rules inside a menu_surface_qss list, for whichever item
+    selector the widget class uses (`QListWidget::item`, `QComboBox
+    QAbstractItemView::item`). One implementation so the palette and every
+    dropdown cannot drift in padding, radius or hover weight."""
+    return f"""
+        {selector} {{
+            padding: 10px {SPACE['md']}px;
+            border-radius: {RADIUS['chip']}px;
+            margin: 1px {SPACE['xxs']}px;
+            border: 1px solid transparent;
+        }}
+        {selector}:hover {{
+            background: {t['row_hover']};
+        }}
+        {selector}:selected {{
+            background: {alpha(t['accent'], 0.16)};
+            color: {t['text']};
+            border: 1px solid {alpha(t['accent'], 0.40)};
+        }}
+    """
+
+
 def catalog_tab_qss(t: dict, accent: str, active: bool) -> str:
     """One pill in the Software Catalog's sub-category tab bar.
 
@@ -2633,6 +2860,14 @@ def command_list_qss(t: dict) -> str:
     scroll_area_qss — and the palette, the most-used surface in the app,
     was the one place that showed a stock Windows scrollbar, arrow
     buttons and all.
+
+    The ROWS come from menu_item_qss, shared with every dropdown in the
+    app. The list's own frame stays transparent because it sits INSIDE the
+    palette's dialog panel, which is already the floating surface — drawing
+    menu_surface_qss's border here too would put a second box inside the
+    first. The hover weight was the visible drift this fixed: the palette
+    was the one list still hovering on `card_hover`, the accent-tinted card
+    lift, so scrubbing the results painted an indigo streak down them.
     """
     return scroll_area_qss(t) + f"""
         QListWidget {{
@@ -2642,20 +2877,7 @@ def command_list_qss(t: dict) -> str:
             font-size: {TYPE['label']}px;
             color: {t['text_soft']};
         }}
-        QListWidget::item {{
-            padding: 10px 12px;
-            border-radius: {RADIUS['chip']}px;
-            margin: 1px 2px;
-        }}
-        QListWidget::item:selected {{
-            background: {alpha(t['accent'], 0.16)};
-            color: {t['text']};
-            border: 1px solid {alpha(t['accent'], 0.40)};
-        }}
-        QListWidget::item:hover:!selected {{
-            background: {t['card_hover']};
-        }}
-    """
+    """ + menu_item_qss(t, "QListWidget::item")
 
 
 def dialog_secondary_go_qss(t: dict, accent: str) -> str:
@@ -2825,6 +3047,55 @@ def inline_status_qss(t: dict, tone: str = "ok") -> str:
         background: {alpha(color, 0.10)}; border: 1px solid {alpha(color, 0.32)};
         border-radius: {RADIUS['control']}px; padding: 8px 14px;
     """
+
+
+def micro_chip_qss(t: dict, tone: str = "accent") -> str:
+    """The smallest tinted pill in the app: a word or short phrase that
+    qualifies the thing beside it.
+
+    Two callers, and they are the same object with different news:
+
+      stage_chip_qss   the live PHASE line in the Activity drawer
+                       ("Downloading Firefox 145.0...", "Closing Steam...").
+      an UpdateRow's   "RUNNING" flag, warning that an app must be closed
+                       before it can be replaced.
+
+    Written once because the two would otherwise be two small tinted pills
+    a screen apart, drawn by two people, differing in padding and radius -
+    which is how "almost aligned" happens one element at a time.
+
+    Weights match inline_status_qss exactly (0.10 fill, 0.32 border), since
+    that is already the app's answer for "a short status sentence on a
+    tinted plate"; only the scale differs.
+    """
+    color = {"accent": t["accent"], "ok": t["ok"], "warn": t["warn"],
+             "err": t["err"]}.get(tone, t["text_soft"])
+    return f"""
+        QLabel {{
+            color: {color}; font-size: {TYPE['meta']}px; font-weight: 600;
+            background: {alpha(color, 0.10)};
+            border: 1px solid {alpha(color, 0.30)};
+            border-radius: {RADIUS['chip']}px;
+            padding: 2px {SPACE['sm']}px;
+        }}
+    """
+
+
+def stage_chip_qss(t: dict) -> str:
+    """The live PHASE line in the Activity drawer.
+
+    WHY IT IS NOT JUST ANOTHER CONSOLE LINE. The console is the honest,
+    unfiltered stream and it must stay that way - but a stream is something
+    you READ, and during a fourteen-app update it scrolls faster than
+    anyone reads it. The phase is something you GLANCE at, and glancing
+    only works if it is always in the same place. Different job, different
+    surface.
+
+    ACCENT-TINTED, and that is the point: it is the one line on the drawer
+    that changes while a task runs, so it should be the one line the eye
+    lands on.
+    """
+    return micro_chip_qss(t, "accent")
 
 
 def dialog_go_qss(t: dict, accent: str) -> str:

@@ -75,48 +75,95 @@ def test_maximize_restore_round_trip(floating, qapp):
     assert floating._shell.property("flush") is False
 
 
-def test_minimize_parks_the_ambient_loop(floating, qapp):
-    """hideEvent does not fire on minimize, so the ~28fps repaint would
-    otherwise keep running behind an invisible window."""
+def test_minimize_leaves_the_ambient_loop_parked(floating, qapp):
+    """hideEvent does not fire on minimize, so a repainting field would
+    otherwise keep running behind an invisible window.
+
+    As of v10.5 there is no loop to park (widgets._AmbientSimulation.
+    STATIC), and the assertion is the stronger one for it: the timer is
+    stopped on minimize AND stays stopped on restore. The old test asserted
+    it came BACK, which was the correct contract for an animated wash and
+    is now precisely the regression to catch — a restore that started the
+    timer would put an idle app back to repainting its whole translucent
+    widget stack ten times a second.
+    """
     floating.showMinimized()
     settle(qapp, 300)
     assert not floating._glow._timer.isActive()
     floating.showNormal()
     settle(qapp, 400)
-    assert floating._glow._timer.isActive()
+    assert not floating._glow._timer.isActive(), (
+        "restoring the window started the ambient timer — the field is "
+        "meant to be static")
 
 
 class TestSizeMoveParking:
-    """The ambient background is parked for the duration of the OS
-    move/size loop — that took mean drag tracking lag from 3.6px to 0.3px."""
+    """suspend()/resume() around the OS move/size loop.
 
-    def test_enter_size_move_parks(self, floating):
+    The parking took mean drag tracking lag from 3.6px to 0.3px, and it
+    still earns its place with a static field: what it parks now is not a
+    timer but the COMPOSITED ORB LAYER. A drag hands the widget a different
+    size on every step, and rebuilding a full-window pixmap per step is the
+    most expensive thing that could happen mid-drag; while frozen the last
+    good layer is simply stretched, which is visually free on a soft
+    gradient. The rebuild happens once, on thaw, at the final size.
+    """
+
+    def test_enter_size_move_freezes_the_layer(self, floating):
+        glow = floating._glow
         floating._in_size_move = True
-        floating._glow.suspend()
+        glow.suspend()
         try:
-            assert not floating._glow._timer.isActive()
+            assert glow._frozen is True
+            assert not glow._timer.isActive()
         finally:
             floating._in_size_move = False
-            floating._glow.resume()
+            glow.resume()
+
+    def test_a_frozen_layer_is_stretched_rather_than_rebuilt(self, floating, qapp):
+        glow = floating._glow
+        glow.repaint()
+        original = glow._layer
+        assert original is not None
+        floating._in_size_move = True
+        glow.suspend()
+        try:
+            floating.resize(1180, 800)
+            glow.repaint()
+            assert glow._layer is original, (
+                "the orb layer was re-rasterised mid-drag — a full-window "
+                "pixmap per drag step is exactly what parking prevents")
+        finally:
+            floating._in_size_move = False
+            glow.resume()
+            settle(qapp, 120)
 
     def test_state_change_mid_drag_does_not_unpark(self, floating):
         """Aero-snapping changes window state INSIDE the move loop; if
         _sync_window_state resumed there it would undo the parking."""
+        glow = floating._glow
         floating._in_size_move = True
-        floating._glow.suspend()
+        glow.suspend()
         try:
             floating._sync_window_state()
-            assert not floating._glow._timer.isActive()
+            assert glow._frozen is True
+            assert not glow._timer.isActive()
         finally:
             floating._in_size_move = False
-            floating._glow.resume()
+            glow.resume()
 
-    def test_exit_size_move_resumes(self, floating, qapp):
+    def test_exit_size_move_rebuilds_once_at_the_final_size(self, floating, qapp):
+        glow = floating._glow
         floating._in_size_move = True
-        floating._glow.suspend()
+        glow.suspend()
         floating._in_size_move = False
-        floating._glow.resume()
-        assert floating._glow._timer.isActive()
+        glow.resume()
+        assert glow._frozen is False
+        assert glow._layer is None, "thaw did not drop the stretched layer"
+        assert not glow._timer.isActive(), "resume() started the frozen timer"
+        glow.repaint()
+        settle(qapp, 60)
+        assert glow._layer_size == (glow.width(), glow.height())
 
 
 def test_minimum_size_respects_the_layout_floor(window):

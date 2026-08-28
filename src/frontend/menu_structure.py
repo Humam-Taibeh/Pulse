@@ -110,6 +110,13 @@ Item schema:
 
              iter_leaf_items() below expands every hub so leaf
              actions stay reachable from the Ctrl+K command palette.
+             A hub's sub-action may carry `action`: the VERB its
+             button says (widgets.ActionRow). Optional, and derived
+             when absent — but a derived verb is a guess about the
+             title's wording, and these five are the rows a user
+             reads before doing something irreversible, so they say
+             it themselves.
+
              A hub may instead supply `groups` (list of
              {"title": str, "items": list[dict]}) in place of a flat
              `items` list: the HubDialog then renders each group's title as
@@ -480,10 +487,11 @@ CATEGORIES = [
                  "items": [
                      {"icon": "🌐", "title": "Remove Microsoft Edge",
                       "desc": "Force-purge Chromium Edge, with a backup kept.",
-                      "glyph": "delete", "task": "RemoveEdge", "timeout": 900, "confirm": True, "danger": True},
+                      "glyph": "delete", "task": "RemoveEdge", "timeout": 900, "confirm": True,
+                      "danger": True, "action": "Remove"},
                      {"icon": "🔁", "title": "Reinstall Microsoft Edge",
                       "desc": "Reinstall Edge and restore your backed-up settings.",
-                      "glyph": "sync", "task": "RestoreEdge", "timeout": 1800},
+                      "glyph": "sync", "task": "RestoreEdge", "timeout": 1800, "action": "Reinstall"},
                  ]},
                 {"icon": "☁️", "glyph": "cloud", "title": "Microsoft OneDrive",
                  "desc": "Uninstall OneDrive with your local files rescued first — "
@@ -496,10 +504,11 @@ CATEGORIES = [
                      # product glyph its own hub card now owns.
                      {"icon": "☁️", "title": "Purge OneDrive",
                       "desc": "Back up local files, then uninstall OneDrive.",
-                      "glyph": "delete", "task": "RemoveOneDrive", "timeout": 900, "confirm": True, "danger": True},
+                      "glyph": "delete", "task": "RemoveOneDrive", "timeout": 900, "confirm": True,
+                      "danger": True, "action": "Remove"},
                      {"icon": "🔁", "title": "Install / Restore OneDrive",
                       "desc": "Reinstall OneDrive so it's back and syncing.",
-                      "glyph": "sync", "task": "RestoreOneDrive", "timeout": 1800},
+                      "glyph": "sync", "task": "RestoreOneDrive", "timeout": 1800, "action": "Install"},
                      # v1.1: MOVED here from Maintenance & Security /
                      # RECOVERY. The folder is an artefact of Purge
                      # OneDrive and of nothing else, and a user who has
@@ -509,7 +518,7 @@ CATEGORIES = [
                      # branch's 2-4 card treatment is tuned for.
                      {"icon": "📁", "title": "OneDrive Backup Folder",
                       "desc": "Open files rescued before OneDrive removal.",
-                      "glyph": "folder", "task": "@open_onedrive_backup"},
+                      "glyph": "folder", "task": "@open_onedrive_backup", "action": "Open"},
                  ]},
             ]},
         ],

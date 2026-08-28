@@ -348,79 +348,107 @@ class TestAmbientGovernor:
 
 
 @pytest.mark.native
-class TestAmbientDefer:
-    """defer() is what keeps a full-window ambient repaint out of the
-    middle of a transition the user is watching."""
+class TestAmbientQuietDuringNavigation:
+    """A page transition must not be sharing the GUI thread with the wash.
 
-    def test_a_deferred_field_does_not_repaint(self, window, qapp):
-        """The saving a deferral exists for, asserted directly.
+    This class used to be TestAmbientDefer, and it tested the mechanism —
+    defer() pushing a deadline out, the field skipping frames until it
+    passed, then picking itself back up unaided. As of v10.5 the field is
+    static (widgets._AmbientSimulation.STATIC), so there is no frame to
+    skip and defer() is a no-op.
 
-        This used to read `glow._t == mark`. That was a PROXY for the thing
-        the message already named — no full-window repaint mid-transition —
-        and it was a sound proxy only because advancing and painting used
-        to be the same event: _tick returned before both.
+    The GUARANTEE the mechanism existed to provide is the thing worth
+    keeping, and it is now unconditional rather than scheduled: the wash
+    never lands an 18.5ms full-window repaint in the middle of a
+    transition, because it never repaints on its own at all. Tested at the
+    same seam as before — a real module switch on a real window — so a
+    regression that reintroduced ambient motion would fail HERE, where the
+    user would actually have felt it, and not only in the unit-level
+    stillness tests in test_ambient.py.
+    """
 
-        They are no longer the same event. The field now integrates while
-        deferred and skips only the paint, because the 18.5 ms this guards
-        is the repaint through every translucent surface above the glow,
-        not the arithmetic over 126 particles that costs microseconds.
-        Freezing the maths as well cost the field the whole deferral —
-        75% of a navigation sweep, in stalls over a second long — and
-        surfaced as the orbs stopping dead and snapping back on every tab
-        change. Asserting on _t here would now pin the bug in place.
-        """
-        glow = window._glow
+    #: What a settled transition is allowed to have cost the wash. A page
+    #: swap genuinely moves opaque surfaces over it, and set_occluders is
+    #: then OBLIGED to dirty the strips that just became visible — a wash
+    #: that declined would leave the old page's card footprints as holes.
+    #: The number is small and, crucially, does not scale with how long the
+    #: transition takes: an animated field billed one full-window repaint
+    #: per 100ms for the whole 360ms first-visit cascade and kept billing
+    #: afterwards.
+    _OCCLUDER_REPAINT_CEILING = 8
+
+    def _count_repaints(self, glow, qapp, action, ms: int) -> int:
         painted = []
         original = glow.update
         glow.update = lambda *a, **k: painted.append(1)
         try:
-            glow.defer(500)
-            settle(qapp, 300)
-            assert not painted, (
-                "the ambient field repainted during a deferral — an 18.5 ms "
-                "full-window repaint lands in the middle of the transition")
+            action()
+            settle(qapp, ms)
         finally:
             glow.update = original
-            glow._defer_until = 0.0
+        return len(painted)
 
-    def test_a_deferred_field_keeps_simulating(self, window, qapp):
-        """The other half of the same contract — see the note above."""
-        glow = window._glow
-        try:
-            glow.defer(500)
-            mark = glow._t
-            settle(qapp, 300)
-            assert glow._t > mark, (
-                "the field stopped integrating while deferred, so it will "
-                "resume from a stale position — the reported 'particles "
-                "freeze and restart their path' on every tab switch")
-        finally:
-            glow._defer_until = 0.0
-
-    def test_it_resumes_unaided(self, window, qapp):
-        glow = window._glow
-        glow.defer(150)
-        mark = glow._t
-        settle(qapp, 700)
-        assert glow._t > mark, "the field never came back after a deferral"
-
-    def test_overlapping_deferrals_extend_rather_than_shorten(self, window):
-        glow = window._glow
-        try:
-            glow.defer(800)
-            far = glow._defer_until
-            glow.defer(20)
-            assert glow._defer_until == far
-        finally:
-            glow._defer_until = 0.0
-
-    def test_navigation_defers_the_field(self, window, qapp):
+    def test_a_module_switch_costs_the_wash_almost_nothing(self, window, qapp):
         glow = window._glow
         window.go_home()
-        settle(qapp, 200)
-        glow._defer_until = 0.0
-        window.open_category(1)
-        assert glow._defer_until > time.perf_counter(), (
-            "a module switch no longer hands the GUI thread to the "
-            "transition")
-        settle(qapp, 600)
+        settle(qapp, 250)
+        try:
+            count = self._count_repaints(
+                glow, qapp, lambda: window.open_category(1), 600)
+            assert count <= self._OCCLUDER_REPAINT_CEILING, (
+                f"{count} ambient repaint(s) during a module switch — each "
+                "re-rasterises every translucent surface above the wash, "
+                "which is the hitch deferral was introduced to remove")
+        finally:
+            window.go_home()
+            settle(qapp, 200)
+
+    def test_the_wash_goes_silent_once_the_transition_lands(self, window, qapp):
+        """The half that separates 'the layout moved it' from 'it is
+        animating'. Occluder churn stops when the page settles; a timer
+        would not, and this is where the difference shows."""
+        glow = window._glow
+        window.go_home()
+        settle(qapp, 250)
+        try:
+            window.open_category(1)
+            settle(qapp, 700)                  # let the switch fully land
+            count = self._count_repaints(glow, qapp, lambda: None, 700)
+            assert count == 0, (
+                f"{count} ambient repaint(s) in 700ms AFTER a transition had "
+                "settled — nothing in the layout is still moving, so the "
+                "field is animating itself")
+        finally:
+            window.go_home()
+            settle(qapp, 200)
+
+    def test_a_first_visit_cascade_costs_the_wash_almost_nothing(
+            self, window, qapp):
+        """The worst case: a module opened for the first time runs the
+        entrance cascade, the longest stretch of GUI-thread work the app
+        ever schedules (PAGE_FADE_MS, then CASCADE_BUDGET_MS + CASCADE_MS).
+        It was also the deferral's longest hold — 360ms during which the
+        animated field wanted three full-window repaints."""
+        glow = window._glow
+        window._revealed.clear()
+        window.go_home()
+        settle(qapp, 250)
+        try:
+            count = self._count_repaints(
+                glow, qapp, lambda: window.open_category(2), 800)
+            assert count <= self._OCCLUDER_REPAINT_CEILING, (
+                f"{count} ambient repaint(s) across a first-visit cascade")
+        finally:
+            window.go_home()
+            settle(qapp, 200)
+
+    def test_deferring_arms_nothing(self, window):
+        """main.py still calls defer() around every transition and cascade.
+        Those calls are asserting "the GUI thread is about to be busy",
+        which stays true and stays worth saying — but they must not leave
+        state behind on a field that has no frames to defer."""
+        glow = window._glow
+        glow.defer(800)
+        glow.defer(20)
+        assert glow._defer_until == 0.0
+        assert not glow._timer.isActive()

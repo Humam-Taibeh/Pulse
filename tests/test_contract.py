@@ -1042,6 +1042,59 @@ class TestThemes:
         assert checked == 2 * len(self._CONTRAST_PAIRS), "not every pair ran"
         assert not failures, "contrast floor breached:\n  " + "\n  ".join(failures)
 
+    #: (text token, floor) measured on the DESTRUCTIVE ACTION ROW's tinted
+    #: fill — a surface the pairs above cannot see, because it is not a
+    #: token at all: it is `err` composited onto the dialog panel at
+    #: TH.DANGER_TINT (see theme.action_row_qss).
+    #:
+    #: It gets its own test for the reason every tinted plate does. The
+    #: measured badge-tint trap is that a plate tinted in its own hue
+    #: SUBTRACTS contrast from the text it carries, and the temptation with
+    #: a destructive row is always to push the tint further so the warning
+    #: "reads" — which makes the words on it harder to read, on the one row
+    #: in the app where misreading has consequences.
+    #:
+    #: `err` itself is included because the row's BUTTON is drawn in the
+    #: error tone directly on this fill, so the tone has to clear its own
+    #: plate. Held to the 3:1 large-text floor: it is a 13px 600-weight
+    #: button label, the same class as the muted tiers above.
+    _DANGER_ROW_PAIRS = [
+        ("text",       4.5),   # the row's title
+        ("text_muted", 3.0),   # its description
+        ("err",        3.0),   # the button label, in its own tone
+    ]
+
+    def test_a_destructive_row_stays_readable_on_its_own_tint(self, qapp):
+        """The destructive treatment must shoulder the row, not dye it.
+
+        This is the guard on TH.DANGER_TINT specifically: raising it is the
+        obvious way to make a warning louder, and every step up costs
+        contrast on exactly the row where the user most needs to read what
+        they are about to do.
+        """
+        from frontend import theme as TH
+
+        failures = []
+        checked = 0
+        for name, tokens in self._themes(qapp).items():
+            # The row sits inside a dialog panel, so the tint composites
+            # onto `dialog_bg` — measuring it against the canvas would pin
+            # a relationship nobody ever sees.
+            fill = TH.to_qcolor(
+                TH.blend(tokens["dialog_bg"],
+                         TH.alpha(tokens["err"], TH.DANGER_TINT)))
+            for fg_key, floor in self._DANGER_ROW_PAIRS:
+                checked += 1
+                ratio = self._contrast(TH.to_qcolor(tokens[fg_key]), fill)
+                if ratio < floor:
+                    failures.append(
+                        f"{name}: {fg_key} on the destructive tint = "
+                        f"{ratio:.2f}:1 (floor {floor}:1)")
+        assert checked == 2 * len(self._DANGER_ROW_PAIRS)
+        assert not failures, (
+            "the destructive row's tint has started dyeing it:\n  "
+            + "\n  ".join(failures))
+
     def test_surfaces_separate_from_the_surface_beneath_them(self, qapp):
         """ELEVATION, which the text pairs above do not measure.
 

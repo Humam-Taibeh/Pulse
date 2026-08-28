@@ -133,10 +133,39 @@ def test_the_tuned_constants_live_on_the_shared_base():
     """Every number the light-mode solve produced has to be visible to both
     renderers, or the GPU path silently ships the pre-fix weights."""
     for name in ("_STAR_PMAX", "_STAR_SPAN_MUL", "_PARTICLE_TIERS",
-                 "_N_PARTICLES", "_ORB_PEAKS", "_POINTER_GAIN"):
+                 "_N_PARTICLES", "_ORB_PEAKS", "_POINTER_GAIN", "STATIC"):
         assert hasattr(_AmbientSimulation, name), name
     assert _AmbientSimulation._STAR_PMAX == {"dark": 0.34, "light": 0.55}
     assert _AmbientSimulation._STAR_SPAN_MUL == {"dark": 3.0, "light": 3.6}
+
+
+def test_stillness_is_inherited_rather_than_re_declared():
+    """v10.5: the field is static, and BOTH renderers have to be.
+
+    The GPU path shadows _INTERVAL_MS per instance, so "is it animating?"
+    is the one property it could plausibly answer differently from the
+    raster path. It must not: STATIC lives on the shared base and neither
+    subclass may override it, or the app would animate or not depending on
+    which renderer the capability probe happened to choose — a difference
+    the user would see and nobody could reproduce on the other machine.
+    """
+    assert _AmbientSimulation.STATIC is True
+    assert "STATIC" not in vars(AmbientGlow)
+    if ambient_gl._GL_IMPORTED:
+        assert "STATIC" not in vars(ambient_gl.GLAmbientField)
+
+
+def test_the_gpu_path_invalidates_its_orb_texture_on_a_theme_change():
+    """The orb buffer is rebuilt on a CADENCE measured against `_t`. With
+    `_t` frozen that cadence never comes due again, so a theme toggle that
+    did not explicitly invalidate would bake the previous theme's aurora
+    into the texture for the life of the process — a bug that simply could
+    not exist while the field was animating, because the next tick within
+    100ms repainted it whether or not anything said so."""
+    import inspect
+    src = inspect.getsource(ambient_gl.GLAmbientField.apply_theme)
+    assert "_last_orb_t" in src, (
+        "GLAmbientField.apply_theme no longer invalidates the orb texture")
 
 
 def test_the_orb_peak_table_is_the_one_the_raster_path_uses(window):
@@ -473,3 +502,6 @@ def test_the_gl_field_honours_the_shared_api(gl_field):
     assert gl_field._suspended and gl_field._frozen
     gl_field.resume()
     assert not gl_field._suspended and not gl_field._frozen
+    # ...and neither call may start the frozen timer, on either renderer.
+    assert not gl_field._timer.isActive()
+    assert gl_field._defer_until == 0.0
