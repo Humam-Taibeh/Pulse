@@ -50,7 +50,7 @@ from utils import resources
 
 #: Read if `VERSION` cannot be found. Kept equal to the file's contents by
 #: tests/test_contract.py — see "WHY A FALLBACK EXISTS" above.
-_FALLBACK = "10.3.0"
+_FALLBACK = "10.4.0"
 
 #: Release channel — rendered as a badge, never in prose. Also decides
 #: whether the updater considers GitHub prereleases (a stable build must

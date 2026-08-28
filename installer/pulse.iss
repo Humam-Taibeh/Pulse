@@ -9,7 +9,7 @@
 ;  works too; it just falls back to reading VERSION itself.
 ;
 ;  Build:  iscc installer\pulse.iss
-;  Out:    dist\PULSE_Setup_v10.3.0.exe
+;  Out:    dist\PULSE_Setup_v10.4.0.exe
 
 #ifndef MyAppVersion
   ; Read the same VERSION file the GUI, the engine and the spec read, so a

@@ -100,11 +100,24 @@ Write-Detail 'PyInstaller     present'
 
 $Iscc = $null
 if (-not $SkipInstaller) {
-    $Candidates = @(
+    # The per-user path is FIRST-CLASS, not a fallback: `winget install
+    # JRSoftware.InnoSetup` installs to %LOCALAPPDATA%\Programs by default,
+    # which is where anyone following the README's own suggestion ends up.
+    # The two Program Files paths only cover the machine-wide installer, so
+    # a winget install produced "ISCC.exe was not found" on a machine that
+    # had just installed it successfully.
+    # THE OUTER @() IS LOAD-BEARING. `@(...) | Where-Object` returns a
+    # SCALAR when exactly one candidate survives, and $Candidates[0] on a
+    # scalar string is its first CHARACTER — so a machine with exactly one
+    # Inno Setup install resolved $Iscc to "C" and the preflight printed
+    # `iscc  C` before failing several minutes later at the invocation.
+    # Two installs hid it; one is the normal case.
+    $Candidates = @(@(
         (Get-Command iscc.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
     if (-not $Candidates) {
         throw 'Inno Setup 6 (ISCC.exe) was not found. Install it from https://jrsoftware.org/isdl.php, or pass -SkipInstaller.'
     }

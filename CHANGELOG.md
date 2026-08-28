@@ -14,7 +14,92 @@ GUI version, with core changes called out explicitly.
 
 ## [Unreleased]
 
-### Removed
+---
+
+## [10.4.0] — 2026-08-28
+
+The v14 surface pass, a decluttered Activity rail, and the first release
+whose CI is green end to end.
+
+### Changed — the v14 surface pass
+- **Both palettes move to Fluent 2 / macOS container layering.** Canvas →
+  raised container → card, each step lighter, with elevation carried by a
+  hairline and a cast shadow rather than by tone. Dark runs `#090A0B` /
+  `#121417` / `#181A1F` on neutral greys (the old `#14171F` shell top
+  carried a visible blue cast); light runs an `#F3F4F6` canvas with pure
+  white surfaces. The dark content well **inverts** — it used to recess
+  into near-black, which a jet base has nowhere left to do — and light's
+  cast shadow rises `0.080 → 0.105` to pay for the tone it gave up.
+- **Dark ambient orb peaks come down 40%.** The wash was solved against a
+  well that was 45% near-black and *subtracted* from it; on the raised
+  container the old peaks took the canvas to `#1A1D25`, the muddy navy the
+  obsidian pass exists to remove. `test_ambient`'s wash-neutrality guard
+  now covers both modes instead of light alone.
+- **The Activity rail carries four controls, not nine.** Everything that
+  describes the *output* moved into the drawer body where the output is; a
+  "clear the output" button beside a collapsed drawer acts on something the
+  user cannot see. The size grip went entirely — the window owns a real
+  Win32 sizing frame on every edge. The status line is now an
+  `ElidedCaption`, which takes the rail's minimum from 621px to 206px, so
+  it finally fits at the window's own minimum width with a task running.
+- **The update chip became the sidebar's `UpdateBadge`,** sitting directly
+  above the identity line that was already its manual trigger, and shows
+  only when it has something actionable to say.
+- **Grids and dialogs bound both axes.** Category grids cap at six columns,
+  not four — at four a maximised 4K window handed every card ~860px, which
+  is not density. Dashboard actions split evenly (1/2/3/6, never an orphan
+  row) and their top air is a *bounded* stretch. Responsive dialogs gain a
+  height ceiling; on a 2160p display one was opening 1674px tall around
+  eight rows of content.
+- `PLAQUE_SIZE` and `CONTROL_H` join `SPACE`/`RADIUS`/`TYPE` as named
+  scales, both enforced by `test_layout_contract`.
+
+### Fixed — rendering and window behaviour
+- **The black edge during a live resize.** The window now paints its own
+  canvas with an object-bounding gradient brush — the same ramp the shell
+  paints, rescaled to any rect — so the strip Windows reveals mid-drag
+  carries the right colours, and `WM_ERASEBKGND` is answered so
+  `DefWindowProc` never fills between the two. A flat fill had replaced the
+  black tear with a visibly mismatched band.
+- **A maximized window showed resize cursors on edges it cannot be resized
+  from.** "No resize border while maximized" was only ever expressed by
+  *not answering* `WM_NCHITTEST` and trusting `DefWindowProc` to infer it
+  from `WS_MAXIMIZE`. On PySide6 6.11.2 that assumption stopped holding —
+  same styles, same `-9,-9` rect, `HTLEFT` two pixels inside the left edge.
+  The intent is stated outright now.
+- **`$profile` was assigned in two scopes in `15-Network.ps1`,** shadowing
+  the PowerShell automatic variable. Renamed to `$dnsProfile`.
+- **`11-StateProbe.ps1` and `14-Inspectors.ps1` carried non-ASCII with no
+  BOM,** so Windows PowerShell 5.1 was *misreading* them at runtime.
+
+### CI — green end to end
+- **All four jobs are green for the first time in this history.** The two
+  PowerShell jobs had been red on a cause outside the repo: the runner
+  writes each `run:` block as BOM-less UTF-8 and `shell: powershell` reads
+  it as cp1252, so an em-dash in a message decoded to a smart quote —
+  which PowerShell accepts as a *string delimiter* — and the step cascaded
+  into parse errors naming unrelated lines.
+- **The pytest job's twelve failures were three problems.** The runner's
+  desktop was 1024×768, clamping every window (`resize(1150,780)` came back
+  `(1044,780)`) and taking seven geometry tests with it; the wall-clock
+  render budget was set for a developer box; and two playbook tests guarded
+  on `PULSE_TESTS_ELEVATED`, an environment variable nothing set, so they
+  asserted on a `CreateRestorePoint` failure that an elevated runner never
+  produced. `conftest.is_elevated()` asks the OS instead.
+- **The native-suite floor had gone toothless.** Written when 713 tests
+  collected and 106 were native, it stayed at 670 while the suite grew to
+  838 with 115 native — so a headless runner would have executed ~716,
+  cleared the floor, and passed having tested no Win32 behaviour at all.
+- `tools/build_release.ps1` finds a `winget`-installed Inno Setup, and no
+  longer resolves `$Iscc` to the single character `C` when exactly one
+  candidate is found.
+
+
+### Also in this release
+
+Work that had accumulated under `[Unreleased]` and ships here for the first time.
+
+#### Removed
 - **The Software Catalog's quick-select stack chips** — *Java / University
   Stack*, *AI / Python Stack* and *Web Dev Stack*. They were a third way
   to narrow a list that already narrows two ways (tabs by category, field
@@ -25,7 +110,7 @@ GUI version, with core changes called out explicitly.
   `$Script:DevHubBundles` are gone with them (nothing in the backend ever
   read the mirror), and `test_contract.py` now fails if either comes back.
 
-### Fixed
+#### Fixed
 - **Light mode rendered black chrome on every GPU machine.** The ambient
   field's star pass blended with `glBlendFunc(ZERO, ONE_MINUS_SRC_ALPHA)`
   in light mode — `dst = (1-a)*dst` on colour *and* alpha, applied by every
@@ -64,7 +149,7 @@ GUI version, with core changes called out explicitly.
   proposes an oversized rect. `theme.resize_border_thickness()` went with
   it — that inset was its only caller.
 
-### Changed
+#### Changed
 - **Cards now read as surfaces in both themes.** A card measured 1.12:1
   against the content well in light and 1.11:1 in dark — legible text on a
   surface that was itself invisible. Light buys its separation from
@@ -78,7 +163,7 @@ GUI version, with core changes called out explicitly.
   guards, `_SURFACE_PAIRS` and `_BORDER_PAIRS`, pin elevation and hairline
   separation, which nothing measured before.
 
-### Added
+#### Added
 - **`tools/diagnose_edge_bleed.py`** — a rendering-artifact bisector that
   runs the app with one subsystem disabled at a time (integer DPI, raster
   ambient, no `QGraphicsEffect`, square corners). It located the
@@ -176,14 +261,14 @@ GUI version, with core changes called out explicitly.
   `theme.GLYPHS` (renders a blank icon plaque, silently), and the
   activation module's read-only guarantee.
 
-### Changed
+#### Changed
 - `HealthReportDialog`'s private row/note/heading renderers were lifted to
   module-level `report_row` / `report_note` / `report_heading` primitives
   now shared with the activation report. Both surfaces render the same
   shape of content and must colour a tone identically — two private copies
   of that mapping would eventually disagree about what amber means.
 
-### Fixed
+#### Fixed
 - **The ambient field froze through every tab switch and resumed from a
   stale position** — reported from real-world testing on low-spec hardware
   as the background orbs stopping dead and restarting their path. Nothing
