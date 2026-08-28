@@ -83,7 +83,6 @@ from frontend.widgets import (  # noqa: E402
     refit_dialog,
 )
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
-from frontend.ambient_gl import make_ambient_field  # noqa: E402
 
 # ============================================================
 #  APP CONSTANTS
@@ -1604,27 +1603,26 @@ class PulseApp(QMainWindow):
         self._shell.setObjectName("shell")
         self.setCentralWidget(self._shell)
 
-        # Created first so later siblings (titlebar/sidebar/content, added
-        # below) stack above it — the ambient wash sits behind everything.
+        # THE CANVAS IS THE SHELL'S OWN GRADIENT (theme.shell_qss), and as
+        # of v10.6 that is the whole background: a two-stop obsidian ramp
+        # and nothing else.
         #
-        # WHICH RENDERER is decided here, once, by probing the machine's
-        # OpenGL (ambient_gl.capability). The GPU field runs the same
-        # simulation at 60fps for 10.9% of one core where the raster field
-        # costs 40.2% at that rate; but a machine with software-emulated GL
-        # (llvmpipe / WARP / GDI generic — RDP sessions, VMs, legacy
-        # drivers) is FASTER on the raster path, so it silently gets that
-        # one. The reason is recorded, never surfaced: a technician on a
-        # remote session should get a smooth app, not a dialog about
-        # OpenGL.
-        self._glow, self._glow_backend = make_ambient_field(self._shell)
-        self._glow.apply_theme(t)
-        # Coalescing timer for the occlusion re-sync — see
-        # _queue_occluder_sync. Interval 0 = "next event-loop turn", which
-        # is after Qt has finished the layout pass that moved the cards.
-        self._occluder_sync = QTimer(self)
-        self._occluder_sync.setSingleShot(True)
-        self._occluder_sync.setInterval(0)
-        self._occluder_sync.timeout.connect(self._sync_ambient_occluders)
+        # There used to be an AMBIENT FIELD widget stacked behind
+        # everything here — five drifting aurora orbs and 126 twinkling
+        # depth-tiered stars, with a raster renderer, an OpenGL 3.3
+        # renderer, a capability probe to choose between them, a frame
+        # governor, a deferral mechanism and an occlusion system to keep
+        # the cost survivable. v10.5 froze it; v10.6 deletes it, because a
+        # still field is a picture, and the picture it drew was noise over
+        # a gradient the shell was already painting underneath it.
+        #
+        # What went with it is the point: an entire occlusion subsystem
+        # (_queue_occluder_sync, _sync_ambient_occluders, _viewport_clip,
+        # GlassCard.opaque_core, theme.is_opaque, theme.opaque_core)
+        # existed ONLY to stop the field repainting pixels nobody could
+        # see. With nothing behind the cards to repaint, every one of
+        # them was answering a question that is no longer asked, so all
+        # of it is gone too.
 
         root = QVBoxLayout(self._shell)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1767,8 +1765,6 @@ class PulseApp(QMainWindow):
             page.task_requested.connect(self.request_task)
             self.pages.append(page)
             self.stack.addWidget(page)
-            self._track_occluders(page)
-        self._track_occluders(self.welcome)
         content.addWidget(self.stack, 1)
 
         # -- Activity drawer (v7): auto-collapsing live output ----
@@ -1823,11 +1819,6 @@ class PulseApp(QMainWindow):
         self.setPalette(pal)
         self.setAutoFillBackground(True)
         self._shell.setStyleSheet(TH.shell_qss(t))
-        self._glow.apply_theme(t)
-        # Which surfaces are opaque is a per-theme fact — GlassCard.opaque_core
-        # asks theme.is_opaque of the NEW token set — so the cull list has to
-        # be re-derived, not carried over.
-        self._queue_occluder_sync()
         self._sidebar.setStyleSheet(TH.sidebar_qss(t))
         self._content.setStyleSheet(TH.content_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
@@ -1905,9 +1896,7 @@ class PulseApp(QMainWindow):
             # buffer (~13.8 ms a frame against ~10.0 plain). Keeping the
             # ambient wash out of that window is the difference between a
             # smooth 150 ms fade and a fade that drops frames.
-            self._glow.defer(PAGE_FADE_MS)
             self.stack.setCurrentIndex(0)
-            self._queue_occluder_sync()
             self.fader.fade_in(self.welcome, rise_px=10)
 
     def open_category(self, index: int):
@@ -1938,22 +1927,12 @@ class PulseApp(QMainWindow):
         # top of the switch's own repaint is a visible hitch — see
         # AmbientGlow.defer. Covers the instant path too: that still
         # repaints the entire content column.
-        self._glow.defer(PAGE_FADE_MS)
         self.stack.setCurrentIndex(index + 1)
-        self._queue_occluder_sync()
         if index in self._revealed:
             return
         self._revealed.add(index)
-        self._glow.defer(CASCADE_BUDGET_MS + CASCADE_MS)
         # let the layout place the cards, then run the staggered entrance
         QTimer.singleShot(0, lambda p=page: self.cascade.play(*p.entrance_waves()))
-        # ...and re-sync once it has settled. Cards fade and rise during the
-        # entrance, so mid-cascade they are neither opaque nor where they
-        # will end up. The defer above keeps the wash from painting across
-        # that window at all; this is what puts the occluders back in step
-        # with the cards the moment it reopens.
-        QTimer.singleShot(CASCADE_BUDGET_MS + CASCADE_MS,
-                          self._queue_occluder_sync)
 
     def _select_nav(self, index: int | None):
         for i, btn in enumerate(self._nav_buttons):
@@ -2980,8 +2959,6 @@ class PulseApp(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._glow.setGeometry(self._shell.rect())
-        self._queue_occluder_sync()
         self.toasts.reposition()
         # EVERY open sheet, not just the top one, and not via
         # QApplication.activeModalWidget(). Pulse sheets are deliberately
@@ -2997,87 +2974,6 @@ class PulseApp(QMainWindow):
     #  AMBIENT OCCLUSION — tell the wash what it is hidden behind
     # ============================================================
     # The ambient field's cost is the full-window repaint an update() forces
-    # through every translucent surface above it (~18.5 ms, of which the
-    # 14-card grid is ~10.9). The cards are opaque in both themes, so that
-    # 10.9 ms repainted fourteen glass surfaces underneath pixels that then
-    # completely covered them. Reporting their geometry lets the glow drop
-    # those rects from its dirty region — see AmbientGlow.set_occluders.
-    #
-    # THE SHELL OWNS THIS, NOT THE GLOW, because it is the only thing that
-    # knows what is currently on screen: which page is raised, which cards a
-    # filter left visible, where the scroll sits. The glow is deliberately
-    # ignorant of all of it and simply subtracts what it is handed.
-    def _track_occluders(self, page: QWidget):
-        """Re-sync whenever `page` moves its cards under the wash.
-
-        TWO SIGNALS, AND BOTH ARE NEEDED. `valueChanged` covers scrolling —
-        the cards move, the viewport does not. `rangeChanged` covers
-        everything that changes how much there is to scroll: a column-count
-        relayout, a status filter hiding rows, the drawer opening and
-        shortening the viewport. Between them there is no way to move a card
-        without one of them firing, which is what keeps the cull list from
-        needing a subscription to every future layout feature.
-        """
-        scroll = getattr(page, "_scroll", None)
-        if scroll is None:
-            return
-        bar = scroll.verticalScrollBar()
-        bar.valueChanged.connect(lambda _v: self._queue_occluder_sync())
-        bar.rangeChanged.connect(lambda _lo, _hi: self._queue_occluder_sync())
-
-    def _queue_occluder_sync(self):
-        """Coalesce a re-sync onto the next event-loop turn.
-
-        Everything that moves a card fires several times in a row — a
-        drag-resize per step, a relayout per column change, a filter per
-        keystroke — and each would otherwise walk the widget tree. One
-        restartable timer collapses a burst into a single walk, the same
-        pattern CategoryPage._remeasure uses for the same reason.
-        """
-        self._occluder_sync.start()
-
-    def _sync_ambient_occluders(self):
-        page = self.stack.currentWidget()
-        rects: list[QRect] = []
-        if page is not None:
-            t = self.theme.t
-            glow = self._glow
-            for card in page.findChildren(GlassCard):
-                if not card.isVisible():
-                    continue
-                core = card.opaque_core(t)
-                if core.isNull():
-                    continue
-                # Global coordinates, not mapTo(): the glow is a SIBLING of
-                # the content column, not an ancestor of these cards, so
-                # mapTo() would silently return an unmapped point.
-                origin = glow.mapFromGlobal(card.mapToGlobal(core.topLeft()))
-                rect = QRect(origin, core.size())
-                # A card scrolled past the viewport edge is still
-                # isVisible() — Qt clips it rather than hiding it — so its
-                # geometry extends over content it does not cover. Claiming
-                # that would cull the wash from the header and the page
-                # margins, which is the one failure mode of this mechanism
-                # a user can see.
-                clip = self._viewport_clip(card)
-                if clip is not None:
-                    rect = rect.intersected(clip)
-                if rect.isValid() and not rect.isEmpty():
-                    rects.append(rect)
-        self._glow.set_occluders(rects)
-
-    def _viewport_clip(self, widget: QWidget) -> QRect | None:
-        """The scroll viewport clipping `widget`, in glow coordinates."""
-        node = widget.parentWidget()
-        while node is not None:
-            if isinstance(node, QScrollArea):
-                viewport = node.viewport()
-                origin = self._glow.mapFromGlobal(
-                    viewport.mapToGlobal(viewport.rect().topLeft()))
-                return QRect(origin, viewport.rect().size())
-            node = node.parentWidget()
-        return None
-
     def _sync_window_state(self):
         """Bring every state-dependent visual in line with the window's
         CURRENT normal/maximized/minimized state.
@@ -3086,20 +2982,10 @@ class PulseApp(QMainWindow):
         UI exists: `_init_geometry()` restores a saved geometry during
         __init__, and if that geometry was saved while maximized, Qt
         emits WindowStateChange *before* `_build_ui()` has created
-        `_glow`/`_shell`/`_body`. That event is dropped (see changeEvent's
+        `_shell`/`_body`. That event is dropped (see changeEvent's
         guard), so the restored maximized window would otherwise come up
         wearing the floating look — rounded shell, floating margins,
         DWM-rounded corners."""
-        # Pause the living-background loop while minimized (hideEvent does
-        # NOT fire on minimize, so the ~28fps timer would otherwise keep
-        # running behind an invisible window), and while a drag is in
-        # flight — Aero-snapping with the mouse changes the window state
-        # *inside* the move/size loop, and resuming there would undo the
-        # drag suspension. WM_EXITSIZEMOVE owns the resume in that case.
-        if self.isMinimized() or self._in_size_move:
-            self._glow.suspend()
-        else:
-            self._glow.resume()
         # Maximized = edge-to-edge: the shell drops its floating radius
         # and border (see shell_qss) so corners sit flush with the
         # monitor, exactly like a native maximized Win11 window.
@@ -3114,7 +3000,6 @@ class PulseApp(QMainWindow):
         # rounded clip only ever existed to stop it painting into the
         # translucent window's rounded corner cut-out, and a rounded clip
         # on an opaque window just carves visible notches at the corners.
-        self._glow.set_radius(0)
         # Removing the border/radius alone just relocates the dead
         # space to the body margins instead of the shell edge — they
         # must collapse too, or "flush" still looks like a floating
@@ -3132,7 +3017,7 @@ class PulseApp(QMainWindow):
         super().changeEvent(event)
         # State changes can land before the UI exists — restoreGeometry()
         # inside _init_geometry() re-applies a saved maximized state while
-        # __init__ is still running. Touching _glow/_shell/_body here used
+        # __init__ is still running. Touching _shell/_body here used
         # to raise AttributeError and take the whole app down on launch
         # (i.e. "closed while maximized" = never starts again). __init__
         # calls _sync_window_state() once the widgets exist.
@@ -3542,22 +3427,18 @@ class PulseApp(QMainWindow):
                 titlebar.set_nc_hover(None)
 
             elif msg.message == self._WM_ENTERSIZEMOVE:
-                # The ambient background is a ~28fps full-window repaint.
-                # While Windows runs its modal move/size loop that repaint
-                # competes with the loop on the SAME thread, so the window
-                # visibly lags the cursor: measured p95 latency per move
-                # step 20.45ms against a 5.56ms display frame. The drift is
-                # decorative and nobody can perceive it mid-drag — parking
-                # it for the duration is free smoothness. Not consumed:
-                # DefWindowProc still has to run the loop.
+                # Windows' modal move/size loop is running. The flag used
+                # to park the ambient background's full-window repaint for
+                # the duration (measured p95 move-step latency 20.45ms
+                # against a 5.56ms display frame); with the field deleted
+                # there is nothing left to park, but the flag still records
+                # the state and _sync_window_state still reads it, so an
+                # Aero-snap mid-drag is distinguishable from a real one.
+                # Not consumed: DefWindowProc still has to run the loop.
                 self._in_size_move = True
-                if self._ui_ready:
-                    self._glow.suspend()
 
             elif msg.message == self._WM_EXITSIZEMOVE:
                 self._in_size_move = False
-                if self._ui_ready and not self.isMinimized():
-                    self._glow.resume()
 
         return super().nativeEvent(eventType, message)
 

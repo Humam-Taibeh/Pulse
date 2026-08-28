@@ -75,95 +75,49 @@ def test_maximize_restore_round_trip(floating, qapp):
     assert floating._shell.property("flush") is False
 
 
-def test_minimize_leaves_the_ambient_loop_parked(floating, qapp):
-    """hideEvent does not fire on minimize, so a repainting field would
-    otherwise keep running behind an invisible window.
+class TestSizeMoveTracking:
+    """`_in_size_move` records that Windows' modal move/size loop is running.
 
-    As of v10.5 there is no loop to park (widgets._AmbientSimulation.
-    STATIC), and the assertion is the stronger one for it: the timer is
-    stopped on minimize AND stays stopped on restore. The old test asserted
-    it came BACK, which was the correct contract for an animated wash and
-    is now precisely the regression to catch — a restore that started the
-    timer would put an idle app back to repainting its whole translucent
-    widget stack ten times a second.
-    """
-    floating.showMinimized()
-    settle(qapp, 300)
-    assert not floating._glow._timer.isActive()
-    floating.showNormal()
-    settle(qapp, 400)
-    assert not floating._glow._timer.isActive(), (
-        "restoring the window started the ambient timer — the field is "
-        "meant to be static")
+    THIS CLASS USED TO BE TestSizeMoveParking, and what it parked is gone.
+    The flag existed to suspend the ambient background for the duration of
+    a drag: that background was a full-window repaint competing with the
+    move loop on the same thread, and parking it took mean drag-tracking
+    lag from 3.6px to 0.3px. With the field deleted there is no repaint
+    left to park.
 
-
-class TestSizeMoveParking:
-    """suspend()/resume() around the OS move/size loop.
-
-    The parking took mean drag tracking lag from 3.6px to 0.3px, and it
-    still earns its place with a static field: what it parks now is not a
-    timer but the COMPOSITED ORB LAYER. A drag hands the widget a different
-    size on every step, and rebuilding a full-window pixmap per step is the
-    most expensive thing that could happen mid-drag; while frozen the last
-    good layer is simply stretched, which is visually free on a soft
-    gradient. The rebuild happens once, on thaw, at the final size.
+    The FLAG still earns its place, and that is what is asserted here. It
+    is the only thing that can distinguish an Aero-snap performed inside a
+    drag from a maximize performed outside one, which `_sync_window_state`
+    reads to decide whether a state change is the user's or the loop's.
+    A flag that silently stopped tracking would leave that decision being
+    made on stale information, and nothing else would notice.
     """
 
-    def test_enter_size_move_freezes_the_layer(self, floating):
-        glow = floating._glow
-        floating._in_size_move = True
-        glow.suspend()
-        try:
-            assert glow._frozen is True
-            assert not glow._timer.isActive()
-        finally:
-            floating._in_size_move = False
-            glow.resume()
+    def test_the_flag_is_clear_on_a_settled_window(self, floating):
+        assert floating._in_size_move is False
 
-    def test_a_frozen_layer_is_stretched_rather_than_rebuilt(self, floating, qapp):
-        glow = floating._glow
-        glow.repaint()
-        original = glow._layer
-        assert original is not None
+    def test_a_state_sync_mid_drag_leaves_the_flag_set(self, floating):
+        """Aero-snapping changes window state INSIDE the move loop, so
+        _sync_window_state runs while the drag is still in flight. It must
+        observe the drag rather than clear it."""
         floating._in_size_move = True
-        glow.suspend()
-        try:
-            floating.resize(1180, 800)
-            glow.repaint()
-            assert glow._layer is original, (
-                "the orb layer was re-rasterised mid-drag — a full-window "
-                "pixmap per drag step is exactly what parking prevents")
-        finally:
-            floating._in_size_move = False
-            glow.resume()
-            settle(qapp, 120)
-
-    def test_state_change_mid_drag_does_not_unpark(self, floating):
-        """Aero-snapping changes window state INSIDE the move loop; if
-        _sync_window_state resumed there it would undo the parking."""
-        glow = floating._glow
-        floating._in_size_move = True
-        glow.suspend()
         try:
             floating._sync_window_state()
-            assert glow._frozen is True
-            assert not glow._timer.isActive()
+            assert floating._in_size_move is True
         finally:
             floating._in_size_move = False
-            glow.resume()
 
-    def test_exit_size_move_rebuilds_once_at_the_final_size(self, floating, qapp):
-        glow = floating._glow
+    def test_the_window_survives_a_full_enter_exit_cycle(self, floating, qapp):
+        """The handlers are two lines each now; this is the guard that
+        they still leave the window in a coherent state rather than that
+        they park anything."""
         floating._in_size_move = True
-        glow.suspend()
+        floating._sync_window_state()
         floating._in_size_move = False
-        glow.resume()
-        assert glow._frozen is False
-        assert glow._layer is None, "thaw did not drop the stretched layer"
-        assert not glow._timer.isActive(), "resume() started the frozen timer"
-        glow.repaint()
-        settle(qapp, 60)
-        assert glow._layer_size == (glow.width(), glow.height())
+        floating._sync_window_state()
+        settle(qapp, 120)
+        assert floating._in_size_move is False
+        assert floating.isVisible()
 
 
 def test_minimum_size_respects_the_layout_floor(window):

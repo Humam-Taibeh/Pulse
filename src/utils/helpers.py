@@ -51,6 +51,43 @@ from frontend import theme as TH
 # ============================================================
 #  TASK RESULT
 # ============================================================
+def safe_emit(signal, *args) -> bool:
+    """Emit `signal`, tolerating a source object that is already deleted.
+
+    WHY THIS EXISTS: EMITTING INTO A DELETED OBJECT ABORTS THE PROCESS.
+
+    A worker's run() executes on its own thread. The owner that created it
+    lives on the GUI thread and can be destroyed while that run() is still
+    unwinding: PulseDialog.done() settles worker threads precisely to stop
+    that, but the settle has a deadline (_WORKER_WAIT_MS), and two of the
+    worker dialogs deliberately let a mutation finish rather than kill it.
+    Past that deadline the C++ QObject is gone while the Python frame is
+    still running.
+
+    `self.finished.emit(...)` then raises RuntimeError("Signal source has
+    been deleted"). That exception is on a NON-MAIN thread, inside a slot
+    PySide6 invoked, so it has nowhere to go: PySide6 treats an unhandled
+    exception in a slot as fatal, and the process dies with 0xC0000409
+    (STATUS_STACK_BUFFER_OVERRUN) - no traceback, no Qt warning, and a
+    test session whose every assertion passed exits non-zero with its
+    summary line missing. That is not a hypothetical: it is how this was
+    found, first on a CI runner and then reproducibly once deleting the
+    ambient field removed ~150-360ms of deferral from each page
+    transition and let dialogs be destroyed sooner.
+
+    Swallowing the RuntimeError is correct rather than merely convenient.
+    A signal has exactly one purpose - to tell an owner something - and
+    the owner is gone. There is nobody left to inform and nothing left to
+    do. Returns False when the emit was dropped, so a caller that wants to
+    stop early can.
+    """
+    try:
+        signal.emit(*args)
+        return True
+    except RuntimeError:
+        return False          # C++ side already destroyed; see above.
+
+
 @dataclass
 class TaskResult:
     success: bool
@@ -700,11 +737,11 @@ class PowerShellTask(QObject):
                 """
                 if text.startswith(VERDICT_ITEM_PREFIX):
                     try:
-                        self.item.emit(json.loads(text[len(VERDICT_ITEM_PREFIX):]))
+                        safe_emit(self.item, json.loads(text[len(VERDICT_ITEM_PREFIX):]))
                     except ValueError:
                         pass
                 elif text.startswith(VERDICT_STAGE_PREFIX):
-                    self.stage.emit(text[len(VERDICT_STAGE_PREFIX):])
+                    safe_emit(self.stage, text[len(VERDICT_STAGE_PREFIX):])
 
             def _apply(text: str, replace: bool):
                 if replace and lines:
@@ -721,7 +758,7 @@ class PowerShellTask(QObject):
                     # console.
                     shown = (text[len(VERDICT_SENTINEL):]
                              if text.startswith(VERDICT_SENTINEL) else text)
-                    self.output.emit(shown, replace)
+                    safe_emit(self.output, shown, replace)
 
             while True:
                 chunk = process.stdout.read1(4096)   # blocks until data or EOF
@@ -753,10 +790,10 @@ class PowerShellTask(QObject):
             # Terminal verdict - exactly one signal per task, in priority
             # order: user cancel > watchdog timeout > backend contract line.
             if self._cancel_evt.is_set():
-                self.cancelled.emit()
+                safe_emit(self.cancelled)
                 return
             if timed_out.is_set():
-                self.failed.emit(f"Task timed out after {self.timeout}s.")
+                safe_emit(self.failed, f"Task timed out after {self.timeout}s.")
                 return
 
             # Contract with core.ps1 (v6.1): the verdict is the newest line
@@ -807,26 +844,26 @@ class PowerShellTask(QObject):
 
             if last_line.startswith("SUCCESS"):
                 msg = last_line.split("|", 1)[1].strip() if "|" in last_line else "Task completed."
-                self.finished.emit(TaskResult(True, msg, data, meta))
+                safe_emit(self.finished, TaskResult(True, msg, data, meta))
             elif last_line.startswith("ERROR"):
                 msg = last_line.split("|", 1)[1].strip() if "|" in last_line else "Task failed."
-                self.finished.emit(TaskResult(False, msg, data, meta))
+                safe_emit(self.finished, TaskResult(False, msg, data, meta))
             else:
                 # Backend didn't follow the SUCCESS|/ERROR| contract. Don't dump the
                 # raw console output into the "silent executor" UI - just report a
                 # short, safe fallback message.
-                self.finished.emit(TaskResult(
+                safe_emit(self.finished, TaskResult(
                     False, "Script finished without a recognized status line.", None, meta))
 
         except UnsafeArgument as exc:
             # Refused before spawning anything — the message names the value
             # so the user can see which pick was rejected, rather than
             # getting a task that silently did the wrong thing.
-            self.failed.emit(str(exc))
+            safe_emit(self.failed, str(exc))
         except FileNotFoundError:
-            self.failed.emit("powershell.exe was not found on this system.")
+            safe_emit(self.failed, "powershell.exe was not found on this system.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, never swallowed
-            self.failed.emit(str(exc))
+            safe_emit(self.failed, str(exc))
         finally:
             if timeout_timer is not None:
                 timeout_timer.cancel()
@@ -869,7 +906,7 @@ class SelfUpdateCheckWorker(QObject):
 
     def run(self):
         from utils import updater
-        self.finished.emit(updater.check(self._current, self._channel))
+        safe_emit(self.finished, updater.check(self._current, self._channel))
 
 
 class SelfUpdateInstallWorker(QObject):
@@ -897,14 +934,15 @@ class SelfUpdateInstallWorker(QObject):
         try:
             path = updater.download(
                 self._update,
-                progress=lambda received, total: self.progress.emit(received, total),
+                progress=lambda received, total: safe_emit(
+                    self.progress, received, total),
                 cancel=self._cancel_evt.is_set)
-            self.verifying.emit()
+            safe_emit(self.verifying)
             updater.verify(path, self._update)
         except updater.UpdateError as exc:
-            self.finished.emit(False, str(exc))
+            safe_emit(self.finished, False, str(exc))
             return
-        self.finished.emit(True, path)
+        safe_emit(self.finished, True, path)
 
 
 # ============================================================

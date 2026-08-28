@@ -916,6 +916,52 @@ class TestThemes:
                 assert isinstance(value, str) and value.startswith("#"), (
                     f"accent {accent!r} did not resolve in {name}: {value!r}")
 
+    def test_the_canvas_is_the_specified_obsidian_ramp(self, qapp):
+        """v10.6: the two-stop gradient IS the background.
+
+        The ambient field that used to sit on top of it — five drifting
+        aurora orbs and 126 twinkling stars, two renderers, a capability
+        probe, a frame governor and an occlusion system to afford them —
+        is deleted. Nothing paints over this any more, so the ramp is the
+        whole visual identity of the canvas and its two ends are worth
+        pinning: #101216 lifting to #090A0B, neutral (r≈g≈b) so it cannot
+        drift back toward the blue cast the obsidian pass removed, and
+        landing exactly on bg_solid at the bottom so the shell, the
+        window's palette brush and the canvas agree where they meet.
+        """
+        from frontend import theme as TH
+
+        dark = self._themes(qapp)["dark"]
+        assert dark["bg_grad_top"].lower() == "#101216"
+        assert dark["bg_grad_bottom"].lower() == "#090a0b"
+        assert dark["bg_grad_bottom"].lower() == dark["bg_solid"].lower(), (
+            "the ramp's base no longer matches bg_solid — the window's own "
+            "palette brush would show a seam against the shell mid-resize")
+        for key in ("bg_grad_top", "bg_grad_bottom"):
+            r, g, b = TH._hex_to_rgb(dark[key])
+            assert max(r, g, b) - min(r, g, b) <= 6, (
+                f"dark.{key} = {dark[key]} has a colour cast; the canvas is "
+                "meant to be neutral obsidian")
+
+    def test_the_ambient_field_is_gone(self, qapp):
+        """The purge, asserted at the seams rather than by reading the
+        diff. Every one of these existed only to make a moving background
+        affordable, and a re-added one would be re-adding the background.
+        """
+        from frontend import theme as TH
+        from frontend import widgets as W
+        from frontend.main import PulseApp
+
+        for name in ("AmbientGlow", "_AmbientSimulation"):
+            assert not hasattr(W, name), f"widgets.{name} is back"
+        for name in ("is_opaque", "opaque_core"):
+            assert not hasattr(TH, name), f"theme.{name} is back"
+        for name in ("_sync_ambient_occluders", "_queue_occluder_sync",
+                     "_track_occluders", "_viewport_clip"):
+            assert not hasattr(PulseApp, name), f"PulseApp.{name} is back"
+        assert not os.path.exists(
+            os.path.join(_ROOT, "src", "frontend", "ambient_gl.py"))
+
     def test_opaque_canvas_tokens_are_solid_hex(self, qapp):
         """The shell gradient must stay fully opaque — an rgba() here
         would punch translucency straight back through the window."""

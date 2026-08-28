@@ -264,24 +264,39 @@ def test_the_resting_strength_is_a_theme_value_not_a_shared_constant():
 # ============================================================
 #  3. ICON PLAQUES — REFINED WITHOUT SPENDING CONTRAST
 # ============================================================
-def test_the_plaque_halo_cannot_reach_inside_the_well():
-    """THE PROPERTY THAT LET THE HALO SHIP.
+def test_the_icon_well_is_one_neutral_surface_everywhere():
+    """v10.6 REPLACED THE PLAQUE MATERIAL WITH A SURFACE.
 
-    The in-plaque contrast solve (see theme.icon_plaque_qss) is what keeps
-    every module glyph legible in its own well, and it is solved against
-    the well's tint ALONE. A halo that bled inward would change the
-    surface under the glyph and invalidate the whole table silently — no
-    error, just seven module colours quietly sitting below their floor.
+    This test used to pin the halo's arithmetic: the well was washed in its
+    module's accent, an ambient halo was painted OUTWARD into reserved
+    padding, and the whole in-plaque contrast solve depended on that halo
+    never bleeding inward and changing the surface under the glyph.
 
-    The halo is therefore painted outward into reserved padding, and this
-    pins the arithmetic that keeps it there.
+    There is no halo now, and no accent wash. Six accents across fourteen
+    cards was six competing hues on one screen, each already stated by the
+    glyph sitting in the well — so the well became a single low-alpha
+    NEUTRAL and the colour stayed on the glyph, where it is not repeated.
+
+    What is worth pinning is what replaced it: one token, used by both
+    painters, at a weight low enough to stay a surface rather than become
+    a chip. If these drift apart the sidebar and the card grid stop being
+    the same object at two scales, which is the whole reason PLAQUE_SIZE
+    exists.
     """
+    from frontend.widgets import IconPlaque, NavButton
+
     for mode in ("dark", "light"):
-        _alpha, spread = TH.plaque_halo(TH.tokens(mode))
-        assert spread <= IconPlaque._PAD, (
-            f"{mode} plaque halo spreads {spread}px into {IconPlaque._PAD}px "
-            "of reserved padding — it will be clipped, or worse, tuned "
-            "inward until it isn't")
+        t = TH.tokens(mode)
+        well = TH.to_qcolor(t["plaque_well"])
+        assert 0.02 <= well.alphaF() <= 0.08, (
+            f"{mode} icon well is at {well.alphaF():.3f} — outside the "
+            "weight at which it reads as a surface rather than a chip")
+    # Dark lightens, light darkens: white on porcelain is invisible.
+    assert TH.to_qcolor(TH.tokens("dark")["plaque_well"]).red() == 255
+    assert TH.to_qcolor(TH.tokens("light")["plaque_well"]).red() == 0
+    # No padding is reserved any more — the widget IS the well.
+    assert IconPlaque._PAD == 0
+    assert NavButton._PLAQUE == TH.PLAQUE_SIZE
 
 
 def test_the_plaque_tints_are_the_ones_that_were_solved():

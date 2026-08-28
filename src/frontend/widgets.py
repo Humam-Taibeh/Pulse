@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import math
 import os
-import random
 import sys
 import time
 from pathlib import Path
@@ -28,7 +27,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QImage,
     QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
-    QRegion, QTextCursor, QTextLayout, QTextOption,
+    QTextCursor, QTextLayout, QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -650,21 +649,41 @@ class PulseDialog(QDialog):
 # CommandPalette, OfficeWizardDialog, ToolInstallWizardDialog) keep their
 # own narrower, purpose-built FIXED widths — a two-sentence confirm scaling
 # to 1100px on a 4K screen would trade clutter for empty space, not fix it.
-_SELECTOR_WIDTH_FRACTION = 0.675   # ~65-70% of host width
-_SELECTOR_WIDTH_MIN = 800
-_SELECTOR_WIDTH_MAX = 1280
-_SELECTOR_HEIGHT_FRACTION = 0.775  # ~75-80% of host height
-_SELECTOR_HEIGHT_MIN = 460
-#: HEIGHT NEEDS A CEILING FOR THE SAME REASON WIDTH ALWAYS HAD ONE, and it
-#: was missing. The width band stops a panel going pocket-sized or ultrawide;
-#: height was an unbounded fraction, so on a 2160px-tall display the same
-#: dialog opened 1674px tall — a list of eight rows and a button bar,
-#: stretched down a panel two-thirds of which is empty. That is the
-#: "massive dead space when maximized" complaint in its purest form, and it
-#: only appears on the displays nobody develops on. 900 is the height at
-#: which the tallest responsive dialog (the Startup Manager) shows its full
-#: list without scrolling; past that a panel is only buying margin.
-_SELECTOR_HEIGHT_MAX = 900
+#: THE SELECTOR BAND — a scrolling list of rows (Software Catalog, Update
+#: Center, Startup Manager, the read-only inspectors).
+#:
+#: v10.6 NARROWS IT TO 760-840 AND STOPS FIXING ITS HEIGHT, and the second
+#: half is the one that fixes the defect. The band used to hand every
+#: selector a FIXED height between 460 and 900 derived from the window, on
+#: the theory that a list wants a stable viewport. What that produced, on a
+#: dialog whose list is short, is the screenshot this pass exists to
+#: delete: the Update Center holding ONE update row above ~500px of empty
+#: black, and the DNS panel holding ONE adapter card above the same.
+#:
+#: A stable viewport is worth having when there is enough content to fill
+#: it and worthless when there is not, so the height is now the content's,
+#: capped. A list of thirty rows still gets a full-height panel and scrolls
+#: inside it; a list of one gets a dialog the size of one row.
+#:
+#: WIDTH COMES DOWN 800-1280 -> 760-840 for the reason the action band is
+#: 580-640: past ~840 a row's text runs well beyond the measure at which
+#: prose stays readable, and a two-column row (name on the left, version
+#: chips on the right) turns into two things separated by a void.
+_SELECTOR_WIDTH_FRACTION = 0.55
+_SELECTOR_WIDTH_MIN = 760
+_SELECTOR_WIDTH_MAX = 840
+
+#: The tallest a selector may grow before its list starts scrolling inside
+#: it. A fraction of the host BODY, so the dialog can never outgrow the
+#: window it opens in, and never so tall that a full panel has nowhere to
+#: put its footer.
+_SELECTOR_HEIGHT_FRACTION = 0.775
+
+#: ...and the floor, which exists for the OPPOSITE reason to the old fixed
+#: height: a dialog that is still loading has no content to hug yet, and
+#: one that collapsed to a 90px sliver while its scan ran and then jumped
+#: to full height would be worse than either size on its own.
+_SELECTOR_HEIGHT_MIN = 180
 
 # ------------------------------------------------------------------
 #  THE ACTION BAND (v10.5) — the second, deliberately narrow geometry
@@ -744,31 +763,41 @@ def _content_width_floor(dialog: QDialog) -> int:
     return layout.minimumSize().width() if layout is not None else 0
 
 
-def _selector_panel_size(dialog: QDialog) -> tuple[int, int]:
-    """(width, height) for a responsive selector panel, derived from the
-    host window's CURRENT size — called once at construction and again on
-    every host resize (refit_dialog), so an already-open dialog visibly
-    grows/shrinks along with the window instead of freezing at whatever
-    size the window happened to be when it was opened.
+def _selector_panel_width(dialog: QDialog) -> int:
+    """Width for a selector panel, derived from the host window's CURRENT
+    size — read at construction and again on every host resize
+    (refit_dialog), so an open dialog tracks the window rather than
+    freezing at its opening size.
 
-    The content floor wins over BOTH ends of the band: over the minimum for
-    the reason in _content_width_floor, and over the maximum because a
-    ceiling that clipped content would be choosing empty margins over
-    legibility.
+    THE CONTENT FLOOR STILL WINS OVER THE CEILING, and that is deliberate
+    rather than an oversight in the band. A responsive panel is given a
+    fixed width, so nothing about it yields to the layout inside it: when
+    the band's ceiling lands under what the content actually needs, Qt
+    resolves the conflict by shrinking widgets below their minimums and
+    the dialog ships with elided labels and clipped rows. A ceiling that
+    clipped content would be choosing empty margins over legibility, which
+    is the same trade this whole pass is undoing in the other direction.
 
-    BOTH dimensions are banded. Height used to be a bare fraction with only
-    a floor, which is fine up to about 1440p and turns into a half-empty
-    2/3-screen panel on a 4K display — see _SELECTOR_HEIGHT_MAX."""
+    In practice one dialog exercises it: the Startup Manager's rows carry a
+    name, two badges and a switch, and report a minimum wider than the
+    band's 840. It opens at that minimum; every other selector sits inside
+    the band.
+    """
     floor = max(_SELECTOR_WIDTH_MIN, _content_width_floor(dialog))
     host = _resolve_host_window(dialog)
     if host is None:
-        return (floor, _SELECTOR_HEIGHT_MIN)
-    width = max(floor,
-                min(_SELECTOR_WIDTH_MAX, round(host.width() * _SELECTOR_WIDTH_FRACTION)))
-    height = max(_SELECTOR_HEIGHT_MIN,
-                 min(_SELECTOR_HEIGHT_MAX,
-                     round(host.height() * _SELECTOR_HEIGHT_FRACTION)))
-    return (width, height)
+        return floor
+    return max(floor, min(_SELECTOR_WIDTH_MAX,
+                          round(host.width() * _SELECTOR_WIDTH_FRACTION)))
+
+
+def _selector_panel_height_cap(dialog: QDialog) -> int:
+    """The tallest a selector may grow before its list scrolls inside it."""
+    host = _resolve_host_window(dialog)
+    if host is None:
+        return _SELECTOR_HEIGHT_MIN * 2
+    return max(_SELECTOR_HEIGHT_MIN,
+               round(host.height() * _SELECTOR_HEIGHT_FRACTION))
 
 
 def _action_panel_width(dialog: QDialog) -> int:
@@ -822,7 +851,14 @@ def _apply_panel_size(dialog: QDialog):
                 max(TH.SPACE["xxl"] * 4,
                     round(host.height() * _ACTION_HEIGHT_FRACTION)))
     else:
-        panel.setFixedSize(*_selector_panel_size(dialog))
+        # BOTH BANDS HUG THEIR CONTENT NOW. The width is fixed (a list wants
+        # a stable column); the height is a MINIMUM plus a cap, so the
+        # panel's own layout decides where between them it lands. A
+        # one-row Update Center is one row tall; a thirty-row catalog fills
+        # the cap and scrolls inside it. See the note on the band.
+        panel.setFixedWidth(_selector_panel_width(dialog))
+        panel.setMinimumHeight(_SELECTOR_HEIGHT_MIN)
+        panel.setMaximumHeight(_selector_panel_height_cap(dialog))
 
 
 #: Height of a pill in a _chip_strip, and of every control that has to
@@ -982,6 +1018,169 @@ def dialog_body(panel: "DepthCard", spacing: str = "md") -> QVBoxLayout:
                            TH.SPACE["xl"], TH.SPACE["lg"])
     lay.setSpacing(TH.SPACE[spacing])
     return lay
+
+
+class FitScroll(QScrollArea):
+    """A scroll area that reports the height its CONTENT wants, capped.
+
+    A plain QScrollArea reports a fixed, content-independent size hint —
+    it is a viewport onto something arbitrarily large, so it has no opinion
+    about how tall it should be. That is exactly right when the thing
+    holding it has a fixed height to give, and exactly wrong when the
+    dialog is trying to hug what is inside: every selector became as tall
+    as its band allowed, whether it held thirty rows or one, which is the
+    "huge empty black area" this class exists to remove.
+
+    Forwarding the inner widget's hint makes the dialog's own layout able
+    to see the content, so a one-row list produces a one-row-tall dialog.
+    The cap is what keeps that from inverting the problem: past it the
+    hint stops growing and the area goes back to being a viewport, which is
+    the correct behaviour for a list that genuinely is long.
+
+    `refresh()` must be called when rows are added or removed. Qt caches a
+    child's size hint until something invalidates it, and a list that
+    streams rows in (the Update Center's scan) changes height without any
+    of the events that would do so on its own.
+    """
+
+    #: Sanity bound on the reported hint. The PANEL is what actually caps
+    #: a selector's height (_apply_panel_size sets its maximumHeight, and
+    #: minimumSizeHint below returns 0 so this area yields to it); this
+    #: only stops a pathological list producing an absurd hint on the way
+    #: to being clamped.
+    HINT_CEILING = 4000
+
+    def __init__(self, parent: QWidget | None = None,
+                 max_height: int | None = None):
+        super().__init__(parent)
+        self._max_height = self.HINT_CEILING if max_height is None else max_height
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Preferred)
+
+    def set_max_height(self, height: int):
+        if height != self._max_height:
+            self._max_height = height
+            self.updateGeometry()
+
+    def setWidget(self, widget):    # noqa: N802 - Qt casing
+        """Adopt `widget` AND subscribe to its layout changes.
+
+        The subscription is the whole reason this is overridden. Qt caches
+        a child's size hint and only re-asks when something invalidates it,
+        and a QScrollArea deliberately does not propagate its content's
+        hint at all — so a list that gains rows after construction (the
+        Update Center streams them in as the scan finds them, the catalog's
+        filter hides and shows them) kept reporting the height it had when
+        it was empty. Measured before this: a 30-row Update Center produced
+        exactly the same panel height as a 1-row one.
+
+        Watching for LayoutRequest catches every one of those paths without
+        any of them having to remember to call refresh() — which is the
+        same reason PulseApp used to watch scrollbar ranges rather than
+        subscribing to each feature that might move a card.
+        """
+        super().setWidget(widget)
+        if widget is not None:
+            widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):   # noqa: N802 - Qt casing
+        if (obj is self.widget()
+                and event.type() == QEvent.Type.LayoutRequest):
+            self.updateGeometry()
+        return super().eventFilter(obj, event)
+
+    def refresh(self):
+        """Re-ask the content how tall it is.
+
+        Rarely needed — setWidget subscribes to the content's layout
+        requests — but a caller that changes a hint WITHOUT a relayout
+        (setFixedHeight on a child, say) has no other way to say so.
+        """
+        inner = self.widget()
+        if inner is not None:
+            inner.adjustSize()
+        self.updateGeometry()
+
+    def _content_height(self) -> int:
+        inner = self.widget()
+        if inner is None:
+            return 0
+        layout = inner.layout()
+        hint = layout.sizeHint().height() if layout is not None else \
+            inner.sizeHint().height()
+        return hint + 2 * self.frameWidth()
+
+    def sizeHint(self):            # noqa: N802 - Qt casing
+        hint = super().sizeHint()
+        hint.setHeight(max(0, min(self._content_height(), self._max_height)))
+        return hint
+
+    def minimumSizeHint(self):     # noqa: N802 - Qt casing
+        """Zero height, so the area is free to be squeezed by a panel that
+        has hit its own cap. Without it the content's hint becomes a FLOOR
+        the dialog must honour, and a long list would push the panel past
+        the window instead of scrolling."""
+        hint = super().minimumSizeHint()
+        hint.setHeight(0)
+        return hint
+
+
+def fit_stack(stack: QStackedWidget) -> QStackedWidget:
+    """Make a page stack report the CURRENT page's height, not the tallest.
+
+    QStackedLayout's size hint is the maximum over every page, because all
+    of them keep their geometry so a switch costs no relayout. In a dialog
+    that hugs its content that is a permanent tax paid by the shortest
+    page: the Update Center's results page holding ONE row still reserved
+    the height of its empty-state page (a hero-sized glyph, a centred
+    sentence and two stretches), which is ~90px of black under a single
+    row and exactly the defect the hugging band was added to remove.
+
+    The fix is the standard one: every page except the current is given an
+    IGNORED vertical policy, so it contributes nothing to the hint, and the
+    stack re-adjusts whenever the current page changes. Pages still keep
+    their geometry, so switching is still free.
+
+    Returns the stack, so it can be used inline.
+    """
+    def follow(_index: int = 0):
+        current = stack.currentWidget()
+        for i in range(stack.count()):
+            page = stack.widget(i)
+            page.setSizePolicy(
+                QSizePolicy.Policy.Preferred,
+                QSizePolicy.Policy.Preferred if page is current
+                else QSizePolicy.Policy.Ignored)
+        if current is not None:
+            current.adjustSize()
+        stack.adjustSize()
+        stack.updateGeometry()
+
+    stack.currentChanged.connect(follow)
+    follow()
+    return stack
+
+
+def row_padding(layout) -> None:
+    """The ONE inset every list row uses: 12px vertical, 16px horizontal.
+
+    Five row types carry it — the software catalog's, the Update Center's,
+    the Startup Manager's, a hub's ActionRow and a playbook's step row —
+    and three of them had already converged on it independently while the
+    other two had not: the action row ran 16/12/12/12 (an optical
+    correction for the button at its right edge, which is a real effect and
+    not worth a second padding rule for), and the step row ran 12/8/12/8.
+
+    Stated once so a sixth row type inherits it instead of picking. The
+    vertical step is `md` and the horizontal `lg` because a row is wider
+    than it is tall and equal insets read as vertically loose — the same
+    reason a card, which is nearly square, uses equal ones.
+    """
+    layout.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
+                              TH.SPACE["lg"], TH.SPACE["md"])
 
 
 def dialog_footer(lay: QVBoxLayout, *buttons: QPushButton) -> QHBoxLayout:
@@ -1370,8 +1569,7 @@ class NavButton(QPushButton):
         self._accent = QColor(TH.resolve_accent(t, accent_key))
         self._accent2 = QColor(t["accent2"])
         self._icon_font: QFont | None = None
-        self._halo: tuple[float, int] = (0.13, 3)
-        self._inner = 0.20
+        self._well = QColor(255, 255, 255, 10)
         self._light = False
         self.apply_theme(t)
 
@@ -1387,17 +1585,12 @@ class NavButton(QPushButton):
         self._accent2 = QColor(t["accent2"])
         self._glyph_char, self._glyph_fluent = TH.glyph(self._glyph_key)
         self._icon_font = TH.icon_font(TH.ICON["plaque"]) if self._glyph_fluent else None
-        self._plaque_fill = QColor(self._accent)
-        self._plaque_fill.setAlphaF(0.12)
-        self._plaque_line = QColor(self._accent)
-        self._plaque_line.setAlphaF(0.30)
         # v9 "Spectrum": the idle glyph carries its own module accent (was a
         # monochrome text_soft), so all six modules read as a colored rail at
         # rest — matching the newly-colored GlassCard plaques (icon_plaque_qss).
         self._glyph_color_idle = QColor(self._accent)
-        # v13 plaque material, shared with widgets.IconPlaque
-        self._halo = TH.plaque_halo(t)
-        self._inner = TH.plaque_inner(t)
+        # the plaque well, shared with widgets.IconPlaque
+        self._well = TH.to_qcolor(t["plaque_well"])
         self._light = t["name"] == "light"
 
     def set_selected(self, on: bool):
@@ -1427,48 +1620,26 @@ class NavButton(QPushButton):
         selected = bool(self.property("selected"))
         y = (self.height() - self._PLAQUE) / 2.0
         box = QRectF(self._PLAQUE_X, y, self._PLAQUE, self._PLAQUE)
-        radius = float(TH.RADIUS["plaque"])
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # ambient halo — brighter under the selected module, which is the
-        # rail's only "this one is live" cue besides the indicator bar
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        halo_alpha, halo_spread = self._halo
-        halo_alpha *= 1.45 if selected else 1.0
-        for i in range(halo_spread):
-            step = i + 1
-            a = halo_alpha * (1.0 - i / float(halo_spread)) ** 2.0
-            if a <= 0.004:
-                break
-            glow = QColor(self._accent)
-            glow.setAlphaF(min(1.0, a))
-            p.setPen(QPen(glow, 1.0))
-            p.drawRoundedRect(box.adjusted(-step, -step, step, step),
-                              radius + step, radius + step)
-
-        # brighter fill/glyph when selected — the plaque lights with the module
-        fill = QColor(self._accent)
-        fill.setAlphaF(0.20 if selected else 0.12)
-        line = QColor(self._accent)
-        line.setAlphaF(0.45 if selected else 0.30)
-        p.setPen(QPen(line, 1.0))
-        p.setBrush(fill)
-        p.drawRoundedRect(box, radius, radius)
-
-        # lit inner rim — see theme.PLAQUE_INNER
-        inner = box.adjusted(1.5, 1.5, -1.5, -1.5)
-        if inner.width() > 2 and inner.height() > 2:
-            rim = QColor(self._accent) if self._light else QColor(255, 255, 255)
-            top = QColor(rim)
-            top.setAlphaF(self._inner)
-            bottom = QColor(rim)
-            bottom.setAlphaF(0.0)
-            rim_grad = QLinearGradient(inner.topLeft(), inner.bottomLeft())
-            rim_grad.setColorAt(0.0, top)
-            rim_grad.setColorAt(0.75, bottom)
-            p.setPen(QPen(QBrush(rim_grad), 1.0))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(inner, radius - 1.5, radius - 1.5)
+        # THE SAME NEUTRAL WELL THE CARDS PAINT (see IconPlaque). This used
+        # to be four accent-tinted passes — halo, wash, hairline, lit rim —
+        # brightened again when selected, which made the rail its own small
+        # design language: six colours down the sidebar, each with a ring
+        # around it. The glyph still carries the module's colour and the
+        # indicator bar still says which module is live, so the well was
+        # the third thing saying it.
+        #
+        # SELECTION LIFTS THE WELL RATHER THAN COLOURING IT: the same
+        # neutral, a little stronger. That keeps "which one is live" a
+        # question of value, which survives at a glance and in both themes,
+        # instead of a question of hue against five other hues.
+        well = QColor(self._well)
+        if selected:
+            well.setAlphaF(min(1.0, well.alphaF() * 2.4))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(well)
+        p.drawRoundedRect(box, TH.PLAQUE_RADIUS, TH.PLAQUE_RADIUS)
 
         # glyph
         p.setPen(self._accent if selected else self._glyph_color_idle)
@@ -1996,97 +2167,47 @@ class IconPlaque(QLabel):
     frames) keeps working untouched.
     """
 
-    #: Room reserved inside the widget for the halo to bleed into. The well
-    #: shrinks by this much rather than the widget growing, so the card's
-    #: header row, its minimum width and its height envelope are all
-    #: byte-for-byte what they were.
-    _PAD = 3
+    #: THE WIDGET IS THE WELL. Through v10.5 this reserved 3px on each
+    #: side for an ambient halo to bleed into, so a 42px widget painted a
+    #: 36px well. The halo is gone with the accent wash that justified it,
+    #: and with it the gap between "the plaque" and "the thing you can
+    #: measure" — a leading icon is now exactly PLAQUE_SIZE square,
+    #: everywhere, which is what made it worth standardising.
+    _PAD = 0
 
     def __init__(self, text: str, parent: QWidget | None = None):
         super().__init__(text, parent)
-        self._accent = QColor("#7d9bff")
-        self._tint: tuple[float, float] = (0.24, 0.13)
-        self._halo: tuple[float, int] = (0.13, 3)
-        self._inner = 0.20
-        self._light = False
+        self._well = QColor(255, 255, 255, 10)
 
     def apply_theme(self, t: dict, accent: str):
         self.setStyleSheet(TH.icon_plaque_qss(t, accent))
-        self._accent = QColor(TH.to_qcolor(accent))
-        self._tint = TH.plaque_tints(t)
-        self._halo = TH.plaque_halo(t)
-        self._inner = TH.plaque_inner(t)
-        self._light = t["name"] == "light"
+        self._well = TH.to_qcolor(t["plaque_well"])
         self.update()
 
-    def _accent_alpha(self, a: float) -> QColor:
-        c = QColor(self._accent)
-        c.setAlphaF(max(0.0, min(1.0, a)))
-        return c
-
     def paintEvent(self, e):
+        """One rounded rect. That is the whole plaque now.
+
+        It used to be four passes — an ambient halo walking outward in
+        concentric strokes, an accent-gradient wash, an outer hairline on
+        the well's edge and a lit inner rim — every one of them tinted in
+        the module's own colour. That material was solved for a card grid
+        whose defining cue was colour; on a canvas whose defining cue is
+        that there is nothing on it, it reads as four rings around a glyph.
+
+        The glyph keeps the accent (icon_plaque_qss sets its colour). The
+        well is a neutral surface for it to sit on.
+        """
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        radius = float(TH.RADIUS["plaque"])
-        pad = float(self._PAD)
-        well = QRectF(self.rect()).adjusted(pad, pad, -pad, -pad)
-
-        # -- 1. ambient halo, OUTSIDE the well ------------------------
-        # Concentric strokes walking outward from the well's edge, each a
-        # pixel clear of the last so the falloff is actually spent across
-        # the pad instead of piling onto one row. Squared falloff: a linear
-        # ramp at this few steps reads as a hard ring.
-        halo_alpha, halo_spread = self._halo
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for i in range(halo_spread):
-            step = i + 1
-            a = halo_alpha * (1.0 - i / float(halo_spread)) ** 2.0
-            if a <= 0.004:
-                break
-            p.setPen(QPen(self._accent_alpha(a), 1.0))
-            p.drawRoundedRect(well.adjusted(-step, -step, step, step),
-                              radius + step, radius + step)
-
-        # -- 2. the well itself: the v9 accent wash, unchanged ---------
-        a_top, a_bot = self._tint
-        grad = QLinearGradient(well.topLeft(), well.bottomLeft())
-        grad.setColorAt(0.0, self._accent_alpha(a_top))
-        grad.setColorAt(1.0, self._accent_alpha(a_bot))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(grad)
-        p.drawRoundedRect(well, radius, radius)
-
-        # -- 3. outer hairline, on the well's edge ---------------------
-        # Inset half a pixel so a 1px cosmetic pen lands on one row instead
-        # of antialiasing across two — the same correction paint_bevel_frame
-        # makes for the same reason.
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(self._accent_alpha(TH.PLAQUE_LINE), 1.0))
-        p.drawRoundedRect(well.adjusted(0.5, 0.5, -0.5, -0.5),
-                          radius - 0.5, radius - 0.5)
-
-        # -- 4. inner hairline: the top rim that makes it a surface -----
-        # A vertical gradient pen rather than a flat colour, so the rim is
-        # lit where the light would fall and gone by the bottom edge. Dark
-        # spends it in white (on obsidian, white IS light); light spends it
-        # in the accent's own hue, which reads as the tint deepening toward
-        # the rim — a bevel rather than a highlight it has no room for.
-        # See theme.PLAQUE_INNER.
-        inner = well.adjusted(1.5, 1.5, -1.5, -1.5)
-        if inner.width() > 2 and inner.height() > 2:
-            rim = QColor(self._accent) if self._light else QColor(255, 255, 255)
-            top = QColor(rim)
-            top.setAlphaF(self._inner)
-            bottom = QColor(rim)
-            bottom.setAlphaF(0.0)
-            rim_grad = QLinearGradient(inner.topLeft(), inner.bottomLeft())
-            rim_grad.setColorAt(0.0, top)
-            rim_grad.setColorAt(0.75, bottom)
-            p.setPen(QPen(QBrush(rim_grad), 1.0))
-            p.drawRoundedRect(inner, radius - 1.5, radius - 1.5)
+        p.setBrush(self._well)
+        p.drawRoundedRect(QRectF(self.rect()),
+                          TH.PLAQUE_RADIUS, TH.PLAQUE_RADIUS)
         p.end()
-
-        super().paintEvent(e)   # the glyph, in the colour QSS gave it
+        # AFTER the well, never before: QLabel draws the glyph itself, and
+        # painting the plate on top of it would hide the thing it is a
+        # plate for.
+        super().paintEvent(e)
 
 
 class GlassCard(QFrame):
@@ -2353,31 +2474,6 @@ class GlassCard(QFrame):
         self._sync_height_step()
 
     # -- ambient occlusion ------------------------------------
-    def opaque_core(self, t: dict) -> QRect:
-        """The part of this card that completely covers the ambient wash,
-        in card-local coordinates — or a null QRect if none of it does.
-
-        Asked by PulseApp._sync_ambient_occluders so the field can skip
-        repainting under it (see AmbientGlow.set_occluders for what that
-        buys). The card answers rather than the shell, because the two
-        exclusions are facts about how a card paints itself:
-
-        THE FEATURED CARD COVERS NOTHING. Its QSS is `background:
-        transparent` — it paints its own squircle, aurora edge and state
-        wash in _paint_featured, with continuous corners that a rounded
-        rect would peek out of. Claiming its rect would cull stars from a
-        region that is genuinely see-through at the edges, on the one
-        card the eye is most drawn to.
-
-        THE REST COVER THEIR OPAQUE CORE. theme.opaque_core trims the
-        rounded corners and the translucent top sheen; see the reasoning
-        there.
-        """
-        if self._featured or not TH.is_opaque(t["card"]):
-            return QRect()
-        return TH.opaque_core(self.rect(), TH.RADIUS["card"])
-
-    # -- theming ----------------------------------------------
     def apply_theme(self, t: dict):
         # re-resolve first: the module palette differs per theme (v10)
         self._accent = TH.resolve_accent(t, self._accent_key)
@@ -2794,950 +2890,6 @@ class GlassCard(QFrame):
 
 
 # ============================================================
-#  AMBIENT SIMULATION — the field's physics, renderer-agnostic
-# ============================================================
-class _AmbientSimulation:
-    """Everything about the ambient field that is not drawing.
-
-    A PLAIN MIXIN, not a QObject: it is inherited alongside QWidget by the
-    raster field (AmbientGlow) and alongside QOpenGLWidget by the GPU one
-    (ambient_gl.GLAmbientField), and a second QObject base would make that
-    metaclass-illegal.
-
-    It exists so the two renderers cannot disagree about where a star is.
-    Only the DRAWING differs between them; the seeded scatter, the
-    per-tier drift, the wrap, the sway, the twinkle phase, the pointer
-    bias, the deferral rules and the frame governor are one implementation
-    used by both. Visual parity is then a property of the code rather than
-    something to re-verify every time either renderer changes.
-
-    It is also nearly free to share: integrating 126 particles is
-    microseconds. The ambient field's cost was never this arithmetic — it
-    was the full-window repaint the arithmetic used to trigger.
-    """
-
-    # ================================================================
-    #  STATIC BY CONTRACT (v10.5) — THE FIELD NO LONGER MOVES
-    # ================================================================
-    # The ambient field shipped as a LIVING canvas: five orbs drifting and
-    # breathing on independent sine paths, 126 stars rising and twinkling,
-    # the whole sheet leaning toward the pointer. Every one of those is
-    # gone as of v10.5, and this flag is the single switch that removes
-    # them — not by deleting the field, but by STOPPING TIME.
-    #
-    # WHY A FROZEN SIMULATION RATHER THAN A DELETED ONE. Everything the
-    # field draws is a pure function of `_t`, the seeded scatter and the
-    # theme. Pinning `_t` at 0.0 therefore yields the EXACT frame the
-    # animated field rendered at t=0: the same orb composition, the same
-    # constellation, the same per-star brightness (each star's twinkle
-    # phase is seeded, so `sin(phase)` still spreads them across the whole
-    # brightness range — a static field, not 126 identical dots). Nothing
-    # about the wash's measured qualities changes, which is why the star
-    # weight, wash neutrality and contrast tests below all still hold: the
-    # pixels are the ones that were already being solved for.
-    #
-    # WHAT IT BUYS. A background decoration that costs ZERO at idle. The
-    # animated field's cheapest configuration was a full-window repaint ten
-    # times a second, and a full-window repaint here is never "repaint the
-    # wash" — every surface above this widget is translucent, so Qt
-    # re-rasterises the whole stack (measured 18.5ms/frame at 1300x860, of
-    # which the card grid alone is 10.9ms). Static, the field paints on
-    # resize, theme change and expose, and at no other time.
-    #
-    # THE API IS UNCHANGED. suspend()/resume()/defer()/set_occluders() all
-    # still exist and still mean something coherent — suspend/resume still
-    # freeze and rebuild the composited layer across an OS resize loop,
-    # which is a real cost even for a field that does not animate. defer()
-    # becomes a no-op, because there are no frames left to defer.
-    STATIC = True
-
-    # ================================================================
-    #  FRAME RATE — matched to the signal, and governed under load
-    # ================================================================
-    # DORMANT WHILE `STATIC` IS TRUE, and kept rather than deleted: these
-    # are the measured numbers behind the field's animated cadence, the
-    # governor still reads them if the field is ever unfrozen, and the GPU
-    # renderer still shadows _INTERVAL_MS per instance. They describe a
-    # timer that is never started.
-    #
-    # These are the RASTER path's numbers and the reasoning behind them is
-    # in AmbientGlow's own docstring. The GPU path overrides the cadence
-    # (it can afford the display's refresh rate); everything else here —
-    # the governor, the deferral, the tiers — applies to both.
-    _INTERVAL_MS = 100         # base cadence, locked to _LAYER_MS
-
-    #: Ceiling the governor may back off to when the GUI thread is busy
-    #: (~4.5 fps). Past this the orb drift starts to visibly step.
-    _MAX_INTERVAL_MS = 220
-
-    #: Timer lateness, in ms, treated as "the main thread is contended".
-    #: MEASURED against a genuinely idle app: median 9.9ms, p99 17.8 —
-    #: Windows' ~15.6ms timer granularity, not contention. At 6.0 this
-    #: fired on 77% of idle frames and pinned the field at 4.4fps.
-    _LATE_MS = 30.0
-
-    #: Depth tiers, far to near: (share of the field, radius range in px,
-    #: upward speed range in fractions of height/sec, alpha scale). The
-    #: three numbers move TOGETHER on purpose — a far star that is small
-    #: and dim but fast reads as a bug, not as distance.
-    _PARTICLE_TIERS = (
-        (0.46, (0.5, 1.0), (0.005, 0.013), 0.52),
-        (0.34, (1.0, 1.7), (0.013, 0.026), 0.78),
-        (0.20, (1.7, 2.7), (0.026, 0.044), 1.00),
-    )
-    _N_PARTICLES = 126
-
-    # ================================================================
-    #  STAR WEIGHT — solved against the WORST SURFACE COVERING IT
-    # ================================================================
-    # The field used to carry one peak alpha for both themes (0.34), tuned
-    # against the bare canvas. But nobody sees a star against the bare
-    # canvas: the wash sits at the BOTTOM of the shell, so every star is
-    # viewed through whatever translucent surface is over it — the content
-    # well and the sidebar, which are `rgba(242,242,247,0.55)` and
-    # `rgba(255,255,255,0.60)` in light. Those cut a star's delta by 45%
-    # and 60% before it ever reaches the eye.
-    #
-    # That is the same mistake the palette's AA floor made and fixed (see
-    # the text_faint note in theme.py): a value solved against the surface
-    # you WISH it sat on, when the surface it actually lands on is darker,
-    # paler or busier. The fix is the same too — solve against the worst
-    # case, so it clears everywhere rather than only where it was measured.
-    #
-    # MEASURED, in CIE76 dE through the worst covering surface in each
-    # theme, at full twinkle (mean over the whole sprite, which is what the
-    # eye integrates for a 4-16px dot):
-    #
-    #                  dark (shipped)      light BEFORE      light NOW
-    #     far tier         1.28               0.83             1.41
-    #     mid tier         2.04               1.32             2.11
-    #     near tier        2.59               1.68             2.72
-    #
-    # Light was running at 60-65% of dark's weight — the far tier, 46% of
-    # the whole field, sat UNDER the ~1.0 dE just-noticeable threshold.
-    # That is not "subtle", it is absent, and it is why the mode read as
-    # having no particles rather than as having quiet ones.
-    #
-    # DARK IS UNTOUCHED. Light is solved TO dark's proven weight rather
-    # than to a number of its own: the two modes must read as the same
-    # field seen in different light, and dark is the one that was already
-    # right.
-    _STAR_PMAX = {"dark": 0.34, "light": 0.55}
-
-    # Core radius -> texture span multiplier. Light needs a WIDER sprite at
-    # the same peak, and the asymmetry is real rather than a fudge: light
-    # ink on a dark canvas ADDS luminance, which the eye detects at far
-    # smaller areas than the equivalent subtraction of a dark mote on
-    # paper. Raising alpha alone would have produced hard little dots
-    # instead of light; the extra tail is what keeps them reading as
-    # atmosphere at the higher weight.
-    _STAR_SPAN_MUL = {"dark": 3.0, "light": 3.6}
-
-    #: v1.0 pointer-biased drift: the orb field leaned almost imperceptibly
-    #: toward the cursor. GAIN is the fraction of the widget dimension one
-    #: full lean could move an orb (the bias caps at +/-0.5, so the real
-    #: maximum was GAIN/2 ~ 2%).
-    #:
-    #: ZERO AS OF v10.5, the documented way to neuter the behaviour. A lean
-    #: that tracks the cursor is motion whatever its amplitude, and it is
-    #: the one piece of the field a frozen `_t` would NOT have stopped:
-    #: the bias is integrated from QCursor.pos(), not from the clock, so it
-    #: would have kept the orbs sliding under a static simulation. Set here
-    #: rather than by deleting the term, so the arithmetic both renderers
-    #: share stays identical and the two cannot drift apart.
-    _POINTER_GAIN = 0.0
-
-    #: Orb peak alpha, per theme. NEITHER MODE MAY DYE ITS CANVAS: the
-    #: wash shades the base colour, it does not replace it.
-    #:
-    #: LIGHT IS A WHISPER and must stay one — measured off a real render,
-    #: the v10 peaks dragged the page to a visible lavender (#ECEAF4) where
-    #: the palette specifies a neutral system grey.
-    #:
-    #: DARK COMES DOWN 40% IN v14, and the reason is that the surfaces
-    #: underneath it moved. The old peaks were solved against a content
-    #: well that was 45% NEAR-BLACK, so the frame the wash showed through
-    #: subtracted from it; the obsidian palette raises that well to a
-    #: #121417 container and the same wash now lands on a base ~11 levels
-    #: lighter, over the whole content area. Measured on a real render, the
-    #: v13 peaks took the jet #090A0B canvas to #1A1D25 in the orb cores —
-    #: which is precisely the "muddy navy-tinted grey" the obsidian pass
-    #: exists to remove, arrived at from the ambient layer rather than from
-    #: the palette. At 0.6x the field is still unmistakably alive (peak
-    #: channel 32 against the canvas's 11) and the base reads as jet.
-    #:
-    #: Both modes are pinned by test_ambient's wash-neutrality test at
-    #: <= 6.0 mean channel spread: light measures ~3.9, dark ~3.2, and the
-    #: regression that shipped the lavender canvas twice measures ~10.4.
-    _ORB_PEAKS = {
-        "light": (0.055, 0.05, 0.045, 0.035, 0.03),
-        "dark":  (0.102, 0.072, 0.066, 0.057, 0.051),
-    }
-
-    def __init__(self, gl: bool = False):
-        self._gl = gl
-        self._c1 = QColor("#7d9bff")
-        self._c2 = QColor("#a184ff")
-        self._c3 = QColor("#e784ff")
-        self._light = False
-        self._radius = 24   # must track shell_qss's floating corner radius
-        self._t = 0.0
-        # v9.5: paused while the window is minimized — hideEvent doesn't
-        # fire on minimize (Qt keeps children "visible"), so the loop would
-        # otherwise keep ticking behind a minimized window. Driven by
-        # suspend()/resume() from PulseApp.changeEvent.
-        self._suspended = False
-        self._frozen = False
-        self._particles: list[dict] = []
-        self._build_particles()
-
-        # Independent drift/breathe parameters per orb: (base_x_frac,
-        # base_y_frac, drift_speed, drift_phase, breathe_speed,
-        # breathe_phase, parallax, scale). Parallax is the orb's share of
-        # the pointer bias — mixed signs so the field shears gently around
-        # the cursor instead of sliding as one rigid sheet, which is what
-        # sells depth at a 2% displacement. `scale` is the orb's size as a
-        # fraction of the full blob: the last two are the DEEP layer —
-        # smaller, dimmer and leaning hardest on the pointer, so they read
-        # as sitting behind the foreground wash instead of alongside it.
-        self._orb_motion = [
-            (0.16, -0.06, 0.055, 0.0, 0.42, 0.0,  1.00, 1.00),
-            (1.02,  0.28, 0.041, 2.1, 0.37, 1.3, -0.65, 1.00),
-            (0.70,  1.06, 0.048, 4.0, 0.31, 3.4,  0.45, 1.00),
-            (0.44,  0.34, 0.067, 1.1, 0.53, 2.2, -1.40, 0.52),
-            (0.86,  0.72, 0.073, 5.2, 0.61, 0.7,  1.25, 0.44),
-        ]
-        # Smoothed pointer bias, each axis in [-0.5, 0.5]; eased toward the
-        # cursor in _tick and back to neutral when it leaves the window.
-        self._bias_x = 0.0
-        self._bias_y = 0.0
-
-        # SINGLE-SHOT, re-armed at the end of every tick. A repeating timer
-        # queues its next timeout while the previous frame is still being
-        # painted, so under load the ambient stacks up behind itself; a
-        # chained single-shot cannot, and it is what lets the interval be
-        # re-derived per frame (see _arm / _govern).
-        self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.setInterval(self._INTERVAL_MS)
-        self._timer.timeout.connect(self._tick)
-        self._interval = float(self._INTERVAL_MS)
-        self._armed_at = 0.0
-        #: perf_counter deadline before which ambient frames are skipped —
-        #: see defer(). Not a suspend: the timer keeps ticking so the field
-        #: resumes on its own with no bookkeeping at the call site.
-        self._defer_until = 0.0
-
-        #: Opaque surfaces currently covering the wash, in LOCAL coords —
-        #: see set_occluders(). Empty until the shell reports its layout,
-        #: which is the correct default: culling nothing is always visually
-        #: right and merely costs what the field cost before.
-        self._occluders: list[QRect] = []
-        self._visible_region: QRegion | None = None
-
-    # -- particle field ---------------------------------------
-    def _build_particles(self):
-        rng = random.Random(7)   # fixed seed → stable, reproducible scatter
-        self._particles = []
-        for share, (r_lo, r_hi), (s_lo, s_hi), dim in self._PARTICLE_TIERS:
-            for _ in range(round(self._N_PARTICLES * share)):
-                radius = rng.uniform(r_lo, r_hi)
-                # Core radius -> full texture span (core + glow tail),
-                # snapped to an even pixel so the star can be blitted at
-                # its texture's native size. A handful of buckets cover the
-                # whole 0.5-2.7px radius range; see _star_pixmap for why
-                # that quantisation is what makes the density affordable.
-                #
-                # BOTH THEMES' SPANS ARE PRECOMPUTED (see _STAR_SPAN_MUL),
-                # rather than derived per frame. The star's scatter, drift
-                # and twinkle phase are all seeded once and must survive a
-                # theme toggle unchanged — recomputing spans at paint time
-                # would work, but rebuilding the field to change one
-                # multiplier would silently reseed every particle and make
-                # the toggle teleport the whole sky.
-                self._particles.append({
-                    "x": rng.random(),
-                    "y": rng.random(),
-                    "px_dark": max(
-                        4, round(radius * self._STAR_SPAN_MUL["dark"]) * 2),
-                    "px_light": max(
-                        4, round(radius * self._STAR_SPAN_MUL["light"]) * 2),
-                    "spd": rng.uniform(s_lo, s_hi),  # frac of height / s, up
-                    # A whisper of lateral drift, signed per star: without
-                    # it 126 stars rising on exactly parallel tracks read
-                    # as a texture being scrolled rather than as a field.
-                    "sway": rng.uniform(-0.10, 0.10),
-                    "tw": rng.random() * math.tau,   # twinkle phase
-                    "tws": rng.uniform(0.5, 1.4),    # twinkle speed
-                    "dim": dim,                      # tier alpha scale
-                })
-
-    # -- theme ------------------------------------------------
-    def _absorb_theme(self, t: dict):
-        """The part of a theme change both renderers share."""
-        self._c1 = QColor(t["accent"])
-        self._c2 = QColor(t["accent2"])
-        self._c3 = QColor(t["accent3"])
-        self._light = t["name"] == "light"
-
-    def orb_peaks(self) -> tuple:
-        return self._ORB_PEAKS["light" if self._light else "dark"]
-
-    def orb_colors(self) -> tuple:
-        # c1, c3, c2, c2, c3 — the deep pair reuses the outer two hues so
-        # the back layer reads as the same aurora seen further away.
-        return (self._c1, self._c3, self._c2, self._c2, self._c3)
-
-    def star_color(self) -> QColor:
-        return (QColor(38, 50, 120) if self._light
-                else QColor(200, 214, 255))
-
-    # ============================================================
-    #  OCCLUSION — never dirty a pixel that something opaque covers
-    # ============================================================
-    def set_occluders(self, rects: list[QRect]):
-        """Declare the opaque surfaces currently covering the wash.
-
-        Callers pass the rects of surfaces whose fill token is opaque (see
-        PulseApp._sync_ambient_occluders, which asks theme.is_opaque
-        rather than deciding for itself). Coordinates are this widget's.
-
-        THE INSET IS THE CALLER'S JOB and it matters in both directions:
-        Qt's opacity contract is per-rect, so a rounded card is only truly
-        opaque INSIDE its corner radius, and its drop shadow spills
-        OUTSIDE its rect entirely. Over-claiming here culls a star that
-        should have been visible — the one failure mode of this whole
-        mechanism that a user can actually see, since under-claiming just
-        costs what the field cost before.
-        """
-        clean = [r for r in rects if r.isValid() and not r.isEmpty()]
-        if clean == self._occluders:
-            return                  # layout churn without a real change
-        self._occluders = clean
-        self._visible_region = None
-        self._update_exposed()
-
-    def _exposed(self) -> QRegion:
-        """The widget's rect minus everything opaque on top of it."""
-        if self._visible_region is None:
-            region = QRegion(self.rect())
-            for rect in self._occluders:
-                region -= QRegion(rect)
-            self._visible_region = region
-        return self._visible_region
-
-    def _update_exposed(self, area: QRegion | QRect | None = None):
-        """update(), clipped to what is actually visible.
-
-        Every repaint request goes through here. A bare self.update() in a
-        renderer is a bug: it re-dirties the card grid and hands back the
-        frame budget this exists to protect. The GPU renderer overrides
-        it — a GL surface is redrawn whole or not at all, and its cost does
-        not scale with dirty area.
-        """
-        region = self._exposed()
-        if area is not None:
-            region = region.intersected(
-                area if isinstance(area, QRegion) else QRegion(area))
-        if not region.isEmpty():
-            self.update(region)
-
-    # -- frame governor ---------------------------------------
-    def _arm(self, delay_ms: float | None = None):
-        """Schedule the next ambient frame. `_armed_at` is what the next
-        tick measures its own lateness against.
-
-        A NO-OP WHILE `STATIC` (v10.5), and this is the single choke point
-        that makes the field static rather than a dozen edited call sites.
-        Both renderers' showEvent, resume() and _tick() itself re-arm
-        through here and nowhere else, so refusing here means the timer is
-        never started by any path — including one added later that forgets
-        the field is meant to be still.
-        """
-        if self.STATIC:
-            return
-        delay = self._interval if delay_ms is None else delay_ms
-        self._armed_at = time.perf_counter()
-        self._timer.start(int(max(1.0, delay)))
-
-    def _govern(self, late_ms: float):
-        """Re-derive the interval from how contended the GUI thread is.
-
-        Lateness is used rather than the frame's own paint cost because it
-        is the honest signal: a tick that fires on time proves the thread
-        had room for it, and one that fires late proves something more
-        important was queued ahead — a click, a relayout, a resize step,
-        a task's console output. Backing off then is what keeps the wash
-        from competing with the work the user is actually waiting on, and
-        it needs no knowledge of what that work was.
-
-        Both directions are deliberately partial. Backing off by HALF the
-        overshoot keeps one hiccup from slamming the field to the ceiling
-        it then has to crawl back from; recovering 10% a frame eases back
-        in over ~1s, where snapping straight to the base rate after one
-        quiet frame would oscillate against the very load it just yielded
-        to.
-        """
-        if late_ms > self._LATE_MS:
-            self._interval = min(float(self._MAX_INTERVAL_MS),
-                                 self._interval + late_ms * 0.5)
-        else:
-            self._interval = max(float(self._INTERVAL_MS),
-                                 self._interval * 0.90)
-
-    def defer(self, ms: float):
-        """Skip ambient frames for `ms` — the GUI thread is about to do
-        something the user is watching.
-
-        This is NOT suspend(): the timer keeps running and the field picks
-        itself back up unaided, so a caller can fire and forget.
-
-        Extends an existing deferral rather than shortening it, so
-        overlapping callers cannot cut each other short.
-
-        A NO-OP WHILE `STATIC` (v10.5): there are no ambient frames left to
-        skip. Kept as a live method rather than removed because the callers
-        — every page transition and cascade in main.py — are asserting
-        "the GUI thread is about to be busy", which stays true and stays
-        worth saying even when this layer no longer competes for it.
-        """
-        if self.STATIC:
-            return
-        self._defer_until = max(self._defer_until,
-                                time.perf_counter() + max(0.0, ms) / 1000.0)
-
-    def suspend(self):
-        """Pause while the window is minimized, or for the duration of an
-        OS move/resize loop (PulseApp.changeEvent and the WM_ENTERSIZEMOVE
-        handler both call this).
-
-        Also FREEZES the composited orb layer: during a resize the widget
-        is a different size on every step, which would otherwise rebuild a
-        full-window layer per step — the most expensive thing possible in
-        the middle of a drag. While frozen the existing layer is stretched
-        to fit; it is a soft gradient, so scaling it is visually free."""
-        self._suspended = True
-        self._frozen = True
-        self._timer.stop()
-
-    def resume(self):
-        """Resume after restore. No-ops while the widget is hidden (the
-        next showEvent will start it) so we never animate an off-screen
-        surface."""
-        self._suspended = False
-        if self._frozen:
-            self._frozen = False
-            self._on_thaw()
-            self._visible_region = None   # ...rebuild against the final rect
-            self._update_exposed()
-        if self.isVisible() and not self._timer.isActive():
-            self._interval = float(self._INTERVAL_MS)
-            self._arm()
-
-    def _on_thaw(self):
-        """Renderer hook: drop whatever was frozen for the drag."""
-
-    def _tick(self):
-        """Advance the simulation by one frame and ask for a repaint.
-
-        UNREACHABLE WHILE `STATIC` — _arm() never starts the timer that
-        calls this — and it refuses anyway, because "nothing can move the
-        field" is a stronger guarantee than "nothing currently schedules
-        the thing that moves it". A direct call (a test, a future caller)
-        therefore cannot desynchronise the two renderers' shared `_t` from
-        the frozen frame both are drawing.
-        """
-        if self.STATIC:
-            return
-        now = time.perf_counter()
-        # Elapsed is MEASURED, never assumed. The interval is not a
-        # constant (see _govern), and the drift/twinkle/wrap maths below
-        # integrate against it — reading it off the nominal interval would
-        # make the field speed up and slow down with the frame rate, which
-        # is the one artefact a variable rate could actually introduce.
-        elapsed = ((now - self._armed_at) if self._armed_at
-                   else self._interval / 1000.0)
-        late = max(0.0, elapsed * 1000.0 - self._interval)
-        deferred = now < self._defer_until
-        # The governor reads lateness as "adding a repaint here would
-        # hurt". A DEFERRED tick is not adding one, so its lateness says
-        # nothing about the wash — and letting it speak ratcheted the field
-        # to the ceiling on the way through every page transition, which it
-        # then crawled back from for ~1s AFTER the switch had finished.
-        if not deferred:
-            self._govern(late)
-
-        dt = min(max(elapsed, 0.001), self._MAX_INTERVAL_MS / 1000.0)
-        self._t += dt
-        # Pointer bias: one QCursor.pos() read per tick (microseconds), no
-        # event filters — the glow is mouse-transparent, so polling here is
-        # the only way to see the cursor at all. The smoothing factor is
-        # SOLVED from dt rather than hard-coded, so the lean takes 0.6s of
-        # wall time at any frame rate.
-        ease = 1.0 - math.exp(-dt / 0.6)
-        tx = ty = 0.0
-        w, h = self.width(), self.height()
-        if w > 0 and h > 0:
-            pos = self.mapFromGlobal(QCursor.pos())
-            fx = pos.x() / w - 0.5
-            fy = pos.y() / h - 0.5
-            if -0.55 <= fx <= 0.55 and -0.55 <= fy <= 0.55:
-                tx = max(-0.5, min(0.5, fx))
-                ty = max(-0.5, min(0.5, fy))
-        self._bias_x += (tx - self._bias_x) * ease
-        self._bias_y += (ty - self._bias_y) * ease
-        for pt in self._particles:
-            pt["y"] -= pt["spd"] * dt
-            if pt["y"] < -0.03:
-                pt["y"] += 1.06   # wrap back to just below the bottom edge
-            # Sway is integrated, not sampled: a star that drifts sideways
-            # keeps whatever ground it gained, so identical seeds do not
-            # snap back into their starting columns every cycle.
-            pt["x"] += pt["sway"] * dt * 0.02
-            if pt["x"] < -0.03:
-                pt["x"] += 1.06
-            elif pt["x"] > 1.03:
-                pt["x"] -= 1.06
-
-        if deferred:
-            # SIMULATE, DON'T PAINT. Everything above is arithmetic over
-            # 126 particles and five orbs — microseconds. The cost this is
-            # deferred for is the PAINT. Skipping the maths with it was
-            # free to do and expensive to have done: motion used to resume
-            # from where it stopped rather than from where it should be, so
-            # the wash visibly stalled and then continued.
-            #
-            # Re-armed at the NORMAL cadence rather than for the whole
-            # remaining deferral, so dt stays small and accurate across a
-            # long defer instead of arriving as one lump the clamp above
-            # would truncate.
-            self._arm(min(self._interval,
-                          (self._defer_until - now) * 1000.0))
-            return
-
-        self._update_exposed()
-        self._arm()
-
-
-# ============================================================
-#  AMBIENT GLOW — static brand-pair light wash behind the shell
-# ============================================================
-class AmbientGlow(_AmbientSimulation, QWidget):
-    """A STILL canvas behind the sidebar/content frames (lowest widget in
-    the shell's z-order, transparent to mouse events).
-
-    Two composed layers, neither of which moves (see _AmbientSimulation.
-    STATIC — the field is the frame the old animated one rendered at t=0):
-
-    1. Aurora orbs — FIVE soft brand-tinted radial blobs (indigo / violet /
-       magenta) at fixed positions, three forming the large foreground wash
-       and two smaller and dimmer behind it, so the field reads as having a
-       front and a back rather than as one flat sheet. Each orb is a
-       radial-gradient PIXMAP rendered once and cached, then blitted — and
-       the five are composited into ONE widget-sized layer that is now
-       rebuilt only when the size or the theme changes.
-    2. Particle field — a fixed scatter of soft 'stars'. Three DEPTH TIERS
-       (see _PARTICLE_TIERS): far stars are small and dim, near ones larger
-       and brighter, so the field has depth rather than uniform noise. Each
-       star's brightness comes from its own SEEDED phase, which is what
-       keeps a still field from reading as 126 identical dots. Each is a
-       cached soft-glow texture blitted at its own scale, not a hard-edged
-       ellipse.
-
-    NOTHING DRIVES IT. The self-rescheduling timer is built but never
-    started (_arm), so an idle window costs exactly zero — where the
-    animated field's cheapest configuration was a full-window repaint ten
-    times a second through every translucent surface above it. Repaints
-    now come only from Qt: expose, resize, and a theme toggle.
-
-    DENSITY IS NOT INTENSITY: the count went up 3x, the per-star peak alpha
-    did not (theme.py documents why the brand pair reads neon past ~0.16) —
-    this is ambient luminescence, never a light show."""
-
-    # ================================================================
-    #  FRAME RATE — matched to the signal, and governed under load
-    # ================================================================
-    # This widget is the BOTTOM of the shell's z-order and every surface
-    # above it is translucent by design (the content frame is
-    # rgba(5, 6, 10, 0.45); the cards are glass). So a Qt update() here is
-    # never "repaint the wash": it dirties the full window, and Qt must
-    # then repaint every non-opaque widget intersecting it, bottom-up.
-    #
-    # Measured on the reference machine at 1300x860, one ambient frame:
-    #
-    #     the glow's own paint ..............  2.7 ms
-    #     every widget above it ............. 15.7 ms   <- 85% of the frame
-    #     ---------------------------------------------
-    #     tick -> window settled ............ 18.5 ms
-    #
-    # of which the 14-card grid alone is 10.9 ms. At the old 36 ms interval
-    # that saturated the GUI thread: sampled over 3.0 s of idle, the app
-    # blocked itself for 1385 ms — 46.2% of wall time — in blocks of up to
-    # 31 ms, and the timer could only actually deliver 21 of the 28 frames
-    # it asked for. Every click, hover and page switch queued behind that,
-    # which is what "the app feels like it's freezing" was.
-    #
-    # The rate is now derived instead of chosen, and the derivation is the
-    # whole argument for it being free: _LAYER_MS already rebuilds the orb
-    # composite only 10x a second, so at 36 ms THE ORBS WERE IDENTICAL ON
-    # THREE CONSECUTIVE FRAMES — two of every three full-window repaints
-    # painted the same aurora. Sampling the wash at the cadence it actually
-    # changes at is not a quality cut; it is deleting duplicate frames.
-    #
-    # The only thing that moved faster was the star field, and barely: the
-    # quickest tier drifts 0.044 of the widget height per second, so 38 px/s
-    # — 3.8 px per frame at this interval, on a sprite whose soft glow tail
-    # is ~16 px wide. Twinkle tops out at 1.4 Hz and is still sampled seven
-    # times a cycle.
-    def __init__(self, parent: QWidget):
-        QWidget.__init__(self, parent)
-        _AmbientSimulation.__init__(self, gl=False)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        # -- raster-only caches ----------------------------------
-        self._orb_cache: dict = {}
-        # Composited orb layer — see _ensure_layer. Exactly ONE pixmap is
-        # ever retained (never a dict keyed on size), which is what keeps
-        # this from repeating the old resize memory leak.
-        self._layer: QPixmap | None = None
-        self._layer_t = -1e9
-        self._layer_size = (0, 0)
-        self._star_cache: dict = {}
-
-    def _on_thaw(self):
-        """The drag is over: rebuild the layer once, at the final size."""
-        self._layer = None
-
-    # ============================================================
-    #  OCCLUSION — never dirty a pixel that something opaque covers
-    # ============================================================
-    # THE FRAME BUDGET IS AN AREA BUDGET. This widget's cost was never its
-    # own paint (2.7ms); it is the full-window repaint an update() here
-    # forces through every translucent surface above it — 18.5ms all told,
-    # of which the 14-card grid alone is 10.9ms.
-    #
-    # But the cards are OPAQUE in both themes (theme.is_opaque: the tiers
-    # are rgba(...,1.0) in dark and light alike). The wash has never been
-    # visible through one. So that 10.9ms bought nothing at all: Qt was
-    # repainting fourteen glass surfaces, with their bevels, sheens, glow
-    # frames and hairlines, underneath pixels that then completely
-    # overwrote them.
-    #
-    # Subtracting those rects from the dirty region is what makes a 60Hz
-    # star layer affordable, and it makes the EXISTING 10Hz orb layer
-    # cheaper on its way past. Nothing about the wash changes visually —
-    # by construction, since the only pixels dropped are ones no one could
-    # see.
-    def apply_theme(self, t: dict):
-        self._absorb_theme(t)
-        self._orb_cache.clear()   # colors changed — cached orb pixmaps stale
-        self._star_cache.clear()  # ...the star texture is per-theme too...
-        self._layer = None        # ...and so is the composited orb layer
-        # NOT the occluders: which surfaces are opaque is a per-theme fact
-        # (theme.is_opaque reads the new token set), so the shell re-reports
-        # them after a toggle. Clearing them here would cull nothing for one
-        # frame — correct, but it would hide a stale-occluder bug behind a
-        # theme switch, which is where such a bug is least likely to be found.
-        self._update_exposed()
-
-    def set_radius(self, radius: int):
-        """Match the shell's corner radius. Now always 0: the shell is an
-        opaque square canvas and DWM rounds the window itself, so there is
-        no rounded edge for this wash to bleed past. (Kept as a setter
-        rather than deleted — it still guards against painting into a
-        rounded corner if the shell ever regains one.)"""
-        if radius != self._radius:
-            self._radius = radius
-            self._update_exposed()
-
-    # -- lifecycle: animate only while visible AND not minimized --------
-    def showEvent(self, e):
-        super().showEvent(e)
-        if not self._suspended:
-            self._arm()
-
-    def hideEvent(self, e):
-        super().hideEvent(e)
-        self._timer.stop()
-
-    def resizeEvent(self, e):
-        """The exposed region is derived from rect() and the occluders, so
-        it dies with either. The shell re-reports occluders after the
-        relayout a resize triggers; dropping the cache here means the frame
-        in between culls against the NEW rect rather than a region that
-        stops short of the new edges (which would leave the wash missing
-        along the grown side until the next layout pass)."""
-        super().resizeEvent(e)
-        self._visible_region = None
-
-    # -- orb pixmap cache -------------------------------------
-    # v10: orbs are rendered ONCE at a fixed texture size and SCALED on
-    # blit, instead of being re-rasterised at the window's current size.
-    #
-    # The old cache was keyed on `diameter = max(w, h) * 1.25`, i.e. on the
-    # window size — so every single pixel of a drag-resize minted three
-    # fresh ~1800x1800 pixmaps and kept them forever. Measured on a plain
-    # 1000->1440px drag: 1,323 cached pixmaps totalling 11.9 GB, at 34.9 ms
-    # per resize step. That was both the resize stutter and an unbounded
-    # memory leak keyed on how much the user dragged.
-    #
-    # A radial-gradient blob is smooth by construction, so scaling one up
-    # is visually identical to rasterising it at full size (the painter
-    # already runs with SmoothPixmapTransform). The cache is now keyed only
-    # on (colour, peak): at most a handful of entries, a few MB, forever.
-    _ORB_TEX = 512
-
-    def _orb_pixmap(self, color: QColor, peak: float) -> QPixmap:
-        key = (color.rgb(), round(peak * 1000))
-        pm = self._orb_cache.get(key)
-        if pm is not None:
-            return pm
-        diameter = self._ORB_TEX
-        pm = QPixmap(diameter, diameter)
-        pm.fill(Qt.GlobalColor.transparent)
-        pp = QPainter(pm)
-        pp.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        grad = QRadialGradient(diameter / 2.0, diameter / 2.0, diameter / 2.0)
-        c = QColor(color)
-        c.setAlphaF(peak)
-        grad.setColorAt(0.0, c)
-        # a soft, wide falloff — most of the gradient is the tail, so orbs
-        # blend seamlessly into the canvas with no visible hard rim
-        mid = QColor(color)
-        mid.setAlphaF(peak * 0.35)
-        grad.setColorAt(0.45, mid)
-        c_out = QColor(color)
-        c_out.setAlphaF(0.0)
-        grad.setColorAt(1.0, c_out)
-        pp.setPen(Qt.PenStyle.NoPen)
-        pp.setBrush(grad)
-        pp.drawEllipse(0, 0, diameter, diameter)
-        pp.end()
-        self._orb_cache[key] = pm
-        return pm
-
-    # -- star textures ----------------------------------------
-    # A soft-glow texture per (theme colour, size), blitted 1:1.
-    #
-    # The field used to be flat drawEllipse() calls, which is why it could
-    # only ever be a scatter of hard little dots: at 1-3px an antialiased
-    # disc has no falloff to speak of, so raising the count just made the
-    # canvas look speckled. A texture with a bright core and a wide tail
-    # reads as LIGHT at any size, which is what lets the count triple
-    # without the background turning into noise.
-    #
-    # SIZES ARE QUANTISED (even pixels, see _build_particles) so every
-    # star can be blitted at its texture's native size. That is the whole
-    # performance story: the first cut scaled one 32px texture to each
-    # star's exact span, and 126 smooth-scaled blits cost 1.5ms a paint —
-    # on a widget that repaints ~26 times a second under the animations
-    # above it. Native-size blits take a straight alpha-blend path and
-    # cost a third of that, and the twinkle rides on opacity, where the
-    # eye reads it as brightness anyway.
-    def _star_pixmap(self, color: QColor, size: int) -> QPixmap:
-        pm = self._star_cache.get((color.rgb(), size))
-        if pm is not None:
-            return pm
-        pm = QPixmap(size, size)
-        pm.fill(Qt.GlobalColor.transparent)
-        pp = QPainter(pm)
-        pp.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        grad = QRadialGradient(size / 2.0, size / 2.0, size / 2.0)
-        core = QColor(color)
-        core.setAlphaF(1.0)
-        grad.setColorAt(0.0, core)
-        waist = QColor(color)
-        waist.setAlphaF(0.42)
-        grad.setColorAt(0.30, waist)
-        tail = QColor(color)
-        tail.setAlphaF(0.0)
-        grad.setColorAt(1.0, tail)
-        pp.setPen(Qt.PenStyle.NoPen)
-        pp.setBrush(grad)
-        pp.drawEllipse(0, 0, size, size)
-        pp.end()
-        self._star_cache[(color.rgb(), size)] = pm
-        return pm
-
-    # -- composited orb layer ---------------------------------
-    # The orbs are drawn ONCE into a widget-sized layer and then blitted as
-    # a single pixmap, instead of one smooth-scaled blit per orb per frame.
-    # This matters because the glow is repainted far more often than
-    # its own 28fps timer asks: it is the bottom widget in the shell, so
-    # every animation above it (the two BreathingIcons, ~60fps each) forces
-    # a partial repaint underneath. Measured at idle: 3.55 paintEvents per
-    # timer tick, ~76/s, totalling 26 full-widget repaints per second.
-    #
-    # Cost per paint drops ~9x (2.70ms -> 0.29ms dark, 4.29 -> 0.61 light).
-    # The layer is rebuilt at _LAYER_MS, not per frame; the orbs drift so
-    # slowly that the largest possible step between rebuilds is ~3px on a
-    # blob with a ~500px falloff. Verified against the old direct path:
-    # maximum channel difference 2/255.
-    _LAYER_MS = 100
-
-    def _ensure_layer(self) -> QPixmap | None:
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return None
-        if self._frozen and self._layer is not None:
-            return self._layer          # mid-drag: stretch, never rebuild
-        # SIZE AND THEME ONLY WHILE STATIC. The cadence clause below exists
-        # to resample a MOVING aurora; against a frozen `_t` it would keep
-        # re-rasterising a full-window pixmap to reproduce the identical
-        # image. Stated rather than left to fall out of the arithmetic
-        # (`_t - _layer_t` does happen to settle at 0), because relying on
-        # that would make the field's cost depend on a coincidence.
-        stale = (self._layer is None
-                 or self._layer_size != (w, h)
-                 or (not self.STATIC
-                     and (self._t - self._layer_t) * 1000.0 >= self._LAYER_MS))
-        if stale:
-            self._layer = self._build_layer(w, h)
-            self._layer_t = self._t
-            self._layer_size = (w, h)
-        return self._layer
-
-    def _build_layer(self, w: int, h: int) -> QPixmap:
-        """Composite the five drifting/breathing orbs into one transparent
-        pixmap. Orb blending among themselves stays SourceOver exactly as
-        before; the light-mode Multiply is applied when the finished layer
-        is blitted onto the canvas (see paintEvent)."""
-        diameter = int(max(w, h) * 1.25)
-        layer = QPixmap(w, h)
-        layer.fill(Qt.GlobalColor.transparent)
-        p = QPainter(layer)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        # v11: light mode pulled back again, and this time to a whisper
-        # (0.16/0.14/0.12 -> 0.055/0.05/0.045). The v10 note already had the
-        # right rule — "tint the paper, not dye it" — but the numbers still
-        # dyed it: measured off a real render, the multiply wash dragged the
-        # canvas to #ECEAF4, a visible lavender where the palette specifies
-        # the neutral system grey #F2F2F7. A light mode whose defining
-        # colour is "system grey" cannot have a coloured cloud drifting
-        # across it; at these peaks the orbs read as faint movement in the
-        # page rather than as a hue applied to it.
-        #
-        # Dark is untouched: there the wash SCREENS onto an obsidian canvas
-        # that has room to receive it, which is the whole reason the two
-        # modes use opposite blend modes in the first place.
-        # The last two entries are the DEEP layer (see _orb_motion): they
-        # are smaller, so at an equal peak they would read as two bright
-        # spots rather than as distance — depth comes from dimming them in
-        # step with their size. In light mode they are dimmer again,
-        # because the whole light wash has to stay under the "tint the
-        # paper, don't dye it" ceiling above.
-        # Read from the shared tables (_ORB_PEAKS / orb_colors) rather than
-        # restated here, so the GPU renderer cannot drift from this one.
-        peaks = self.orb_peaks()
-        colors = self.orb_colors()
-        amp_x, amp_y = w * 0.06, h * 0.06
-        for i, (bx, by, dspd, dph, bspd, bph, par, scale) in enumerate(self._orb_motion):
-            dx = math.sin(self._t * dspd * math.tau + dph) * amp_x
-            dy = math.cos(self._t * dspd * math.tau * 0.8 + dph) * amp_y
-            # pointer lean — pre-smoothed in _tick, scaled per orb. At the
-            # 100 ms layer cadence the largest possible step this adds is
-            # ~2px on a blob with a ~500px falloff: invisible, same
-            # argument as the drift itself (see _LAYER_MS note above).
-            dx += self._bias_x * w * self._POINTER_GAIN * par
-            dy += self._bias_y * h * self._POINTER_GAIN * par
-            size = int(diameter * scale)
-            cx = bx * w + dx - size / 2.0
-            cy = by * h + dy - size / 2.0
-            breathe = 1.0 + 0.16 * math.sin(self._t * bspd * math.tau + bph)
-            p.setOpacity(max(0.0, min(1.0, breathe)))
-            p.drawPixmap(QRect(int(cx), int(cy), size, size),
-                         self._orb_pixmap(colors[i], peaks[i]))
-        p.end()
-        return layer
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        if self._radius:
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(self.rect()), self._radius, self._radius)
-            p.setClipPath(path)
-        w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            p.end()
-            return
-
-        # --- aurora orbs: one cached composite ---------------------------
-        # Per-theme visibility is the whole game here. On the DEEP-SPACE dark
-        # canvas a light-colored orb ADDS light (normal SourceOver) and reads
-        # instantly. On the PORCELAIN light canvas that same additive light
-        # orb is invisible — lightening near-white does nothing — so light
-        # mode switches to a MULTIPLY blend: the saturated brand orbs now
-        # DARKEN the porcelain into soft, clearly-visible drifting colored
-        # clouds (dusty indigo / rose / violet). Same motion, opposite blend,
-        # visible in both worlds.
-        layer = self._ensure_layer()
-        if layer is not None:
-            if self._light:
-                p.setCompositionMode(
-                    QPainter.CompositionMode.CompositionMode_Multiply)
-            if self._layer_size == (w, h):
-                p.drawPixmap(0, 0, layer)
-            else:
-                # frozen mid-resize — stretch the last good layer to fit
-                p.drawPixmap(QRect(0, 0, w, h), layer)
-            p.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_SourceOver)
-        p.setOpacity(1.0)
-
-        # --- particle field: a fixed constellation -----------------------
-        # Peak alpha and sprite span are per-theme and SOLVED, not picked —
-        # see _STAR_PMAX / _STAR_SPAN_MUL for the measurement and why light
-        # needs both a higher alpha and a wider tail to land at the same
-        # perceived weight as dark.
-        if self._light:
-            base = QColor(38, 50, 120)     # deep indigo motes on porcelain
-            span_key = "px_light"
-            pmax = self._STAR_PMAX["light"]
-        else:
-            base = QColor(200, 214, 255)   # cool starlight on deep space
-            span_key = "px_dark"
-            pmax = self._STAR_PMAX["dark"]
-        # Most repaints here are small regions dirtied by the animations
-        # sitting above this widget, so skip the stars outside them — Qt
-        # would clip the drawing anyway, but not the per-particle trig and
-        # texture lookup that precede it.
-        #
-        # THE REGION, NOT e.rect(). Since the field culls occluded surfaces
-        # (see set_occluders) its dirty area is routinely a ring of exposed
-        # margins around a block of cards, whose BOUNDING RECT is very
-        # nearly the whole widget — so testing against e.rect() would have
-        # quietly stopped skipping anything at all on exactly the pages
-        # where there is most to skip. Testing the sprite's own rect against
-        # the region also replaces the old ±12px point-margin with the real
-        # footprint, so a star whose glow tail reaches into the dirty area
-        # is drawn even when its centre does not.
-        dirty = e.region()
-        for pt in self._particles:
-            x, y = pt["x"] * w, pt["y"] * h
-            span = pt[span_key]
-            if not dirty.intersects(QRect(int(x - span / 2.0) - 1,
-                                          int(y - span / 2.0) - 1,
-                                          span + 2, span + 2)):
-                continue
-            # `_t` is frozen at 0 (see _AmbientSimulation.STATIC), so this
-            # resolves to sin(phase) — the star's own SEEDED offset. That
-            # is what makes a motionless field read as a sky rather than as
-            # 126 identical dots: the seed spreads the 126 stars across the
-            # whole 0.22-1.00 brightness range and pins each one there.
-            tw = 0.5 + 0.5 * math.sin(self._t * pt["tws"] * math.tau + pt["tw"])
-            # Brightness is carried entirely by OPACITY, never by size: a
-            # fixed sprite size is what keeps every blit on the native-size
-            # fast path (see _star_pixmap).
-            p.setOpacity(pmax * pt["dim"] * (0.22 + 0.78 * tw))
-            p.drawPixmap(QPointF(x - span / 2.0, y - span / 2.0),
-                         self._star_pixmap(base, span))
-        p.setOpacity(1.0)
-        p.end()
-
-
-# ============================================================
 #  BREATHING ICON — pure-paint pulsing brand glyph (no effects)
 # ============================================================
 class BreathingIcon(QWidget):
@@ -3952,8 +3104,7 @@ class ActionRow(QFrame):
         # sits before a 42px plaque and the right inset sits after a 36px
         # button, so equal insets would leave the button visibly closer to
         # the edge than the glyph is. lg/md restores the optical balance.
-        row.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
-                               TH.SPACE["md"], TH.SPACE["md"])
+        row_padding(row)
         row.setSpacing(TH.SPACE["md"])
 
         char, fluent = (TH.glyph(item["glyph"]) if item.get("glyph")
@@ -4199,8 +3350,7 @@ class PlaybookStepRow(QFrame):
         self.setObjectName("playbookStep")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(TH.SPACE["md"], TH.SPACE["sm"],
-                               TH.SPACE["md"], TH.SPACE["sm"])
+        row_padding(lay)
         lay.setSpacing(TH.SPACE["md"])
 
         self._lamp = QLabel()
@@ -4337,9 +3487,7 @@ class PlaybookDialog(PulseDialog):
         lay.addWidget(self._summary)
 
         # -- step list -------------------------------------------------
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = FitScroll()
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
@@ -4594,8 +3742,7 @@ class ReportSubCard(QFrame):
         self.setStyleSheet(TH.report_subcard_qss(t, accent))
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
-                                 TH.SPACE["lg"], TH.SPACE["md"])
+        row_padding(outer)
         outer.setSpacing(TH.SPACE["sm"])
 
         head = QHBoxLayout()
@@ -4672,9 +3819,7 @@ class HealthReportDialog(PulseDialog):
         self._status.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._status)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = FitScroll()
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
@@ -4915,9 +4060,7 @@ class ActivationStatusDialog(PulseDialog):
         self._status.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._status)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = FitScroll()
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
@@ -5255,9 +4398,7 @@ class InspectorDialog(PulseDialog):
 
         self.build_controls(lay, t, accent)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = FitScroll()
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
@@ -6375,9 +5516,7 @@ class HubDialog(PulseDialog):
             # a small size hint regardless of what is inside it, so wrapping
             # a two-row list in one would collapse the very content the
             # panel is meant to hug.
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll = FitScroll()
             scroll.setStyleSheet(TH.scroll_area_qss(t))
             scroll.setWidget(host)
             scroll.setMinimumHeight(
@@ -7628,9 +6767,7 @@ class SoftwareCatalogDialog(PulseDialog):
         lay.addLayout(toolbar)
 
         # -- the one continuous list ------------------------------
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = FitScroll()
         scroll.setStyleSheet(TH.scroll_area_qss(t))
 
         host = QWidget()
@@ -8133,7 +7270,7 @@ class OfficeWizardDialog(PulseDialog):
         lay.addLayout(head)
 
         self._pages: dict[str, int] = {}
-        self._stack = QStackedWidget()
+        self._stack = fit_stack(QStackedWidget())
         self._stack.setStyleSheet(TH.stack_qss())
         for name, builder in (
             ("choice", self._build_choice_page),
@@ -8746,8 +7883,7 @@ class DevHubRow(QFrame):
         self._app_name = app_name
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
-                                 TH.SPACE["lg"], TH.SPACE["md"])
+        row_padding(outer)
         outer.setSpacing(TH.SPACE["xxs"])
 
         row = QHBoxLayout()
@@ -8842,8 +7978,7 @@ class UpdateRow(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
-                                 TH.SPACE["lg"], TH.SPACE["md"])
+        row_padding(outer)
         outer.setSpacing(TH.SPACE["xxs"])
 
         row = QHBoxLayout()
@@ -8971,7 +8106,7 @@ class UpdateCenterDialog(PulseDialog):
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._subtitle)
 
-        self._stack = QStackedWidget()
+        self._stack = fit_stack(QStackedWidget())
         self._stack.setStyleSheet(TH.stack_qss())
         lay.addWidget(self._stack, 1)
         self._loading_page = self._build_loading_page()
@@ -9102,9 +8237,7 @@ class UpdateCenterDialog(PulseDialog):
         toolbar.addWidget(self._count_label)
         lay.addLayout(toolbar)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = FitScroll()
         scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
@@ -9435,7 +8568,7 @@ class SelfUpdateDialog(PulseDialog):
         self._meta.setStyleSheet(TH.label_qss(t, "caption"))
         lay.addWidget(self._meta)
 
-        self._stack = QStackedWidget()
+        self._stack = fit_stack(QStackedWidget())
         self._stack.setStyleSheet(TH.stack_qss())
         lay.addWidget(self._stack, 1)
         self._notes_page = self._build_notes_page()
@@ -9456,9 +8589,7 @@ class SelfUpdateDialog(PulseDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(TH.SPACE["md"])
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = FitScroll()
         scroll.setFixedHeight(200)
         scroll.setStyleSheet(TH.scroll_area_qss(t))
         host = QWidget()
@@ -9696,8 +8827,7 @@ class StartupRow(QFrame):
         self._protected = bool(item.get("Protected"))
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
-                                 TH.SPACE["lg"], TH.SPACE["md"])
+        row_padding(outer)
         outer.setSpacing(TH.SPACE["md"])
 
         col = QVBoxLayout()
@@ -9805,7 +8935,7 @@ class StartupManagerDialog(PulseDialog):
         head.addStretch()
         lay.addLayout(head)
 
-        self._stack = QStackedWidget()
+        self._stack = fit_stack(QStackedWidget())
         self._stack.setStyleSheet(TH.stack_qss())
         lay.addWidget(self._stack, 1)
         self._loading_page = self._build_loading_page()
@@ -9941,9 +9071,7 @@ class StartupManagerDialog(PulseDialog):
         self._optimize_btn.clicked.connect(self._start_optimize)
         lay.addWidget(self._optimize_btn)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = FitScroll()
         scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")

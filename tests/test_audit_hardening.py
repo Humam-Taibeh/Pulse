@@ -427,16 +427,44 @@ def test_a_closed_dialog_is_actually_destroyed(window, qapp):
 
 def test_module_navigation_does_not_accumulate(window, qapp):
     """Every page is built once, lazily, then reused. Sweeping all modules
-    repeatedly must not add objects or timers — the 31ms navigation budget
-    depends on pages being reused rather than rebuilt."""
+    repeatedly must not rebuild them - the 31ms navigation budget depends
+    on reuse.
+
+    MEASURED ON THE PAGES AND THEIR CARDS, not on findChildren(object).
+    The old form counted every QObject under the window and compared the
+    totals, which made it a function of whatever transient machinery
+    happened to be alive at each sample: a toast's dismiss timer and its
+    ~8 children (wall-clock lifetimes of 2.5s and 8s from launch), the
+    PageFader's animation group (replaced per fade), the read-only state
+    probe's QThread (started and joined on its own schedule). None of
+    those is navigation rebuilding a page, and all of them move.
+
+    It surfaced when the ambient field was deleted: that removed a
+    150-360ms deferral from every module switch, so the sweep finished
+    sooner, and toasts which used to expire before the baseline now
+    expired after it. The test reported "pages are being rebuilt" on a
+    change whose entire content was deleting objects.
+
+    Pages and cards are what the docstring is actually about, they are
+    created exactly once, and nothing else in the app creates them - so
+    counting them says the thing this test exists to say, and says it the
+    same way on a fast machine and a slow one.
+    """
+    from frontend.main import CategoryPage
+    from frontend.widgets import GlassCard
+
     for index in range(len(window.pages)):     # warm every lazy page first
         window.open_category(index)
         _drain(qapp, 2)
     window.go_home()
     _drain(qapp, 2)
 
-    base_objects = len(window.findChildren(object))
-    base_timers = len(window.findChildren(QTimer))
+    def census():
+        return (len(window.findChildren(CategoryPage)),
+                len(window.findChildren(GlassCard)),
+                len(_navigation_timers(window)))
+
+    base = census()
 
     for _ in range(3):
         for index in range(len(window.pages)):
@@ -445,31 +473,36 @@ def test_module_navigation_does_not_accumulate(window, qapp):
         window.go_home()
         _drain(qapp, 2)
 
-    assert len(window.findChildren(QTimer)) == base_timers, (
-        "module navigation is adding timers — a per-visit QTimer that is "
+    pages, cards, timers = census()
+    assert (pages, cards) == base[:2], (
+        f"module navigation rebuilt pages/cards: {base[:2]} -> "
+        f"{(pages, cards)} - pages are meant to be built once and reused")
+    assert timers == base[2], (
+        "module navigation is adding timers - a per-visit QTimer that is "
         "never stopped keeps firing for the life of the session")
-    assert len(window.findChildren(object)) == base_objects, (
-        f"module navigation grew the object tree from {base_objects} to "
-        f"{len(window.findChildren(object))} — pages are being rebuilt "
-        "rather than reused")
 
 
-def test_the_ambient_glow_caches_stay_bounded(window, qapp):
-    """Both are keyed on values that MUST stay discrete. The orb cache was
-    once keyed on window size and reached 11.9 GB on a single resize drag;
-    the same mistake here would be silent."""
-    glow = window._glow
-    for width in range(900, 1400, 25):          # a resize drag
-        glow.resize(width, 600)
-        glow.repaint()
-        qapp.processEvents()
+def _navigation_timers(window):
+    """Every QTimer under `window` that a toast does not own.
 
-    assert len(glow._orb_cache) <= 32, (
-        f"orb cache reached {len(glow._orb_cache)} entries during a resize — "
-        "it must be keyed on (colour, peak) only, never on size")
-    assert len(glow._star_cache) <= 32, (
-        f"star cache reached {len(glow._star_cache)} entries during a resize — "
-        "star sizes must stay quantised")
+    A toast's dismiss timer is a child of the window and its lifetime is
+    wall-clock, so counting it would couple this assertion to how fast the
+    sweep ran rather than to whether navigation leaks. See the note on the
+    test above.
+    """
+    from utils.helpers import Toast
+
+    def owned_by_toast(obj):
+        node = obj.parent()
+        while node is not None:
+            if isinstance(node, Toast):
+                return True
+            node = node.parent()
+        return False
+
+    return [t for t in window.findChildren(QTimer) if not owned_by_toast(t)]
+
+
 
 
 # ============================================================

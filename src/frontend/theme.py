@@ -65,77 +65,6 @@ def to_qcolor(value: str) -> QColor:
     return QColor(s)
 
 
-def is_opaque(value: str) -> bool:
-    """Does this token cover what is behind it completely?
-
-    The ambient field asks this, and it is the whole basis of its frame
-    budget. AmbientGlow is the bottom widget in the shell, so an update()
-    there dirties the full window and Qt repaints every NON-OPAQUE widget
-    above it, bottom-up — 15.7ms of an 18.5ms frame, 10.9 of it the
-    14-card grid. But the card tiers are `rgba(22, 24, 29, 1.0)` in dark
-    and `rgba(255, 255, 255, 1.0)` in light: the wash is not visible
-    through a card in either theme, and all 10.9ms of that repaint is
-    spent on pixels the user cannot see.
-
-    So the glow culls those regions (AmbientGlow.set_occluders). Deciding
-    which surfaces qualify is exactly this question, and it is asked of
-    the TOKEN rather than answered by a hardcoded list of widget names —
-    a list would be a second copy of the palette's opacity decisions,
-    free to disagree with it the first time a surface is re-tinted. The
-    content well (0.55) and the sidebar (0.60) are translucent BY DESIGN;
-    the wash showing through them is the effect. They must never end up
-    on the cull list, and with this they cannot: nobody has to remember,
-    because nobody is asked.
-
-    Hex tokens ('#rrggbb') have no alpha channel and are opaque.
-    """
-    return to_qcolor(value).alphaF() >= 1.0
-
-
-#: The fraction of a glass surface's height its translucent top sheen
-#: covers. glass_fill's default, named so the ambient field can ask how far
-#: down a card the wash still shows (see opaque_core) instead of repeating
-#: the number.
-GLASS_SHEEN_STOP = 0.13
-
-#: A rounded rect of radius r contains the axis-aligned rect inset by
-#: r*(1 - 1/sqrt(2)) — the point where the inset corner touches the arc.
-#: Anything less clips the corner; the full radius would be correct too but
-#: throws away most of the surface, and the whole value of occlusion is
-#: area.
-_CORNER_INSET = 1.0 - 0.7071067811865476
-
-
-def opaque_core(rect: QRect, radius: int,
-                sheen_stop: float = GLASS_SHEEN_STOP) -> QRect:
-    """The sub-rect of a glass surface that genuinely covers what's behind
-    it — what AmbientGlow is allowed to treat as an occluder.
-
-    A card is NOT opaque over its whole rect, in either theme, and both
-    exceptions are visible if you get them wrong:
-
-    ROUNDED CORNERS. Qt's opacity contract is per-rect, and the corners
-    outside the radius are not painted by the QSS fill at all — the drop
-    shadow is what lives there. Hence the corner inset above.
-
-    THE SHEEN. glass_fill's top stop is `card_sheen`, which is translucent
-    in BOTH themes — rgba(255,255,255,0.045) dark, rgba(255,255,255,0.9)
-    light. So the top `sheen_stop` of every card is a partial veil the wash
-    shows through, not a cover. Culling it would delete the stars from a
-    band across the top of all fourteen cards, which is exactly the kind of
-    bug that looks like "the particles are flickering" rather than like a
-    geometry error.
-
-    Returns a null QRect when nothing is left to claim (a card shorter than
-    its own sheen band), which callers can simply skip.
-    """
-    inset = int(math.ceil(radius * _CORNER_INSET))
-    top = max(inset, int(math.ceil(rect.height() * sheen_stop)) + 1)
-    core = QRect(rect.left() + inset, rect.top() + top,
-                 rect.width() - 2 * inset, rect.height() - top - inset)
-    return core if core.isValid() and not core.isEmpty() else QRect()
-
-
 def blend(base: str, tint: str) -> str:
     """Composite `tint` (an rgba() string) over the OPAQUE `base` and return
     the flat '#rrggbb' result.
@@ -169,6 +98,15 @@ def _parse_color(value: str) -> tuple[int, int, int, float]:
         return int(parts[0]), int(parts[1]), int(parts[2]), a
     r, g, b = _hex_to_rgb(s)
     return r, g, b, 1.0
+
+
+#: The fraction of a glass surface's height its translucent top sheen
+#: covers — glass_fill's default, named rather than repeated at its call
+#: sites. It used to have a second reader: the ambient field asked how far
+#: down a card the wash still showed through, so it could subtract the rest
+#: as an occluder. That field, and the whole occlusion system with it, is
+#: gone as of v10.6; the sheen it describes is not.
+GLASS_SHEEN_STOP = 0.13
 
 
 def glass_fill(t: dict, base: str, sheen_stop: float = GLASS_SHEEN_STOP) -> str:
@@ -313,6 +251,15 @@ RADIUS = {
 #: Both are enforced by test_layout_contract.
 PLAQUE_SIZE = 36
 CONTROL_H = 36
+
+#: The icon well's corner, and the one place a surface takes the SMALL
+#: tier. RADIUS['plaque'] (12) is the tier for things you OPERATE — nav
+#: entries, list rows, the card itself. A 36px well holding a 20px glyph is
+#: not one of those: at that size a 12px corner eats most of the edge and
+#: the well reads as a squircle blob rather than as a plate, which is the
+#: same reason a chip takes 8. Named rather than written as RADIUS['chip']
+#: at the call site so the well and its size stay one decision.
+PLAQUE_RADIUS = _R_SMALL
 
 #: THE GLYPH SCALE — the fifth and last hand-picked dimension in the app.
 #:
@@ -880,13 +827,24 @@ _DARK = {
     # window path was dropped, so nothing had read it in either mode for
     # several versions.)
     "bg_solid":    "#090a0b",
-    # shell gradient — a shallow obsidian fall around the jet base. Kept
-    # NEUTRAL (r≈g≈b) and deliberately narrow: v13's #14171f top carried a
-    # visible blue cast, which is the "muddy navy grey" the obsidian pass
-    # exists to remove, and a steep gradient on a canvas this dark reads as
-    # a vignette artifact rather than as light.
-    "bg_grad_top":    "#0c0d10",
-    "bg_grad_bottom": "#08090a",
+    # THE CANVAS. As of v10.6 this two-stop ramp is the ENTIRE background:
+    # the ambient field that used to sit on top of it — five drifting
+    # aurora orbs and 126 twinkling stars, with two renderers and an
+    # occlusion system to afford them — is deleted. What is left is what
+    # the app was always painting underneath all of it.
+    #
+    # Kept NEUTRAL (r≈g≈b): v13's #14171f top carried a visible blue cast,
+    # which is the "muddy navy grey" the obsidian pass exists to remove.
+    #
+    # The span widens 4 levels -> 7 now that it is alone. It could afford
+    # to be narrow while orbs supplied the modelling; with nothing else on
+    # the canvas, too shallow a ramp reads as a flat black rectangle rather
+    # than as a lit surface. 7 levels is still far under the threshold at
+    # which a gradient on a canvas this dark starts to read as a vignette
+    # artifact, and it lands the base exactly on `bg_solid` so the shell,
+    # the window's own palette brush and the canvas agree at the bottom.
+    "bg_grad_top":    "#101216",
+    "bg_grad_bottom": "#090a0b",
     # v14 INVERTS THE WELL. Through v13 the content frame RECESSED below the
     # canvas (a near-black wash) and elevation was bought by digging; the
     # jet-obsidian base has nowhere left to dig, and a well darker than
@@ -954,6 +912,21 @@ _DARK = {
     # low enough that a row under the pointer never competes with a row
     # that is genuinely SELECTED (which keeps the accent tint, at 0.16).
     "row_hover":   "rgba(255, 255, 255, 0.06)",
+    # THE ICON WELL, and it is deliberately NEUTRAL.
+    #
+    # Through v10.5 every plaque was washed in its own MODULE ACCENT — the
+    # v9 "Spectrum" idea, where the sidebar and the card grid read as a
+    # coloured rail. It works as a diagram of the information architecture
+    # and fights everything else: six accents across fourteen cards is six
+    # competing hues on one screen, and the glyph inside each well is
+    # already carrying that module's colour, so the well was saying the
+    # same thing a second time and louder.
+    #
+    # A single low-alpha neutral makes the well a SURFACE the glyph sits
+    # on rather than a second label. The colour stays exactly where it
+    # belongs: on the glyph.
+    #
+    "plaque_well":  "rgba(255, 255, 255, 0.04)",
     # THE CONTENT HAIRLINE, and the one place the v14 spec's flat 0.08 is
     # not taken literally. A card's edge has to separate from the card's OWN
     # FILL, which is a different question from a container's edge separating
@@ -1179,6 +1152,10 @@ _LIGHT = {
     # rather than 0.06 white because a subtractive pill on paper reads
     # heavier than an additive one on obsidian at equal alpha.
     "row_hover":   "rgba(0, 0, 0, 0.05)",
+    # The light twin of dark's neutral icon well (see the note there).
+    # INVERTED rather than re-alphaed: white on porcelain is invisible, so
+    # the well darkens instead of lightening.
+    "plaque_well":  "rgba(0, 0, 0, 0.04)",
     # The content hairline — the light twin of dark's, and the same single
     # deviation from the spec's flat 0.08 for the same measured reason. A
     # card's edge must separate from the card's OWN FILL at 1.45:1

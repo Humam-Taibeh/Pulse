@@ -36,22 +36,9 @@ _SRC = os.path.join(_ROOT, "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-# --- 3. AMBIENT RENDERER: pinned to raster for the whole suite -----------
-# PulseApp picks its ambient renderer by probing the machine's OpenGL (see
-# ambient_gl.capability), so `window._glow` would otherwise be a different
-# class on a developer's GPU box than on a headless CI runner — and the
-# raster field's contracts (the cached orb layer, the star texture cache,
-# the paint budget) are about a QPainter implementation that the GPU field
-# does not have.
-#
-# A suite whose subject depends on the host's graphics driver is not a
-# regression suite. This pins every test that goes through PulseApp to the
-# raster path; the GPU renderer is covered by tests/test_ambient_gl.py,
-# which constructs it explicitly and skips when there is no usable GL.
-os.environ.setdefault("PULSE_AMBIENT", "raster")
 
 WINDOWS_ONLY = pytest.mark.skipif(
     sys.platform != "win32", reason="Win32 window integration is Windows-only")
@@ -199,8 +186,26 @@ def fresh_window(qapp):
         return win
 
     yield build
+    # CLOSED IS NOT DESTROYED, and the difference is fatal at exit.
+    #
+    # close() hides the window and runs PulseApp.closeEvent, which settles
+    # its worker threads — but the QWidget itself stays alive, owned by the
+    # Python reference in `made`. Once this fixture returns, that reference
+    # is the last one, so the C++ QWidget is destroyed whenever CPython
+    # happens to collect the wrapper: potentially during interpreter
+    # finalization, after QApplication has already gone. Destroying a
+    # QWidget with no living QApplication is undefined behaviour that does
+    # not raise — the process dies with 0xC0000409 and no traceback, and a
+    # fully green session exits non-zero with its summary line missing.
+    #
+    # deleteLater() + a drained event loop puts the destruction HERE, while
+    # the application is alive and the fixture can still be blamed for it.
     for win in made:
         win.close()
+        win.deleteLater()
+    made.clear()
+    qapp.processEvents()
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qapp.processEvents()
 
 

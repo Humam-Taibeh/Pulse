@@ -16,6 +16,95 @@ GUI version, with core changes called out explicitly.
 
 ---
 
+## [10.6.0] — 2026-08-29
+
+The background is gone, the dialogs fit what is in them, and every leading
+icon is the same object.
+
+### Removed — the ambient field, entirely
+- **The canvas is one two-stop gradient (`#101216` → `#090A0B`) and
+  nothing else.** v10.5 froze the ambient field; this release deletes it —
+  five aurora orbs, 126 depth-tiered stars, the raster renderer, the
+  OpenGL 3.3 renderer, the capability probe that chose between them, the
+  frame governor, the deferral mechanism, and the occlusion system
+  (`_sync_ambient_occluders`, `_queue_occluder_sync`, `_viewport_clip`,
+  `GlassCard.opaque_core`, `theme.is_opaque`, `theme.opaque_core`) that
+  existed only to stop it repainting pixels nobody could see. ~2,600 lines.
+  A still field is a picture, and the picture it drew was noise over a
+  gradient the shell was already painting underneath it.
+- `PULSE_AMBIENT` and the OpenGL 3.3 optional requirement go with it.
+
+### Changed — dialogs fit their content
+- **Selectors hug their height.** A selector used to be handed a FIXED
+  height derived from the window, so the Update Center holding ONE update
+  rendered at the same size as one holding thirty — ~500px of empty black
+  under a single row, which is the screenshot this release exists to
+  delete. A one-row Update Center is now 255px tall; a 60-row one stops at
+  the cap and scrolls inside it.
+- Two causes, both fixed. `FitScroll` reports the height its CONTENT wants
+  (a plain QScrollArea has no opinion, being a viewport onto something
+  arbitrarily large) and subscribes to the content's LayoutRequest, so a
+  list that streams rows in after construction re-measures itself.
+  `fit_stack` makes a QStackedWidget report the CURRENT page rather than
+  its tallest — the Update Center's one-row results page was reserving the
+  height of its empty-state page, ~90px of black, forever.
+- **Selector width comes down 800–1280 → 760–840**, and the action band
+  stays 580–640. Past ~840 a row's text runs beyond the measure at which
+  prose stays readable and a two-column row becomes two things separated
+  by a void. The documented exception survives: a content floor wider than
+  the band still wins, because a ceiling that clipped content would be
+  choosing empty margins over legibility.
+
+### Changed — one icon, one well, one row
+- **Every leading icon is a 36×36 well, radius 8, filled
+  `rgba(255,255,255,0.04)`** (inverted for light). It used to be four
+  accent-tinted passes — an ambient halo walking outward through reserved
+  padding, a gradient wash, an outer hairline and a lit inner rim — in the
+  module's own colour, in both the card grid and the sidebar. Six accents
+  across fourteen cards is six competing hues on one screen, and the glyph
+  inside each well already carried that colour, so the well was saying it
+  twice. The colour stays on the glyph; the well became a surface.
+- `IconPlaque._PAD` is 0, so the widget IS the well: a leading icon is
+  exactly `PLAQUE_SIZE` square everywhere, which is what made it worth
+  standardising. Sidebar selection lifts the same neutral rather than
+  colouring it.
+- **`row_padding()`**: one 12px/16px inset for all five row types. Three
+  had already converged on it; the action row ran 16/12/12/12 and the
+  playbook step row 12/8/12/8.
+
+### Fixed
+- **A green test run could exit non-zero and abort the process**, with no
+  traceback and its summary line missing — first on CI, then reproducibly
+  here once deleting the ambient field removed ~150–360ms of deferral from
+  every page transition and let dialogs be destroyed sooner. Two distinct
+  causes, both real outside the suite:
+  - a worker thread emitting a Qt signal whose owner had already been
+    destroyed raises `RuntimeError` inside a slot on a non-main thread,
+    which PySide6 treats as fatal (0xC0000409). Every emit in
+    `PowerShellTask` and both self-update workers now goes through
+    `safe_emit`, because a signal exists to tell an owner something and
+    there is no owner left to tell.
+  - `tests/conftest.py`'s `fresh_window` closed its cold windows but never
+    destroyed them, so their C++ objects were freed whenever CPython
+    collected the wrapper — potentially after `QApplication` was gone.
+- `test_module_navigation_does_not_accumulate` counted every QObject under
+  the window, which made it a function of how FAST navigation ran rather
+  than of whether it leaked: toasts expire on a wall clock, and a faster
+  sweep moved them across the baseline. It now counts pages and cards,
+  which is what its docstring always claimed.
+
+### Tests
+- 833 pytest (832 passing, 1 environment skip) and 126 Pester. Down from
+  893 because the two ambient suites (58 tests) tested a subject that no
+  longer exists; the native count falls 119 → 80 for the same reason.
+- New: content-hugging guards (a selector grows with its rows, stops at
+  the cap, stays inside the width band at three window sizes, its stack
+  reports the current page, `FitScroll` follows rows added later), the
+  canvas ramp's two ends and neutrality, and an explicit assertion that
+  every piece of the ambient field is gone.
+
+---
+
 ## [10.5.0] — 2026-08-28
 
 A still background, a compact action dialog, and an updater that says what

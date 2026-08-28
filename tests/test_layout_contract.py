@@ -751,9 +751,14 @@ def test_a_hub_is_only_as_tall_as_what_it_offers(window, qapp):
         W.refit_dialog(dialog)
         qapp.processEvents()
         heights[len(hub["items"])] = dialog.panel.height()
-        assert dialog.panel.height() < W._SELECTOR_HEIGHT_MIN, (
-            f"{hub['title']} is {dialog.panel.height()}px tall - taller than "
-            "the SELECTOR band's own floor, so it is not hugging anything")
+        # Compared against the SELECTOR band's cap, not its floor. Both
+        # bands hug their content as of v10.6, so the floor no longer
+        # separates them - what still does is that a two-action hub must
+        # come nowhere near the height a thirty-row list is allowed.
+        cap = W._selector_panel_height_cap(dialog)
+        assert dialog.panel.height() < cap * 0.75, (
+            f"{hub['title']} is {dialog.panel.height()}px tall against a "
+            f"{cap}px selector cap - it is not hugging its two rows")
         dialog.reject()
         dialog.deleteLater()
     qapp.processEvents()
@@ -861,6 +866,194 @@ def test_a_destructive_row_cannot_be_fired_by_a_stray_click(window, qapp):
             row.setParent(None)
             row.deleteLater()
         qapp.processEvents()
+
+
+# ============================================================
+#  CONTENT HUGGING  (v10.6)
+# ============================================================
+def _rows(count):
+    return [{"Id": f"A.B{i}", "Name": f"App {i}", "CurrentVersion": "1.0",
+             "AvailableVersion": "2.0"} for i in range(count)]
+
+
+@pytest.fixture
+def quiet_update_center(monkeypatch):
+    """The Update Center without its live winget scan — see the note in
+    tests/test_live_updater.py. These tests are about geometry."""
+    from frontend import widgets as W
+    monkeypatch.setattr(W.UpdateCenterDialog, "_start_scan", lambda self: None)
+
+
+def test_a_selector_grows_with_its_content(window, qapp, quiet_update_center):
+    """THE DEFECT THIS BAND WAS REBUILT FOR.
+
+    Selectors used to be given a FIXED height derived from the window, so
+    the Update Center holding ONE update rendered at the same height as one
+    holding thirty — roughly 500px of empty black under a single row, which
+    is what the screenshots that prompted this pass show.
+    """
+    from PySide6.QtWidgets import QDialog
+    from frontend import widgets as W
+    from utils.helpers import TaskResult
+
+    heights = {}
+    for count in (1, 3, 8):
+        dialog = W.UpdateCenterDialog(window, "", window.theme.t)
+        dialog.show()
+        qapp.processEvents()
+        dialog._on_scan_finished(
+            TaskResult(success=True, message="ok", data=_rows(count)))
+        qapp.processEvents()
+        W.refit_dialog(dialog)
+        qapp.processEvents()
+        heights[count] = dialog.panel.height()
+        dialog.reject()
+        dialog.deleteLater()
+    qapp.processEvents()
+
+    assert heights[1] < heights[3] < heights[8], (
+        f"the panel does not track its row count: {heights}")
+    assert heights[1] < 320, (
+        f"a ONE-row Update Center is {heights[1]}px tall — it is reserving "
+        "space for rows that do not exist")
+
+
+def test_a_selector_stops_growing_at_the_cap_and_scrolls(
+        window, qapp, quiet_update_center):
+    """Hugging is not licence to outgrow the window. Past the cap the list
+    scrolls inside a panel that has stopped growing."""
+    from frontend import widgets as W
+    from utils.helpers import TaskResult
+
+    dialog = W.UpdateCenterDialog(window, "", window.theme.t)
+    dialog.show()
+    qapp.processEvents()
+    dialog._on_scan_finished(
+        TaskResult(success=True, message="ok", data=_rows(60)))
+    qapp.processEvents()
+    W.refit_dialog(dialog)
+    qapp.processEvents()
+    try:
+        cap = W._selector_panel_height_cap(dialog)
+        assert dialog.panel.height() <= cap
+        assert dialog.panel.height() <= window.height(), (
+            "the panel grew past the window it opens inside")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("host_size", [(1100, 700), (1360, 900), (2560, 1440)])
+def test_every_selector_stays_inside_the_width_band(window, qapp, host_size,
+                                                    quiet_update_center):
+    """760-840, at every window size.
+
+    The one documented exception is a content floor wider than the band —
+    see _selector_panel_width — so the assertion allows a panel to exceed
+    the ceiling only when its own layout demands it, and never to fall
+    under the floor.
+    """
+    from frontend import widgets as W
+
+    original = window.size()
+    window.resize(*host_size)
+    qapp.processEvents()
+    try:
+        for name, build in _dialog_specs(window):
+            dialog = build()
+            if getattr(dialog, "_responsive_panel", None) != "selector":
+                dialog.reject()
+                dialog.deleteLater()
+                continue
+            dialog.show()
+            qapp.processEvents()
+            W.refit_dialog(dialog)
+            qapp.processEvents()
+            width = dialog.panel.width()
+            floor = dialog.panel.layout().minimumSize().width()
+            assert width >= W._SELECTOR_WIDTH_MIN, (
+                f"{name} is {width}px wide at {host_size} — under the band")
+            assert width <= max(W._SELECTOR_WIDTH_MAX, floor), (
+                f"{name} is {width}px wide at {host_size} against a "
+                f"{W._SELECTOR_WIDTH_MAX}px ceiling and a {floor}px content "
+                "floor")
+            dialog.reject()
+            dialog.deleteLater()
+        qapp.processEvents()
+    finally:
+        window.resize(original)
+        qapp.processEvents()
+
+
+def test_a_page_stack_reports_the_current_page(window, qapp, quiet_update_center):
+    """QStackedLayout's hint is the MAX over every page, so a dialog that
+    hugs its content pays for its tallest page forever. Measured before
+    fit_stack: a one-row Update Center reserved the height of its
+    empty-state page (a hero glyph, a centred sentence and two stretches)
+    — ~90px of black under a single row."""
+    from frontend import widgets as W
+    from utils.helpers import TaskResult
+
+    dialog = W.UpdateCenterDialog(window, "", window.theme.t)
+    dialog.show()
+    qapp.processEvents()
+    dialog._on_scan_finished(
+        TaskResult(success=True, message="ok", data=_rows(1)))
+    qapp.processEvents()
+    try:
+        stack = dialog._stack
+        current = stack.currentWidget()
+        tallest = max(stack.widget(i).sizeHint().height()
+                      for i in range(stack.count()))
+        assert stack.sizeHint().height() <= current.sizeHint().height() + 4, (
+            f"the stack reports {stack.sizeHint().height()}px for a page "
+            f"that wants {current.sizeHint().height()}px (tallest page: "
+            f"{tallest}px) — hidden pages are still being counted")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
+def test_fit_scroll_follows_rows_added_after_construction(window, qapp):
+    """Qt caches a child's hint. The Update Center streams rows in as its
+    scan finds them, so a FitScroll that only measured once would report
+    the height it had while empty — which it did, until setWidget started
+    watching for LayoutRequest."""
+    from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+    from frontend import widgets as W
+
+    scroll = W.FitScroll(parent=window)
+    host = QWidget()
+    lay = QVBoxLayout(host)
+    lay.setContentsMargins(0, 0, 0, 0)
+    scroll.setWidget(host)
+    scroll.show()
+    qapp.processEvents()
+    try:
+        empty = scroll.sizeHint().height()
+        for i in range(5):
+            row = QLabel(f"row {i}")
+            row.setFixedHeight(40)
+            lay.addWidget(row)
+        qapp.processEvents()
+        filled = scroll.sizeHint().height()
+        assert filled >= empty + 5 * 40 - 8, (
+            f"hint went {empty} -> {filled} after adding 200px of rows")
+    finally:
+        scroll.setParent(None)
+        scroll.deleteLater()
+        qapp.processEvents()
+
+
+def test_fit_scroll_can_be_squeezed_below_its_content(window, qapp):
+    """minimumSizeHint is 0 on purpose: past the panel's cap the area must
+    yield and scroll, not push the dialog past the window."""
+    from frontend import widgets as W
+
+    scroll = W.FitScroll(parent=window)
+    assert scroll.minimumSizeHint().height() == 0
 
 
 # ============================================================

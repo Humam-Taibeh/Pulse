@@ -175,13 +175,9 @@ jobs:
       # full 838 — but that would be a silent loss of coverage, hence the
       # explicit floor asserted in the step below.
       #
-      # The GPU ambient renderer is NOT covered here and cannot be: its
-      # live-GL tests are opt-in behind PULSE_TEST_GL=1 (a GL context and a
-      # PulseApp abort the process when they share a pytest session), and
-      # the runners have no hardware GL regardless. That gap is why the
-      # fractional-DPI viewport bug shipped, and why its guard in
-      # tests/test_ambient_gl.py asserts on source shape rather than
-      # pixels — so it runs here, on this runner, with no GPU.
+      # There is no GPU path to cover any more: v10.6 deleted the ambient
+      # field and its OpenGL renderer outright, so the app asks nothing of
+      # the graphics stack beyond what Qt needs to draw a gradient.
       # THE RUNNER'S DESKTOP IS 1024x768, AND A QUARTER OF THIS SUITE CARES.
       #
       # Measured from a failing run: a resize(1150, 780) came back
@@ -267,8 +263,8 @@ jobs:
       # suite grew to 838 with 115 native. A headless runner would have run
       # ~716 — comfortably OVER the old floor — so the guard would have
       # passed while testing none of the Win32 behaviour it exists to
-      # protect. 850 sits above the headless figure and below the ~886 a
-      # healthy run executes (893 collected, 5 environment skips, and the
+      # protect. 780 sits above the headless figure and below the ~830 a
+      # healthy run executes (833 collected, 1 environment skip, and the
       # 2 playbook tests that skip on an elevated runner by design).
       - name: Assert the native tests actually ran
         shell: powershell
@@ -279,8 +275,8 @@ jobs:
           $skipped = [int]$suite.skipped
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
-          if ($ran -lt 850) {
-            Write-Error "Only $ran test(s) executed - expected the full native suite (>=850). The runner is probably headless, or collection broke."
+          if ($ran -lt 780) {
+            Write-Error "Only $ran test(s) executed - expected the full native suite (>=780). The runner is probably headless, or collection broke."
             exit 1
           }
 
