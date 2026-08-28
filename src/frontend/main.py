@@ -1453,6 +1453,22 @@ class PulseApp(QMainWindow):
         self._ui_ready = False
         # True only between WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE — see nativeEvent.
         self._in_size_move = False
+        #: True from the moment closeEvent commits to closing.
+        #:
+        #: THE PROBE IS SCHEDULED 600ms AFTER LAUNCH and every task
+        #: completion re-arms it 400ms later, so a window closed inside
+        #: either window has a QTimer in flight that will call
+        #: _refresh_tweak_state on a window whose closeEvent has already
+        #: settled its threads. That starts a BRAND NEW QThread on an
+        #: object about to be destroyed, and destroying a QWidget with a
+        #: running QThread child is qFatal — the process aborts with
+        #: 0xC0000409, no traceback and no Qt warning.
+        #:
+        #: Reachable from the shipped UI by launching Pulse and closing it
+        #: within 600ms, which is a thing people do to a tool that opened
+        #: on the wrong monitor. It surfaced on CI first, where a slower
+        #: machine made the race the common case rather than the rare one.
+        self._shutting_down = False
         self.setWindowTitle("Pulse")
         # Min/Max hints keep the frameless window a first-class citizen to
         # the OS: taskbar minimize animation and Win+Up/Down work natively.
@@ -1952,7 +1968,11 @@ class PulseApp(QMainWindow):
         user can change any of these settings outside Pulse, so the honest
         answer is always the one the system gives right now.
         """
-        if not self.ps1_path or self._probe_thread is not None:
+        # A CLOSING WINDOW STARTS NOTHING. See the note on _shutting_down:
+        # this method is reached from timers armed up to 600ms earlier, so
+        # "is the window still there?" cannot be assumed from having been
+        # called at all.
+        if self._shutting_down or not self.ps1_path or self._probe_thread is not None:
             return
         thread = QThread(self)
         worker = PowerShellTask(self.ps1_path, "GetTweakState", timeout=90)
@@ -2053,7 +2073,15 @@ class PulseApp(QMainWindow):
         self._check_for_updates(silent=False)
 
     def _check_for_updates(self, silent: bool):
-        if self._update_check_thread is not None:
+        # A CLOSING WINDOW STARTS NOTHING — the third entry point that
+        # needs saying so, and they are all the same shape: a QTimer armed
+        # during __init__ (2500ms here, 600ms for the applied-state probe)
+        # firing into a window the user closed in the meantime. This one
+        # touches update_badge on its first line and then starts a QThread,
+        # so unguarded it produced both halves of the failure: a printed
+        # `libshiboken: Internal C++ object (UpdateBadge) already deleted`,
+        # and a live thread on an object about to be destroyed.
+        if self._shutting_down or self._update_check_thread is not None:
             return
         # `silent` travels on self and the slot below is a BOUND METHOD.
         # Both halves of that are the thread-affinity contract, not style.
@@ -2107,7 +2135,20 @@ class PulseApp(QMainWindow):
         """GUI-THREAD ONLY. Connected as a bound method precisely so Qt
         queues it here rather than running it on the check worker's thread
         — see the note in _check_for_updates. Everything below touches
-        widgets, so this running anywhere else is the freeze bug."""
+        widgets, so this running anywhere else is the freeze bug.
+
+        AND ONLY IF THERE IS STILL A WINDOW TO PAINT. The check is a
+        urllib GET whose only brake is its own timeout (5s connect, 10s
+        read), so it routinely outlives a window closed shortly after
+        launch. Every line below then addresses a widget whose C++ side is
+        gone: measured, `libshiboken: Internal C++ object (UpdateBadge)
+        already deleted`. It surfaces as a printed RuntimeError today
+        because Qt delivers this on the GUI thread — on a worker thread the
+        same shape aborts the process, which is exactly what the probe
+        timer was doing two methods up.
+        """
+        if self._shutting_down:
+            return
         silent = self._update_check_silent
         self._pending_update = update
         if update is None:
@@ -2941,6 +2982,12 @@ class PulseApp(QMainWindow):
     # ============================================================
     def showEvent(self, event):
         super().showEvent(event)
+        # SHOWN MEANS ALIVE. `_shutting_down` records that a close is in
+        # progress, not that one ever happened: Qt lets a closed window be
+        # shown again, and a window on screen that had quietly stopped
+        # refreshing its card badges and checking for updates would be a
+        # worse bug than the abort the flag exists to prevent.
+        self._shutting_down = False
         if not self._glass_applied:
             self._glass_applied = True
             hwnd = int(self.winId())
@@ -3081,6 +3128,14 @@ class PulseApp(QMainWindow):
                     CloseConfirmDialog(self, self.theme.t, title)) != QDialog.DialogCode.Accepted:
                 event.ignore()
                 return
+
+        # SET BEFORE ANYTHING IS TORN DOWN, and after the last chance to
+        # cancel. From here the close is going ahead, so nothing may start
+        # new background work — see _shutting_down and the probe's guard.
+        # Placed after the CloseConfirmDialog above on purpose: a user who
+        # declines keeps a fully live window, not one that has quietly
+        # stopped refreshing its card badges.
+        self._shutting_down = True
 
         prefs.set_window_geometry(self.saveGeometry())
         prefs.set_drawer_pinned(self.activity.is_pinned())

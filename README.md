@@ -132,7 +132,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task. v10.4 is the first release built by this pipeline end to end — see [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (833) + **Pester 5+** (126) | 80 tests marked `native` need a real window station |
+| Tests | **pytest 8** (840) + **Pester 5+** (126) | 80 tests marked `native` need a real window station |
 
 ### Data flow
 

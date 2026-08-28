@@ -264,7 +264,7 @@ jobs:
       # ~716 — comfortably OVER the old floor — so the guard would have
       # passed while testing none of the Win32 behaviour it exists to
       # protect. 780 sits above the headless figure and below the ~830 a
-      # healthy run executes (833 collected, 1 environment skip, and the
+      # healthy run executes (840 collected, 1 environment skip, and the
       # 2 playbook tests that skip on an elevated runner by design).
       - name: Assert the native tests actually ran
         shell: powershell

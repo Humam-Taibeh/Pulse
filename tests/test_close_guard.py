@@ -14,6 +14,8 @@ already been killed.
 from __future__ import annotations
 
 import pytest
+
+from conftest import settle
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QDialog
 
@@ -212,3 +214,96 @@ class TestDialogItself:
             assert "An operation" in labels
         finally:
             dialog.deleteLater()
+
+# ============================================================
+#  CLOSING WINDOWS START NOTHING  (v10.6)
+# ============================================================
+class TestNothingStartsAfterClose:
+    """A window closed shortly after launch must not start background work.
+
+    THE CRASH THIS PINS. Two QTimers are armed during __init__ — the
+    applied-state probe at 600ms and the self-update check at 2500ms — and
+    both call back into the window to START A QTHREAD. Close the window
+    before either fires (launching Pulse and closing it because it opened
+    on the wrong monitor is an ordinary thing to do) and the timer lands on
+    a window whose closeEvent has already settled its threads. The new
+    thread then belongs to an object about to be destroyed, and destroying
+    a QWidget with a running QThread child is qFatal: the process aborts
+    with 0xC0000409, no traceback and no Qt warning.
+
+    It reached CI as a fully green pytest run that exited non-zero with its
+    summary line missing, and reproduced here only once the ambient field's
+    deletion removed ~150-360ms of deferral from page transitions and let
+    windows be destroyed sooner. Measured against the real sequence: one
+    live thread survived the probe window without the guard, zero with it.
+    """
+
+    def test_the_flag_is_clear_while_the_window_is_alive(self, fresh_window):
+        """On a FRESH window, not the session one: other tests in this file
+        deliberately close the shared window, and the flag is a record of
+        "a close is in progress" rather than of the window's whole life."""
+        assert fresh_window()._shutting_down is False
+
+    def test_showing_a_closed_window_makes_it_live_again(self, fresh_window, qapp):
+        """Qt lets a closed window be shown again. One that came back on
+        screen having quietly stopped refreshing its badges and checking
+        for updates would be a worse bug than the abort the flag prevents."""
+        win = fresh_window()
+        win.close()
+        qapp.processEvents()
+        assert win._shutting_down is True
+        win.showNormal()
+        qapp.processEvents()
+        assert win._shutting_down is False
+
+    def test_closing_sets_it_before_anything_is_torn_down(self, fresh_window, qapp):
+        win = fresh_window()
+        assert win._shutting_down is False
+        win.close()
+        qapp.processEvents()
+        assert win._shutting_down is True
+
+    def test_a_closed_window_refuses_to_start_the_state_probe(
+            self, fresh_window, qapp):
+        win = fresh_window()
+        win.close()
+        qapp.processEvents()
+        win._refresh_tweak_state()          # what the 600ms timer does
+        qapp.processEvents()
+        assert win._probe_thread is None, (
+            "a closed window started the applied-state probe — the thread "
+            "outlives the window and aborts the process when it is deleted")
+
+    def test_a_closed_window_refuses_to_start_the_update_check(
+            self, fresh_window, qapp):
+        win = fresh_window()
+        win.close()
+        qapp.processEvents()
+        win._check_for_updates(silent=True)   # what the 2500ms timer does
+        qapp.processEvents()
+        assert win._update_check_thread is None
+
+    def test_a_late_update_result_is_dropped_rather_than_painted(
+            self, fresh_window, qapp):
+        """The check is a urllib GET with a 5s connect + 10s read timeout,
+        so it routinely outlives a window closed just after launch. Its
+        result slot touches the badge on its first line."""
+        win = fresh_window()
+        win.close()
+        qapp.processEvents()
+        win._on_update_checked(None)          # must not touch any widget
+        qapp.processEvents()
+
+    def test_no_thread_survives_a_close_and_its_timer_windows(
+            self, fresh_window, qapp):
+        """End to end, at the exact shape the runner hit: construct, close
+        immediately, then pump the loop past BOTH timers."""
+        from PySide6.QtCore import QThread
+
+        win = fresh_window()
+        win.close()
+        settle(qapp, 800)                     # past the 600ms probe
+        alive = [t for t in win.findChildren(QThread) if t.isRunning()]
+        assert not alive, (
+            f"{len(alive)} thread(s) still running after close — deleting "
+            "this window would abort the process")
