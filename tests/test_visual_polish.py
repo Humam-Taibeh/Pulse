@@ -346,7 +346,7 @@ class TestElidedCaption:
             f"truncates {text!r} at that width — the caption can never "
             "render in full")
 
-    def test_a_caption_on_a_PLATE_elides_inside_its_padding(self, qapp):
+    def test_a_caption_on_a_PLATE_elides_inside_its_padding(self, window, qapp):
         """The v10.5 regression, and the one failure mode this whole class
         exists to prevent — reintroduced by putting it on a tinted plate.
 
@@ -364,12 +364,19 @@ class TestElidedCaption:
 
         for mode in ("dark", "light"):
             t = TH.ThemeManager(mode, None).t
-            label = ElidedCaption(max_width=320)
+            # PARENTED and never shown. A parentless QLabel that is show()n
+            # is a real top-level window on the runner's desktop, and one
+            # left to be destroyed at interpreter shutdown can take a green
+            # session's exit code with it. ensurePolished() is what the
+            # measurement actually needs - the font-size lives in the
+            # stylesheet, so fontMetrics() reports the default UI font until
+            # the style has been applied.
+            label = ElidedCaption(max_width=320, parent=window)
             label.setStyleSheet(TH.stage_chip_qss(t))
             label.setFullText(
                 "Downloading Mozilla Firefox 145.0 (replacing 144.0.2)...")
+            label.ensurePolished()
             label.resize(label.sizeHint())
-            label.show()
             qapp.processEvents()
             try:
                 room = label.contentsRect().width()
@@ -381,24 +388,24 @@ class TestElidedCaption:
                     f"{mode}: the caption draws {drawn}px of text into "
                     f"{room}px of room — it is clipping, not eliding")
             finally:
-                label.hide()
+                label.setParent(None)
                 label.deleteLater()
         qapp.processEvents()
 
-    def test_a_squeezed_plate_caption_still_shows_an_ellipsis(self, qapp):
+    def test_a_squeezed_plate_caption_still_shows_an_ellipsis(self, window, qapp):
         """...and when it genuinely does not fit, it says so. A clip is
         indistinguishable from a sentence that happened to end there."""
         from frontend import theme as TH
         from frontend.widgets import ElidedCaption
 
         t = TH.ThemeManager("dark", None).t
-        label = ElidedCaption(max_width=320)
+        label = ElidedCaption(max_width=320, parent=window)
         label.setStyleSheet(TH.stage_chip_qss(t))
         label.setFullText(
             "Downloading Microsoft Visual Studio Code 1.108.2 (replacing "
             "1.107.0)...")
+        label.ensurePolished()
         label.resize(140, label.sizeHint().height())
-        label.show()
         qapp.processEvents()
         try:
             assert "…" in label.text(), (
@@ -407,7 +414,7 @@ class TestElidedCaption:
             assert (label.fontMetrics().horizontalAdvance(label.text())
                     <= label.contentsRect().width())
         finally:
-            label.hide()
+            label.setParent(None)
             label.deleteLater()
         qapp.processEvents()
 

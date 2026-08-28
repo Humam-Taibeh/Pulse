@@ -232,7 +232,31 @@ jobs:
           # doubling of the runner's own baseline (~15-20ms), which is what
           # the guard exists to catch.
           PULSE_RENDER_BUDGET_MS: "30"
-        run: python -m pytest tests -v --junitxml=junit.xml
+        # THE EXIT CODE IS REPORTED SEPARATELY FROM THE TEST RESULT, and
+        # they are not the same fact. A run whose every assertion passed
+        # can still end non-zero: Qt calls qFatal and ABORTS when a QThread
+        # is destroyed while running, or when a widget outlives its
+        # QApplication, and neither writes a traceback. The step then fails
+        # with pwsh's own "Process completed with exit code 1" while pytest
+        # printed a green summary two lines above — which reads as anything
+        # except what it is.
+        #
+        # Printing the real code makes the two states distinguishable at a
+        # glance: 0 with a green summary is clean; 1 means tests actually
+        # failed; anything else (3, 0xC0000409, ...) is a crash during
+        # shutdown, and the number itself says which kind.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python -m pytest tests -v --junitxml=junit.xml
+          $code = $LASTEXITCODE
+          Write-Output "pytest process exit code: $code"
+          if ($code -ne 0) {
+            if ($code -ne 1) {
+              Write-Output "::error::pytest exited $code with no test failures - this is a crash during interpreter shutdown, not a failing assertion."
+            }
+            exit $code
+          }
 
       # Guard against the degradation described above: if the runner ever
       # loses its desktop session, the suite would still be "green" while

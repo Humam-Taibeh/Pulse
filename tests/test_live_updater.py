@@ -192,7 +192,32 @@ def _row(app_id, name, running=()):
 class TestRunningApps:
 
     @pytest.fixture
-    def center(self, window, qapp):
+    def no_live_scan(self, monkeypatch):
+        """Construct the Update Center WITHOUT letting it scan.
+
+        UpdateCenterDialog.__init__ calls _start_scan(), which puts a real
+        PowerShellTask on a real QThread and spawns powershell.exe. None of
+        the tests below are about the scan — they inject a finished payload
+        and assert on rows and on the confirmation — so every one of them
+        was paying for a subprocess it then had to race to tear down.
+
+        THAT RACE IS THE POINT. Destroying a QThread that is still running
+        is not an exception: Qt calls qFatal and the process ABORTS, with
+        no traceback and no Qt warning. PulseDialog.done() settles worker
+        threads precisely to prevent it, but a test that starts a scan it
+        does not need is relying on that settle to win a race, on every
+        machine, forever — and a lost race surfaces as a green test session
+        that exits non-zero, which reads as anything but this.
+
+        Not starting the thread removes the race instead of tuning it. The
+        settle path keeps its own coverage in tests/test_audit_hardening.py,
+        where it is the subject rather than an obstacle.
+        """
+        monkeypatch.setattr(W.UpdateCenterDialog, "_start_scan",
+                            lambda self: None)
+
+    @pytest.fixture
+    def center(self, window, qapp, no_live_scan):
         from utils.helpers import TaskResult
         dialog = W.UpdateCenterDialog(window, "", window.theme.t)
         dialog.show()
@@ -224,7 +249,8 @@ class TestRunningApps:
         tip = center._rows["Valve.Steam"]._running_chip.toolTip()
         assert "steam" in tip and "steamwebhelper" in tip
 
-    def test_a_backend_without_the_field_reports_nothing_running(self, window, qapp):
+    def test_a_backend_without_the_field_reports_nothing_running(
+            self, window, qapp, no_live_scan):
         """Forward compatibility runs both ways: the GUI ships ahead of a
         user's backend often enough that a missing field must degrade to
         the safe answer rather than to a crash."""

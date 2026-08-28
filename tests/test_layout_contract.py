@@ -835,20 +835,32 @@ def test_a_destructive_row_cannot_be_fired_by_a_stray_click(window, qapp):
     from frontend import widgets as W
 
     t = window.theme.t
+    # PARENTED, and deleted in the finally. A parentless QWidget is a
+    # top-level WINDOW that outlives the test and is destroyed at
+    # interpreter shutdown - by which point the QApplication may already be
+    # gone, and a widget destroyed after its application is one of the ways
+    # a fully green session still exits non-zero.
     danger = W.ActionRow({"title": "Purge", "desc": "d", "danger": True}, t,
-                         t["accent"])
-    safe = W.ActionRow({"title": "Restore", "desc": "d"}, t, t["accent"])
+                         t["accent"], parent=window)
+    safe = W.ActionRow({"title": "Restore", "desc": "d"}, t, t["accent"],
+                       parent=window)
     fired = []
     danger.activated.connect(lambda: fired.append("danger"))
     safe.activated.connect(lambda: fired.append("safe"))
-    for row in (danger, safe):
-        row.resize(560, 80)
-        QTest.mouseClick(row, Qt.MouseButton.LeftButton,
-                         pos=QPoint(row.width() // 2, row.height() // 2))
-    qapp.processEvents()
-    assert fired == ["safe"], (
-        f"row-wide click fired {fired} - a destructive action must be "
-        "reachable only through its own button")
+    try:
+        for row in (danger, safe):
+            row.resize(560, 80)
+            QTest.mouseClick(row, Qt.MouseButton.LeftButton,
+                             pos=QPoint(row.width() // 2, row.height() // 2))
+        qapp.processEvents()
+        assert fired == ["safe"], (
+            f"row-wide click fired {fired} - a destructive action must be "
+            "reachable only through its own button")
+    finally:
+        for row in (danger, safe):
+            row.setParent(None)
+            row.deleteLater()
+        qapp.processEvents()
 
 
 # ============================================================
