@@ -33,6 +33,16 @@ jobs:
   # ============================================================
   #  1. Every PowerShell file parses
   # ============================================================
+  # KEEP EVERY `run:` BLOCK ON THIS JOB (AND THE OTHER PowerShell ONES)
+  # PURE ASCII. The runner writes each step to D:\_temp\<guid>.ps1 as
+  # UTF-8 WITHOUT A BOM, and `shell: powershell` is Windows PowerShell 5.1,
+  # which reads a BOM-less file in the ANSI codepage. An em-dash is UTF-8
+  # E2 80 94, and cp1252 decodes that last byte as U+201D RIGHT DOUBLE
+  # QUOTATION MARK — which PowerShell accepts as a STRING DELIMITER. So one
+  # em-dash in a comment or a message closes the string it sits in and the
+  # rest of the step cascades into "Unexpected token" / "Missing closing '}'"
+  # errors that name lines nowhere near the real one. That is exactly how
+  # this job failed while every .ps1 in the repo tokenized cleanly.
   powershell-parse:
     name: PowerShell parse check
     runs-on: windows-latest
@@ -44,7 +54,7 @@ jobs:
         run: |
           $files = Get-ChildItem -Path "src\backend" -Filter *.ps1 -Recurse
           if ($files.Count -eq 0) {
-            Write-Error "No .ps1 files found — the backend path is wrong."
+            Write-Error "No .ps1 files found - the backend path is wrong."
             exit 1
           }
           $failed = 0
@@ -188,7 +198,7 @@ jobs:
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
           if ($ran -lt 670) {
-            Write-Error "Only $ran test(s) executed — expected the full native suite (>=670). The runner is probably headless, or collection broke."
+            Write-Error "Only $ran test(s) executed - expected the full native suite (>=670). The runner is probably headless, or collection broke."
             exit 1
           }
 

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     11-StateProbe.ps1 - read-only "is this tweak currently applied?" probe.

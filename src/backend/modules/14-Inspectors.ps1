@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     14-Inspectors.ps1 - the READ-ONLY hardware/state inspectors (v1.0+ Phase 1).

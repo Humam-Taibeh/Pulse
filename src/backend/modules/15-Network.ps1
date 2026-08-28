@@ -124,11 +124,11 @@ function Get-PulseNetworkAdapters {
         if ($v4.Count -eq 0) {
             $active = "dhcp"
         } else {
-            foreach ($profile in $Script:DnsProfiles) {
-                $expected = @($profile.V4 | Sort-Object)
+            foreach ($dnsProfile in $Script:DnsProfiles) {
+                $expected = @($dnsProfile.V4 | Sort-Object)
                 $actual = @($v4 | Sort-Object)
                 if ((@(Compare-Object $expected $actual -SyncWindow 0).Count -eq 0)) {
-                    $active = $profile.Key
+                    $active = $dnsProfile.Key
                     break
                 }
             }
@@ -185,8 +185,8 @@ function Set-PulseDnsProfile {
         [Parameter(Mandatory)][string]$ProfileKey
     )
 
-    $profile = Get-DnsProfileByKey -Key $ProfileKey
-    if (-not $profile) {
+    $dnsProfile = Get-DnsProfileByKey -Key $ProfileKey
+    if (-not $dnsProfile) {
         Write-ErrorX "Unknown DNS profile '$ProfileKey'."
         return $false
     }
@@ -197,8 +197,8 @@ function Set-PulseDnsProfile {
     }
 
     if ($Script:DryRun) {
-        Write-Host "   [WHATIF] Set $AdapterName DNS to $($profile.Name) ($($profile.V4 -join ', '))"
-        Write-Host "   [WHATIF] Set $AdapterName IPv6 DNS to $($profile.V6 -join ', ')"
+        Write-Host "   [WHATIF] Set $AdapterName DNS to $($dnsProfile.Name) ($($dnsProfile.V4 -join ', '))"
+        Write-Host "   [WHATIF] Set $AdapterName IPv6 DNS to $($dnsProfile.V6 -join ', ')"
         return $true
     }
 
@@ -208,8 +208,8 @@ function Set-PulseDnsProfile {
         # passing both servers together is what makes the secondary a
         # secondary instead of wiping it.
         Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex `
-            -ServerAddresses $profile.V4 -ErrorAction Stop
-        Write-Success "$AdapterName -> $($profile.Name) ($($profile.V4 -join ', '))"
+            -ServerAddresses $dnsProfile.V4 -ErrorAction Stop
+        Write-Success "$AdapterName -> $($dnsProfile.Name) ($($dnsProfile.V4 -join ', '))"
     } catch {
         Write-ErrorX "Could not set IPv4 DNS on '$AdapterName': $($_.Exception.Message)"
         return $false
@@ -217,7 +217,7 @@ function Set-PulseDnsProfile {
 
     try {
         Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex `
-            -ServerAddresses $profile.V6 -ErrorAction Stop
+            -ServerAddresses $dnsProfile.V6 -ErrorAction Stop
     } catch {
         # Non-fatal by design: a machine with IPv6 unbound on this adapter
         # is a normal configuration, and the IPv4 change above already
@@ -227,9 +227,9 @@ function Set-PulseDnsProfile {
 
     if (Test-DohSupported) {
         try {
-            foreach ($server in $profile.V4) {
+            foreach ($server in $dnsProfile.V4) {
                 Add-DnsClientDohServerAddress -ServerAddress $server `
-                    -DohTemplate $profile.Doh -AllowFallbackToUdp $false `
+                    -DohTemplate $dnsProfile.Doh -AllowFallbackToUdp $false `
                     -AutoUpgrade $true -ErrorAction Stop
             }
             Write-Host "   Encrypted DNS (DoH) enabled for this resolver."
