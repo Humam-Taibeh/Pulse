@@ -34,7 +34,7 @@ jobs:
   #  1. Every PowerShell file parses
   # ============================================================
   # KEEP EVERY `run:` BLOCK ON THIS JOB (AND THE OTHER PowerShell ONES)
-  # PURE ASCII. The runner writes each step to D:\_temp\<guid>.ps1 as
+  # PURE ASCII. The runner writes each step to D:\a\_temp\<guid>.ps1 as
   # UTF-8 WITHOUT A BOM, and `shell: powershell` is Windows PowerShell 5.1,
   # which reads a BOM-less file in the ANSI codepage. An em-dash is UTF-8
   # E2 80 94, and cp1252 decodes that last byte as U+201D RIGHT DOUBLE
@@ -182,7 +182,56 @@ jobs:
       # fractional-DPI viewport bug shipped, and why its guard in
       # tests/test_ambient_gl.py asserts on source shape rather than
       # pixels — so it runs here, on this runner, with no GPU.
+      # THE RUNNER'S DESKTOP IS 1024x768, AND A QUARTER OF THIS SUITE CARES.
+      #
+      # Measured from a failing run: a resize(1150, 780) came back
+      # (1044, 780) — the window was clamped by the desktop, not by the app.
+      # Everything downstream of that clamp then failed for the same reason
+      # and looked like four different bugs: the caption-button hit tests
+      # answered RIGHT (the window edge sat under the probe points), the
+      # masthead tagline could not un-elide because resize(1400, 900) never
+      # delivered 1400, and the reflow test compared a clamped size against
+      # the one it asked for.
+      #
+      # 1920x1080 is what the geometry tests were written against, so this
+      # is the runner catching up with the suite rather than the suite
+      # being relaxed to fit the runner. Non-fatal on purpose: if a future
+      # image drops the cmdlet or refuses the mode, the job should still
+      # run and report what it actually got, not die here.
+      - name: Give the runner a desktop the geometry tests can use
+        shell: powershell
+        run: |
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
+            try {
+              Set-DisplayResolution -Width 1920 -Height 1080 -Force
+              Write-Output "Set-DisplayResolution: requested 1920x1080"
+            } catch {
+              Write-Output "Set-DisplayResolution failed: $($_.Exception.Message)"
+            }
+          } else {
+            Write-Output "Set-DisplayResolution is not available on this image."
+          }
+          Add-Type -AssemblyName System.Windows.Forms
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Output "primary screen is now $($b.Width)x$($b.Height)"
+
       - name: Run tests
+        env:
+          # The wall-clock render budget, raised for THIS MACHINE rather
+          # than for all machines — which is exactly what the knob is for
+          # (see the note in tests/test_shell_budget.py).
+          #
+          # Two independent reasons the runner needs a bigger number, and
+          # neither is a regression in the app:
+          #   * it is ~1.4x slower than a developer box, measured by
+          #     comparing the same test's reported median on both;
+          #   * the step above hands the suite a REAL 1300x860 window where
+          #     it used to get a 1044px-wide clamp, so every frame now
+          #     paints the pixels it was always supposed to.
+          # 30ms keeps the alarm's original shape — it still trips on a
+          # doubling of the runner's own baseline (~15-20ms), which is what
+          # the guard exists to catch.
+          PULSE_RENDER_BUDGET_MS: "30"
         run: python -m pytest tests -v --junitxml=junit.xml
 
       # Guard against the degradation described above: if the runner ever

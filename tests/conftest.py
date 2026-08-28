@@ -63,6 +63,34 @@ def is_headless() -> bool:
     return os.environ.get("QT_QPA_PLATFORM", "") == "offscreen"
 
 
+def is_elevated() -> bool:
+    """Is this pytest session running with Administrator rights?
+
+    Two playbook tests need an UNELEVATED session, because the failure they
+    assert on is CreateRestorePoint being REFUSED: unelevated the engine
+    returns an ERROR verdict, and that verdict is the only thing that makes
+    "a required failure halts the run" observable at all.
+
+    That was guarded by the PULSE_TESTS_ELEVATED environment variable alone
+    — a flag a human had to remember to set. GitHub's windows runners
+    execute as an administrator and nothing sets it, so the restore point
+    SUCCEEDED there and both tests failed asserting on a failure that never
+    happened. Asking the OS removes the need for anyone to remember.
+
+    The environment variable survives as an override, for a session that is
+    elevated by some route IsUserAnAdmin() cannot see.
+    """
+    if os.environ.get("PULSE_TESTS_ELEVATED"):
+        return True
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (OSError, AttributeError):
+        return False
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "native: needs a real (non-offscreen) top-level window")

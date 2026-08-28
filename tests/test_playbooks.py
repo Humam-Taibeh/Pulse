@@ -22,6 +22,7 @@ import os
 import pytest
 from PySide6.QtCore import QEventLoop, QTimer
 
+from conftest import is_elevated
 from frontend.playbooks import (Playbook, PlaybookError, PlaybookRunner,
                                 load_playbooks, parse_playbook, playbook_dirs)
 
@@ -230,7 +231,7 @@ class TestRunner:
     def test_a_required_failure_halts_the_run(self, qapp):
         """CreateRestorePoint needs elevation; unelevated it returns an
         ERROR verdict, which must stop everything after it."""
-        if os.environ.get("PULSE_TESTS_ELEVATED"):
+        if is_elevated():
             pytest.skip("needs an unelevated session to force the failure")
         playbook = parse_playbook(_doc(steps=[
             {"task": "CreateRestorePoint"}, {"task": "DarkMode"},
@@ -243,7 +244,7 @@ class TestRunner:
         assert not run.complete
 
     def test_an_optional_failure_does_not_halt_the_run(self, qapp):
-        if os.environ.get("PULSE_TESTS_ELEVATED"):
+        if is_elevated():
             pytest.skip("needs an unelevated session to force the failure")
         playbook = parse_playbook(_doc(steps=[
             {"task": "CreateRestorePoint", "optional": True},
