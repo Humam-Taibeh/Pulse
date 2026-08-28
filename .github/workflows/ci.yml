@@ -165,14 +165,14 @@ jobs:
         run: python -m pip install --upgrade pip -r requirements-dev.txt
 
       # NOTE: QT_QPA_PLATFORM is deliberately NOT set to offscreen.
-      # 106 of the 713 collected tests are marked `native` — they hit-test
+      # 115 of the 838 collected tests are marked `native` — they hit-test
       # the non-client area, query DWM and pump real Win32 messages, none
       # of which exist on the offscreen platform plugin. GitHub's
       # windows-latest runners provide a real window station, so the full
       # suite runs here. conftest.pytest_collection_modifyitems skips the
       # native set automatically if this ever lands somewhere headless, so
-      # a desktop-less runner degrades to 607 green tests instead of the
-      # full 713 — but that would be a silent loss of coverage, hence the
+      # a desktop-less runner degrades to ~716 green tests instead of the
+      # full 838 — but that would be a silent loss of coverage, hence the
       # explicit floor asserted in the step below.
       #
       # The GPU ambient renderer is NOT covered here and cannot be: its
@@ -237,6 +237,15 @@ jobs:
       # Guard against the degradation described above: if the runner ever
       # loses its desktop session, the suite would still be "green" while
       # silently testing a quarter of what it should. Fail loudly instead.
+      #
+      # THE FLOOR HAS TO TRACK THE SUITE, and it had stopped: written when
+      # 713 tests collected and 106 were native, it stayed at 670 while the
+      # suite grew to 838 with 115 native. A headless runner would have run
+      # ~716 — comfortably OVER the old floor — so the guard would have
+      # passed while testing none of the Win32 behaviour it exists to
+      # protect. 800 sits above the headless figure and below the ~831 a
+      # healthy run executes (838 collected, 5 environment skips, and the
+      # 2 playbook tests that skip on an elevated runner by design).
       - name: Assert the native tests actually ran
         shell: powershell
         run: |
@@ -246,8 +255,8 @@ jobs:
           $skipped = [int]$suite.skipped
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
-          if ($ran -lt 670) {
-            Write-Error "Only $ran test(s) executed - expected the full native suite (>=670). The runner is probably headless, or collection broke."
+          if ($ran -lt 800) {
+            Write-Error "Only $ran test(s) executed - expected the full native suite (>=800). The runner is probably headless, or collection broke."
             exit 1
           }
 

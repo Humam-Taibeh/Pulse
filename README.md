@@ -16,7 +16,7 @@
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![Release](https://img.shields.io/badge/release-v10.3%20beta-blueviolet)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-713%20pytest%20%2B%20101%20Pester-success)](#-testing--continuous-integration)
+[![Tests](https://img.shields.io/badge/tests-838%20pytest%20%2B%20101%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://img.shields.io/badge/CI-windows--latest-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -132,7 +132,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task. The current v10.3 release asset was **not** built by this pipeline — see [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (713) + **Pester 5+** (101) | 100 tests marked `native` need a real window station |
+| Tests | **pytest 8** (838) + **Pester 5+** (101) | 115 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -508,11 +508,11 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 713 collected tests
+python -m pytest tests -v          # 838 collected tests
 Invoke-Pester -Path tests\backend  # 101 tests
 ```
 
-The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
+The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **115 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
 
 The Pester suite does **real registry I/O**, deliberately — mocking the registry would test the mock, and invariants like first-write-wins and the `__NOTSET__` sentinel only bite against a real hive. Everything is confined to a throwaway key and removed in `AfterAll`; nothing needs elevation.
 
