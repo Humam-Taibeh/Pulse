@@ -487,7 +487,7 @@ function Invoke-GuiTask {
             "RestoreOneDrive" {
                 if (-not $Script:DryRun -and -not (Ensure-Winget)) { Write-Output "##PULSE##ERROR|winget is unavailable, so OneDrive cannot be reinstalled automatically. Install 'App Installer' from the Microsoft Store first."; break }
                 Complete-GuiTask -Action { Restore-OneDrivePackage } `
-                    -SuccessMessage "Microsoft OneDrive reinstalled via winget. Copy your files back from Desktop\Pulse_OneDriveBackup once it finishes syncing." `
+                    -SuccessMessage "Microsoft OneDrive reinstalled via winget. Copy your files back from $Script:OneDriveBackupFolder once it finishes syncing." `
                     -FailureMessage "OneDrive restoration did not complete."
                 break
             }
@@ -685,13 +685,13 @@ function Invoke-GuiTask {
             }
             "DriverBackup" {
                 if ($Script:DryRun) {
-                    Write-Output "##PULSE##SUCCESS|[DRY-RUN] Would export all third-party driver packages to Desktop\Pulse_DriverBackup."
+                    Write-Output "##PULSE##SUCCESS|[DRY-RUN] Would export all third-party driver packages to $Script:DriverBackupFolder."
                     break
                 }
-                $BackupPath = "$env:USERPROFILE\Desktop\Pulse_DriverBackup"
+                $BackupPath = $Script:DriverBackupFolder
                 New-Item -Path $BackupPath -ItemType Directory -Force | Out-Null
                 $Exported = Export-WindowsDriver -Online -Destination $BackupPath -ErrorAction Stop
-                Write-Output "##PULSE##SUCCESS|$(@($Exported).Count) driver package(s) exported to Desktop\Pulse_DriverBackup."
+                Write-Output "##PULSE##SUCCESS|$(@($Exported).Count) driver package(s) exported to $BackupPath."
                 break
             }
             "DriverScan" {

@@ -8,7 +8,7 @@
     Sources audited: HKCU/HKLM Run keys and the per-user/all-users Startup
     folders. Disabling is always reversible: registry entries are copied to
     HKCU:\Software\Pulse\DisabledStartup before removal, and
-    shortcuts are MOVED to Desktop\Pulse_StartupBackup, never deleted.
+    shortcuts are MOVED to %LOCALAPPDATA%\PULSE\Backups\Startup, never deleted.
     Locations are defined in 01-Catalogs.ps1.
 #>
 

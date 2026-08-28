@@ -14,6 +14,57 @@ GUI version, with core changes called out explicitly.
 
 ## [Unreleased]
 
+### Changed — every launch elevates
+- **The manifest now requests `requireAdministrator`** (`uac_admin=True` in
+  `main.spec`), so Windows prompts for UAC before Pulse starts and the
+  process always holds an Administrator token. ~24 of Pulse's tasks write
+  HKLM, services or machine state, and prompting separately for each of
+  them interrupts the work the tool was opened to do.
+- **This reverses a v1.0 decision, and its consequences are real rather
+  than theoretical.** Two are documented in the spec and accepted:
+  the per-task elevation UI (`ElevatePromptDialog`, the sidebar CTA, the
+  locked-card affordance, the "Not Elevated" chip) is now unreachable in
+  the packaged app — it still runs from source; and packages whose
+  installers set `elevationProhibited` (Spotify is the catalogued example)
+  can no longer be installed through Pulse at all, because there is no
+  unelevated mode left to fall back to.
+- **Five messages that told the user to "run Pulse without elevating" are
+  rewritten**, because that advice became impossible to follow. Being
+  un-installable is a cost of this flag; advice that cannot be followed is
+  a bug, and `test_packaging` now guards the difference.
+
+### Changed — one place for everything Pulse writes
+- **All logs, backups and downloads live under `%LOCALAPPDATA%\PULSE\`**:
+  `Logs\`, `Backups\{Edge,OneDrive,Startup,Drivers}\` and `updates\`.
+  Resolved through a single `Get-PulseDataPath` helper that creates the
+  directory on the way, so a future writer cannot invent a fifth location
+  by writing its own `Join-Path`.
+- **Nothing is written to the Desktop any more.** Four backup folders were
+  still landing there — `Pulse_EdgeBackup`, `Pulse_OneDriveBackup`,
+  `Pulse_StartupBackup`, `Pulse_DriverBackup` — on the one surface where
+  clutter is most visible, and on exactly the folder most likely to be
+  cloud-synced, so a driver backup could upload itself. The log moved off
+  the Desktop in v6.1 for that reason; the backups had the same problem
+  and were left behind.
+- **Legacy folders are MOVED, not read in place**, including the
+  pre-rebrand `HTCore_*` names. A backup the user can still find is the
+  point of taking one, so leaving the old copy behind would let "Open
+  Backup Folder" and the restore path disagree about which snapshot is
+  current. The Startup Manager's old code re-pointed its variable at the
+  legacy folder instead of moving it, which had exactly that effect.
+- The GUI's "Open Backup Folder" action resolves the new home first, with
+  every historical location behind it, so a machine whose engine has not
+  yet run and migrated still opens the right thing.
+
+### Fixed
+- Seven user-facing messages named a Desktop folder that no longer exists
+  — a message pointing at the wrong place is as broken as writing there,
+  since the user goes looking, finds nothing, and concludes no backup was
+  taken. `tests/test_data_paths.py` guards both halves.
+- `Restore-EdgeState`'s v5.x read fallback is gone rather than relocated:
+  with the migration moving that folder at start-up, a second read path
+  aimed at it could only ever disagree with the first.
+
 ---
 
 ## [10.6.0] — 2026-08-29

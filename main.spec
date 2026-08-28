@@ -153,31 +153,50 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # uac_admin is deliberately NOT set (v1.0). It used to be True, which put
-    # `requestedExecutionLevel requireAdministrator` in the manifest and made
-    # EVERY launch of the packaged app elevated — with two consequences that
-    # only showed up in the shipped binary, never when running from source:
+    # REQUIRE ADMINISTRATOR (v10.7). This emits
+    #     <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+    # into the exe's manifest, so Windows shows the UAC prompt before Pulse
+    # starts and the process always runs with an Administrator token.
     #
-    #   1. A large, fully-tested subsystem became unreachable. The per-task
-    #      elevation gate (menu_structure.requires_admin), the inline
+    # THIS REVERSES A v1.0 DECISION, and the reasons that decision was made
+    # have not gone away — they are consequences of this setting, not
+    # arguments against having chosen it:
+    #
+    #   1. THE ELEVATION UI IS NOW UNREACHABLE. menu_structure.requires_admin,
     #      ElevatePromptDialog, the sidebar "Run as Administrator" CTA, the
-    #      locked-card affordance and the "Not Elevated" hero chip can only
-    #      ever be exercised by a non-elevated session. There wasn't one.
+    #      locked-card affordance and the "Not Elevated" hero chip all
+    #      describe a state the packaged app can no longer be in. They stay
+    #      in the tree because `python src\frontend\main.py` still runs at
+    #      the developer's own level and exercises every one of them, and
+    #      because the state is one Windows can still produce (an
+    #      administrator who declines the prompt gets no process at all, but
+    #      a policy-restricted account can be denied the token).
     #
-    #   2. It made a documented failure permanent. Some installers set
-    #      `elevationProhibited` and hard-refuse under an Administrator token
-    #      (see $Script:KnownElevationProhibitedAppIds in 01-Catalogs.ps1);
-    #      the backend's own error text tells the user to "use Pulse's GUI
-    #      without elevating", which was impossible advice in the release
-    #      build. Those packages were simply un-installable.
+    #   2. SOME PACKAGES BECOME UN-INSTALLABLE THROUGH THE GUI. Installers
+    #      that set `elevationProhibited` hard-refuse under an Administrator
+    #      token — $Script:KnownElevationProhibitedAppIds in 01-Catalogs.ps1
+    #      lists Spotify, and winget reports the family as
+    #      -1978335146 / -1978335107. There is no longer an unelevated Pulse
+    #      to fall back to, so the advice those errors used to give is now
+    #      impossible and their wording had to change with this flag (see
+    #      Resolve-WingetExitCode). The honest answer for those packages is
+    #      now the vendor's own installer.
     #
-    # Launching asInvoked restores the intended model: Pulse starts with the
-    # rights the user has, and the ~24 tasks that genuinely need HKLM /
-    # services / machine state ask for elevation at the moment they are
-    # clicked. That is also what keeps HKCU tweaks landing in the hive of the
-    # user who asked for them — see Initialize-UserHiveTargeting in
-    # src/backend/modules/00-Foundation.ps1 for what goes wrong when an
-    # elevated session belongs to a different account than the desktop.
+    #   3. PER-USER STATE FOLLOWS THE TOKEN. When the elevated session
+    #      belongs to a DIFFERENT account than the desktop user, HKCU and
+    #      %LOCALAPPDATA% both resolve to the administrator's profile.
+    #      Initialize-UserHiveTargeting (00-Foundation.ps1) already detects
+    #      that and redirects registry writes to the desktop user's hive, or
+    #      refuses them; the data root does NOT redirect, so on such a
+    #      machine logs and backups land in the admin's AppData. That is
+    #      consistent — the GUI reading them shares the same token — but it
+    #      is not where the desktop user will look in Explorer.
+    #
+    # What it buys is the reason it was asked for: ~24 of Pulse's tasks
+    # write HKLM, services or machine state, and a repair tool that prompts
+    # separately for each of them is a tool that interrupts the work it was
+    # opened to do.
+    uac_admin=True,
 )
 
 # ============================================================

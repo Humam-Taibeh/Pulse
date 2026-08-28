@@ -410,7 +410,7 @@ function Restore-AllServicesToPreviousState {
 #  MICROSOFT EDGE BACKUP / RESTORE
 # ============================================================
 function Backup-EdgeState {
-    if (Test-DryRun "Back up Edge version + Preferences/Bookmarks/Favicons to Desktop\Pulse_EdgeBackup") { return }
+    if (Test-DryRun "Back up Edge version + Preferences/Bookmarks/Favicons to $Script:EdgeBackupFolder") { return }
     Write-Info "Backing up current Edge version and settings before removal..."
     try {
         New-Item -Path $Script:EdgeBackupFolder -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
@@ -459,7 +459,7 @@ function Backup-EdgeState {
                 }
             }
         }
-        Write-Success "Edge version ($Version) and profile data backed up to Desktop\Pulse_EdgeBackup."
+        Write-Success "Edge version ($Version) and profile data backed up to $Script:EdgeBackupFolder."
     } catch {
         Write-Warn "Edge backup encountered an issue (continuing with removal anyway): $($_.Exception.Message)"
     }
@@ -468,16 +468,16 @@ function Backup-EdgeState {
 function Restore-EdgeState {
     $ManifestPath = Join-Path $Script:EdgeBackupFolder "EdgeManifest.json"
     if (-not (Test-Path $ManifestPath)) {
-        # Pre-rebrand fallback: a backup taken under v5.x lives in the old
-        # HTCore folder. Read-side only - fresh backups use the Pulse name.
-        $LegacyEdgeBackup = "$env:USERPROFILE\Desktop\HTCore_EdgeBackup"
-        if (Test-Path (Join-Path $LegacyEdgeBackup "EdgeManifest.json")) {
-            $Script:EdgeBackupFolder = $LegacyEdgeBackup
-            $ManifestPath = Join-Path $LegacyEdgeBackup "EdgeManifest.json"
-        } else {
-            Write-Info "No previous Edge backup found - a clean install of the latest stable Edge was performed."
-            return
-        }
+        # ONE PLACE TO LOOK. This used to fall back to a v5.x
+        # Desktop\HTCore_EdgeBackup when the manifest was missing, and that
+        # fallback is gone rather than merely relocated: 00-Foundation MOVES
+        # both legacy Edge homes into the data root at engine start (see
+        # Move-LegacyPulseData), so by the time this runs the manifest is
+        # either under $Script:EdgeBackupFolder or it never existed. A
+        # second read path aimed at a folder the migration has already
+        # emptied could only ever disagree with the first one.
+        Write-Info "No previous Edge backup found - a clean install of the latest stable Edge was performed."
+        return
     }
     try {
         $Manifest = Get-Content $ManifestPath -Raw | ConvertFrom-Json
@@ -522,11 +522,11 @@ function Backup-OneDriveFiles {
         $SizeGB = [math]::Round(((Get-ChildItem -Path $OneDrivePath -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum) / 1GB, 2)
     } catch {}
 
-    if (-not (Ask-User "Back Up Local OneDrive Files First" "Copies your local OneDrive folder (approx. $SizeGB GB) to Desktop\Pulse_OneDriveBackup before removing OneDrive. Recommended, but can take a while for large folders.")) {
+    if (-not (Ask-User "Back Up Local OneDrive Files First" "Copies your local OneDrive folder (approx. $SizeGB GB) to $Script:OneDriveBackupFolder before removing OneDrive. Recommended, but can take a while for large folders.")) {
         Write-Warn "Skipping backup at your request - proceeding to remove OneDrive without one."
         return $true
     }
-    if (Test-DryRun "Copy local OneDrive folder (~$SizeGB GB) to Desktop\Pulse_OneDriveBackup via robocopy") { return $true }
+    if (Test-DryRun "Copy local OneDrive folder (~$SizeGB GB) to $Script:OneDriveBackupFolder via robocopy") { return $true }
     try {
         New-Item -Path $Script:OneDriveBackupFolder -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
         Write-Info "Copying files - this may take a while depending on folder size..."
@@ -537,7 +537,7 @@ function Backup-OneDriveFiles {
         # This was never checked, so a partial/failed copy still reported a
         # clean backup immediately before the caller deletes the real data.
         if ($LASTEXITCODE -lt 8) {
-            Write-Success "OneDrive files backed up to Desktop\Pulse_OneDriveBackup."
+            Write-Success "OneDrive files backed up to $Script:OneDriveBackupFolder."
             return $true
         } else {
             Write-ErrorX "OneDrive backup incomplete (robocopy exit code $LASTEXITCODE) - not all files copied successfully."

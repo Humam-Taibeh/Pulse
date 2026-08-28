@@ -2852,16 +2852,22 @@ class PulseApp(QMainWindow):
             return
 
         desktop = resources.desktop_dir()
-        localappdata = resources.local_appdata()
-        # Newest home first, then the pre-6.1 Desktop locations (including
-        # the pre-rebrand v5.x names) — upgraded machines keep working.
+        root = resources.data_root()
+        # NEWEST HOME FIRST, then every location Pulse has ever used, so an
+        # upgraded machine keeps working even in the window before the
+        # engine has run once and migrated its folders across. The engine
+        # MOVES these on start (see Move-LegacyPulseData in
+        # 00-Foundation.ps1); the fallbacks here exist for the case where
+        # the user opens a backup before that has happened.
         targets = {
             "@open_log": (
-                os.path.join(localappdata, "Pulse", "logs", "Pulse_Log.txt"),
+                os.path.join(root, "Logs", "Pulse_Log.txt"),
+                os.path.join(resources.local_appdata(), "Pulse", "logs", "Pulse_Log.txt"),
                 os.path.join(desktop, "Pulse_Log.txt"),
                 os.path.join(desktop, "HTCoreArchitecture_Log.txt"),
             ),
             "@open_onedrive_backup": (
+                os.path.join(root, "Backups", "OneDrive"),
                 os.path.join(desktop, "Pulse_OneDriveBackup"),
                 os.path.join(desktop, "HTCore_OneDriveBackup"),
             ),

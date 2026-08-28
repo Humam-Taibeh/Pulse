@@ -1191,10 +1191,10 @@ function Resolve-WingetExitCode {
         # manifest refuses to run under an Administrator token (Spotify is
         # the well-known example). Not fixable with --scope or --force;
         # the only fix is running winget at the OTHER elevation level.
-        -1978335146  { return @{ Success = $false; AlreadyCurrent = $false; ElevationConflict = $true; Message = "This app's installer refuses to run while Pulse is elevated (Administrator). Use Pulse's GUI without elevating to install it (the interactive console menu always runs elevated, so it can't install this app either)." } }
+        -1978335146  { return @{ Success = $false; AlreadyCurrent = $false; ElevationConflict = $true; Message = "This app's installer refuses to run under an Administrator token, and Pulse always runs elevated (see the manifest note in main.spec), so it cannot install this one at all. Install it from the vendor's own installer instead - Pulse's fallback link for it is in the operation log." } }
         # 0x8A15007D ADMIN_CONTEXT_REPAIR_PROHIBITED - same family as
         # above, scoped to a repair/modify path specifically.
-        -1978335107  { return @{ Success = $false; AlreadyCurrent = $false; ElevationConflict = $true; Message = "This app's repair/modify path is blocked while Pulse is elevated (Administrator). Use Pulse's GUI without elevating instead." } }
+        -1978335107  { return @{ Success = $false; AlreadyCurrent = $false; ElevationConflict = $true; Message = "This app's repair/modify path is blocked under an Administrator token, and Pulse always runs elevated, so it cannot be repaired from here. Use the app's own repair option, or Windows' Installed apps > Modify." } }
         # 0x8A150019 COMMAND_REQUIRES_ADMIN - the reverse case: this
         # operation genuinely needs elevation and Pulse doesn't have it.
         -1978335207  { return @{ Success = $false; AlreadyCurrent = $false; ElevationConflict = $true; Message = "This app requires Administrator rights to install. Click 'Run as Administrator' in the Pulse sidebar to relaunch elevated, then retry." } }
@@ -1512,7 +1512,7 @@ function Smart-Deploy {
     # Skip the doomed winget call entirely instead of burning an attempt +
     # a force retry that would only reproduce the identical failure.
     if ($Script:IsAdminSession -and $Script:KnownElevationProhibitedAppIds -contains $AppId) {
-        $Message = "This app's installer refuses to run while Pulse is elevated (Administrator). Use Pulse's GUI without elevating to install it (the interactive console menu always runs elevated, so it can't install this app either)."
+        $Message = "This app's installer refuses to run under an Administrator token, and Pulse always runs elevated (see the manifest note in main.spec), so it cannot install this one at all. Install it from the vendor's own installer instead - Pulse's fallback link for it is in the operation log."
         Write-Warn "$AppName skipped: $Message"
         return @{Status='Skipped'; Message=$Message}
     }

@@ -327,28 +327,117 @@ function Write-SplitTokenNotice {
     if (-not $Script:IsSplitToken -or $Script:SplitTokenNoticeShown) { return }
     $Script:SplitTokenNoticeShown = $true
     if ($Script:SplitTokenUnresolved) {
-        Write-Warn "Pulse is elevated as a different account than the signed-in user ($Script:SplitTokenAccount), and that user's settings hive is not reachable. Per-user tweaks will be refused rather than applied to the wrong profile. Sign in as an administrator, or run Pulse without elevating, to change per-user settings."
+        Write-Warn "Pulse is elevated as a different account than the signed-in user ($Script:SplitTokenAccount), and that user's settings hive is not reachable. Per-user tweaks will be refused rather than applied to the wrong profile. Sign in as an administrator on this desktop and run Pulse there - it always elevates, so there is no unelevated mode to fall back to."
     } else {
         Write-Info "Elevated as a different account than the signed-in user - per-user settings are being applied to '$Script:SplitTokenAccount' (the desktop user), not to the administrator account."
     }
 }
 
 # ============================================================
-#  LOG LOCATION (%LOCALAPPDATA%\Pulse\logs) + SIZE ROTATION
+#  THE DATA ROOT — %LOCALAPPDATA%\PULSE, and nothing outside it
 # ============================================================
-# v6.1: the log moved off the Desktop - on OneDrive-synced Desktops every
-# Add-Content line triggered sync traffic, and the file grew without bound.
-$LogDir = Join-Path $env:LOCALAPPDATA "Pulse\logs"
-if (-not (Test-Path $LogDir)) {
-    New-Item -Path $LogDir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+# EVERY FILE PULSE WRITES FOR ITSELF LIVES UNDER ONE ROOT. Logs, the
+# backups the safety net takes before a destructive task, and the
+# installers the self-updater downloads all land here and nowhere else.
+#
+# WHAT THIS REPLACES, and why it was worth centralising. The log moved to
+# LocalAppData in v6.1 for a specific reason - on a OneDrive-synced Desktop
+# every Add-Content line triggered sync traffic and the file grew without
+# bound - but the four BACKUP folders were left behind on the Desktop:
+#
+#     Desktop\Pulse_EdgeBackup        Desktop\Pulse_StartupBackup
+#     Desktop\Pulse_OneDriveBackup    Desktop\Pulse_DriverBackup
+#
+# Four folders a repair tool scatters across the desktop of someone who
+# came to it to tidy their machine, on the one surface where clutter is
+# most visible, and on exactly the folder most likely to be OneDrive-synced
+# - so a driver backup could upload itself to the cloud. The reason the log
+# moved is the reason all of them should have.
+#
+# THE ROOT IS RESOLVED ONCE, so a future writer cannot invent a fifth
+# location by writing its own Join-Path. Get-PulseDataPath below is the
+# only way to name a file, and it creates the directory on the way.
+$Script:PulseDataRoot = Join-Path $env:LOCALAPPDATA "PULSE"
+
+function Get-PulseDataPath {
+    <#
+    .SYNOPSIS
+        A path under %LOCALAPPDATA%\PULSE, with its directory created.
+
+    .DESCRIPTION
+        `Get-PulseDataPath Logs` -> ...\PULSE\Logs (created)
+        `Get-PulseDataPath Backups Edge` -> ...\PULSE\Backups\Edge
+
+        Creating on resolve rather than at each call site is what stops the
+        "directory did not exist" branch being written five times and
+        forgotten a sixth. -ErrorAction SilentlyContinue because a failure
+        here must degrade to a task that cannot back up, never to an engine
+        that will not start: the caller checks the path it got back.
+    #>
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Segments)
+    $Path = $Script:PulseDataRoot
+    foreach ($Segment in $Segments) {
+        if ([string]::IsNullOrWhiteSpace($Segment)) { continue }
+        $Path = Join-Path $Path $Segment
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -Path $Path -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+    return $Path
 }
+
+function Move-LegacyPulseData {
+    <#
+    .SYNOPSIS
+        Move one pre-v10.7 location into the data root, once.
+
+    .DESCRIPTION
+        MOVED, NOT COPIED, and not merely read from where it is. A backup
+        the user can still find is the whole point of taking one, so
+        leaving the old copy behind would mean "Open Backup Folder" and the
+        restore path could disagree about which snapshot is current - the
+        exact failure mode that makes a safety net worse than none.
+
+        Skipped when the destination already exists: the newer data wins,
+        and the legacy folder is left alone rather than merged. Silent on
+        failure (a locked file, a folder the user has open in Explorer),
+        because a migration that cannot run is not a reason to fail the
+        operation that triggered it - the caller simply writes to the new
+        home and the old one stays where it is.
+    #>
+    param([Parameter(Mandatory = $true)][string]$From,
+          [Parameter(Mandatory = $true)][string]$To)
+    if (-not (Test-Path -LiteralPath $From)) { return $false }
+    if (Test-Path -LiteralPath $To) { return $false }
+    try {
+        $Parent = Split-Path -Path $To -Parent
+        if (-not (Test-Path -LiteralPath $Parent)) {
+            New-Item -Path $Parent -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        }
+        Move-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# ============================================================
+#  LOG LOCATION + SIZE ROTATION
+# ============================================================
+$LogDir = Get-PulseDataPath "Logs"
 $Script:LogPath = Join-Path $LogDir "Pulse_Log.txt"
 
-# One-time migration: pull an existing v6.0 Desktop log into the new home
-# so history is preserved. (v5.x HTCore logs stay where they are.)
-$DesktopLog = "$env:USERPROFILE\Desktop\Pulse_Log.txt"
-if ((Test-Path $DesktopLog) -and -not (Test-Path $Script:LogPath)) {
-    try { Move-Item -Path $DesktopLog -Destination $Script:LogPath -Force -ErrorAction Stop } catch {}
+# One-time migrations, oldest home first. v6.0 kept the log on the Desktop
+# (see the note on the data root); v6.1-v10.6 kept it in a lowercase
+# `Pulse\logs` beside the new root. The second is a rename on a
+# case-insensitive filesystem, so it is done at the FILE level rather than
+# the directory level - moving `Pulse\logs` onto `PULSE\Logs` on Windows
+# is a move onto itself.
+foreach ($Legacy in @("$env:USERPROFILE\Desktop\Pulse_Log.txt",
+                      (Join-Path $env:LOCALAPPDATA "Pulse\logs\Pulse_Log.txt"))) {
+    if ((Test-Path -LiteralPath $Legacy) -and -not (Test-Path -LiteralPath $Script:LogPath)) {
+        try { Move-Item -LiteralPath $Legacy -Destination $Script:LogPath -Force -ErrorAction Stop } catch {}
+    }
 }
 
 # Rotate at 5 MB, keep the 5 newest archives. Runs once per engine start -
@@ -383,8 +472,24 @@ $Script:TweaksBackupRegPath          = "HKCU:\Software\Pulse\TweakBackups"
 $Script:ServicesBackupRegPath        = "HKCU:\Software\Pulse\ServiceBackups"
 $Script:ServicesDisabledThisSession  = New-Object System.Collections.ArrayList
 $Script:SessionLogEntries            = New-Object System.Collections.ArrayList
-$Script:EdgeBackupFolder             = "$env:USERPROFILE\Desktop\Pulse_EdgeBackup"
-$Script:OneDriveBackupFolder         = "$env:USERPROFILE\Desktop\Pulse_OneDriveBackup"
+# Under the data root, with every pre-v10.7 home migrated in on first use.
+# The legacy names include the pre-rebrand v5.x "HTCore_" folders, which is
+# why each has two sources: a machine that has upgraded twice still has its
+# oldest snapshot found and moved rather than orphaned.
+$Script:EdgeBackupFolder     = Join-Path (Get-PulseDataPath "Backups") "Edge"
+$Script:OneDriveBackupFolder = Join-Path (Get-PulseDataPath "Backups") "OneDrive"
+$Script:DriverBackupFolder   = Join-Path (Get-PulseDataPath "Backups") "Drivers"
+
+foreach ($Migration in @(
+    @{ To = $Script:EdgeBackupFolder;     From = "$env:USERPROFILE\Desktop\Pulse_EdgeBackup" },
+    @{ To = $Script:EdgeBackupFolder;     From = "$env:USERPROFILE\Desktop\HTCore_EdgeBackup" },
+    @{ To = $Script:OneDriveBackupFolder; From = "$env:USERPROFILE\Desktop\Pulse_OneDriveBackup" },
+    @{ To = $Script:OneDriveBackupFolder; From = "$env:USERPROFILE\Desktop\HTCore_OneDriveBackup" },
+    @{ To = $Script:DriverBackupFolder;   From = "$env:USERPROFILE\Desktop\Pulse_DriverBackup" },
+    @{ To = $Script:DriverBackupFolder;   From = "$env:USERPROFILE\Desktop\HTCore_DriverBackup" }
+)) {
+    [void](Move-LegacyPulseData -From $Migration.From -To $Migration.To)
+}
 
 # ---- ONE-TIME MIGRATION FROM THE PRE-REBRAND IDENTITY (v5.x) --------------
 # Machines upgrading from "HTCoreArchitecture" keep their tweak/service
@@ -807,7 +912,7 @@ function Assert-UserRegPathTargetable {
     Write-SplitTokenNotice
     throw ("Refusing to write '$Path': Pulse is elevated as a different account than the signed-in user " +
            "($Script:SplitTokenAccount), whose settings hive is not reachable. Applying it here would change the " +
-           "administrator's profile instead. Run Pulse without elevating to change per-user settings.")
+           "administrator's profile instead. Sign in as that user and run Pulse there - Pulse always elevates, so there is no unelevated mode.")
 }
 
 function Set-RegValue {

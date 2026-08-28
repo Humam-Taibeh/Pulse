@@ -90,11 +90,59 @@ def test_upx_stays_disabled(spec):
     assert not re.search(r"upx\s*=\s*True", spec)
 
 
-def test_the_app_is_still_not_auto_elevated(spec):
-    """uac_admin would make every launch elevated, which makes the whole
-    per-task elevation subsystem unreachable and some packages
-    un-installable. See the long note in the spec."""
-    assert not re.search(r"uac_admin\s*=\s*True", spec)
+def test_the_app_requires_administrator(spec):
+    """v10.7: every launch elevates.
+
+    THIS TEST USED TO ASSERT THE OPPOSITE, and the inversion is the record
+    of a decision rather than a bug being fixed. v1.0 removed uac_admin
+    because it made the per-task elevation subsystem unreachable and some
+    packages un-installable; v10.7 puts it back because ~24 of Pulse's
+    tasks write HKLM, services or machine state, and a repair tool that
+    prompts separately for each of them interrupts the work it was opened
+    to do. Both are true. The second is the one that ships.
+
+    PyInstaller turns uac_admin into
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+    in the exe's manifest, which is what makes Windows show the UAC prompt
+    before the process starts.
+    """
+    assert re.search(r"uac_admin\s*=\s*True", spec), (
+        "uac_admin is not set — the packaged app would launch asInvoked and "
+        "every admin-gated task would prompt separately")
+
+
+def test_no_instruction_tells_the_user_to_run_unelevated(spec):
+    """THE CONSEQUENCE THAT HAD TO BE HANDLED, not merely accepted.
+
+    Three backend messages used to tell the user to "use Pulse's GUI
+    without elevating" — the documented escape for installers that set
+    `elevationProhibited` and hard-refuse under an Administrator token
+    (Spotify is the catalogued example; winget reports the family as
+    -1978335146 / -1978335107). With requireAdministrator there is no
+    unelevated Pulse to fall back to, so that advice became impossible to
+    follow, and two more said the same thing about the split-token case.
+
+    Un-installable is a real cost of this flag and it is documented in the
+    spec. Advice that cannot be followed is not a cost, it is a bug, and
+    this is the guard that keeps the two from being confused.
+    """
+    import os
+
+    offenders = []
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for folder, _dirs, files in os.walk(os.path.join(root, "src")):
+        for name in files:
+            if not name.endswith((".ps1", ".py")):
+                continue
+            path = os.path.join(folder, name)
+            with open(path, encoding="utf-8-sig", errors="replace") as handle:
+                for number, line in enumerate(handle, 1):
+                    if "without elevating" in line:
+                        offenders.append(
+                            f"  {os.path.relpath(path, root)}:{number}")
+    assert not offenders, (
+        "message(s) still tell the user to run Pulse without elevating, "
+        "which requireAdministrator makes impossible:\n" + "\n".join(offenders))
 
 
 # ============================================================

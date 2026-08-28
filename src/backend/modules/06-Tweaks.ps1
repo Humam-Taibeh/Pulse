@@ -504,7 +504,7 @@ function Remove-OneDrivePackage {
                 # matters.
                 Clear-OneDriveStartupEntries
                 Write-Success "OneDrive uninstall sequence executed."
-                return @{ Status = 'Success'; Message = 'OneDrive removed. Local files were backed up to Desktop\Pulse_OneDriveBackup first.' }
+                return @{ Status = 'Success'; Message = "OneDrive removed. Local files were backed up to $Script:OneDriveBackupFolder first." }
             } else {
                 Write-ErrorX "OneDrive's uninstaller exited with code $($Proc.ExitCode)."
                 return @{ Status = 'Failed'; Message = "OneDrive's uninstaller exited with code $($Proc.ExitCode)." }
@@ -525,7 +525,7 @@ function Restore-OneDrivePackage {
         Write-Info "Reinstalling Microsoft OneDrive via winget..."
         $Result = Smart-Deploy "Microsoft.OneDrive" "Microsoft OneDrive"
         if ($Result.Status -eq 'Success' -and (Test-Path $Script:OneDriveBackupFolder)) {
-            Write-Info "Your pre-removal files are still backed up at Desktop\Pulse_OneDriveBackup - copy them back into your OneDrive folder once it finishes syncing."
+            Write-Info "Your pre-removal files are still backed up at $Script:OneDriveBackupFolder - copy them back into your OneDrive folder once it finishes syncing."
         }
     } elseif ($Script:DryRun) {
         Write-Info "[WHATIF] Would reinstall Microsoft OneDrive via winget."
@@ -787,9 +787,9 @@ function Remove-MicrosoftEdge {
     # is gone but Windows still shows it "protected") is caught here
     # instead of reporting a clean success that isn't true.
     if ($Removed -or -not (Test-MicrosoftEdgeInstalled)) {
-        Write-Success "Microsoft Edge has been uninstalled (a system restart is recommended). A version/settings backup was saved to Desktop\Pulse_EdgeBackup."
+        Write-Success "Microsoft Edge has been uninstalled (a system restart is recommended). A version/settings backup was saved to $Script:EdgeBackupFolder."
         $Script:PendingRestart = $true
-        return @{ Status = 'Success'; Message = 'Microsoft Edge uninstalled. Settings backup saved to Desktop\Pulse_EdgeBackup. Restart recommended.' }
+        return @{ Status = 'Success'; Message = "Microsoft Edge uninstalled. Settings backup saved to $Script:EdgeBackupFolder. Restart recommended." }
     } else {
         Write-Warn "Edge is either a built-in component and cannot be fully removed, or it is not installed as a standalone. You may reset Edge instead."
         return @{ Status = 'Failed'; Message = 'Windows protected Edge from removal on this build (it is an OS component here). A backup of its settings was still saved.' }

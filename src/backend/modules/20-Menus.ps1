@@ -440,12 +440,12 @@ function Show-InformationUtilitiesMenu {
             }
             '2' {
                 if (Ask-User "Driver Backup" "Exports drivers.") {
-                    if (-not (Test-DryRun "Export all third-party drivers to Desktop\Pulse_DriverBackup")) {
+                    if (-not (Test-DryRun "Export all third-party drivers to $Script:DriverBackupFolder")) {
                         try {
-                            $BackupPath = "$env:USERPROFILE\Desktop\Pulse_DriverBackup"
+                            $BackupPath = $Script:DriverBackupFolder
                             New-Item -Path $BackupPath -ItemType Directory -Force | Out-Null
                             Export-WindowsDriver -Online -Destination $BackupPath -ErrorAction Stop | Out-Null
-                            Write-Success "Backup saved to Desktop\Pulse_DriverBackup"
+                            Write-Success "Backup saved to $BackupPath"
                         } catch {
                             # A real failure (DISM/COM error, no admin rights,
                             # disk full) - Write-ErrorX, not Write-Warn, so it's

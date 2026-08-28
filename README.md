@@ -129,7 +129,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Engine | **PowerShell 5.1+** | 19 numbered modules dot-sourced into one shared script scope |
 | Package manager | **`winget`** (lazy-bootstrapped) | Chocolatey fallback inside the software engine |
 | Persistence | **`QSettings`** → `HKCU\Software\HumamTaibeh\Pulse` | No file format to corrupt; every getter degrades to a default |
-| Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` deliberately off — elevation is per task. v10.4 is the first release built by this pipeline end to end — see [Building](#-building). |
+| Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` on — the manifest requests `requireAdministrator`, so every launch elevates (v10.7). See [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
 | Tests | **pytest 8** (840) + **Pester 5+** (126) | 80 tests marked `native` need a real window station |
@@ -265,7 +265,7 @@ Pulse/
 | **Windows** | 10 / 11, 64-bit | The app and the engine are both Windows-only by design |
 | **PowerShell** | 5.1 | Ships with Windows; nothing to install |
 | **Python** | 3.10+ | GUI / development mode only — not needed for the installed `.exe` |
-| **Administrator** | per task | Requested on demand; ~24 tasks touch HKLM, services or machine state |
+| **Administrator** | every launch | The manifest requests `requireAdministrator`, so Windows prompts before Pulse starts; ~24 tasks touch HKLM, services or machine state |
 | **Inno Setup 6** | build only | Required by `tools\build_release.ps1` unless `-SkipInstaller` |
 
 ---
@@ -396,7 +396,7 @@ Everything is stamped from the repo's `VERSION` file: the GUI imports it, PowerS
 pyinstaller main.spec                      # the bundle step on its own
 ```
 
-> **Why onedir, and why Program Files.** One-file self-extraction to `%TEMP%` is slower and a well-known AV heuristic (UPX is disabled in the spec for the same reason). Installing to Program Files is a security decision: Pulse elevates per task, so if the executable lived in a user-writable directory, any process running as the user could replace it and wait for the next elevated run — a straight privilege-escalation path.
+> **Why onedir, and why Program Files.** One-file self-extraction to `%TEMP%` is slower and a well-known AV heuristic (UPX is disabled in the spec for the same reason). Installing to Program Files is a security decision, and it matters *more* now that every launch elevates: if the executable lived in a user-writable directory, any process running as the user could replace it and the next launch would run that code with an Administrator token — a straight privilege-escalation path. Program Files is not writable without elevation, which closes it.
 
 ---
 
@@ -407,6 +407,30 @@ pyinstaller main.spec                      # the bundle step on its own
 | `start.bat` | Dev launcher — layout check, venv activation, GUI start |
 | `python src\frontend\main.py` | Start the GUI directly |
 | `powershell -File src\backend\core.ps1` | Interactive terminal engine (self-elevating) |
+
+### Where Pulse keeps its files
+
+Everything Pulse writes for itself lives under one root, and nothing is
+written to the Desktop:
+
+```
+%LOCALAPPDATA%\PULSE\
+├── Logs\            Pulse_Log.txt + up to 5 rotated archives (5 MB each)
+├── Backups\
+│   ├── Edge\        version + Preferences/Bookmarks/Favicons before a purge
+│   ├── OneDrive\    local files rescued before OneDrive is removed
+│   ├── Startup\     shortcuts moved aside by the Startup Manager
+│   └── Drivers\     third-party driver packages exported by Driver Backup
+└── updates\         installers the self-updater has downloaded
+```
+
+Through v10.6 the four backup folders sat on the **Desktop** (`Pulse_EdgeBackup`
+and friends) — the log had already moved to LocalAppData in v6.1 because a
+OneDrive-synced Desktop turned every appended line into sync traffic, and the
+backups had the same problem plus the clutter. The engine **moves** any legacy
+folder it finds into the root on start, including the pre-rebrand `HTCore_*`
+names, so an upgraded machine keeps its snapshots.
+
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
 | `python -m pytest tests` | The full 713-test regression suite |
@@ -446,7 +470,7 @@ core.ps1 -Task <Name> -WhatIf                            # dry-run: report, neve
 | `##PULSE##DATA\|{json}` | 0..n *(last wins)* | Structured payload — version audits, reports, scan results |
 | `##PULSE##META\|{json}` | exactly one | Metrics envelope: task, duration, dry-run/elevation flags, succeeded/failed/skipped counts. Emitted from `finally`, so every exit path is measured. |
 
-An unknown task name is answered with `##PULSE##ERROR|Unknown task: <name>`. A task requiring elevation in an unelevated session is refused *before* it starts, with instructions for relaunching.
+An unknown task name is answered with `##PULSE##ERROR|Unknown task: <name>`. A task requiring elevation in an unelevated session is refused *before* it starts — reachable when the engine is driven directly, since the packaged GUI always runs elevated.
 
 ### Task catalog
 

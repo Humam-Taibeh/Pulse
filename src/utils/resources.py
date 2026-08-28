@@ -136,14 +136,39 @@ def resource_dirs(name: str, roots: list[str] | None = None) -> list[str]:
 #  USER LOCATIONS
 # ============================================================
 def desktop_dir() -> str:
-    """The user's Desktop — where Pulse's exports and backups default to.
+    """The user's Desktop.
 
-    Not resolved through the shell's known-folder API on purpose: the
+    NOT A WRITE TARGET ANY MORE. Through v10.6 the backend put four
+    backup folders here, and (before v6.1) its log; this helper existed
+    so the GUI could agree with it. v10.7 moved every one of them under
+    data_root(). What is left is the READ half - the legacy locations
+    the local-action handler still falls back to on a machine whose
+    engine has not yet run and migrated them across.
+
+    Still resolved literally rather than through the shell's known-folder
+    API, for the reason it always was: the
     backend writes its own backups to the literal `$env:USERPROFILE\\
     Desktop` (see 02-Safety.ps1), so the GUI has to agree with it. A
     redirected Desktop would move both or neither.
     """
     return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def data_root() -> str:
+    """%LOCALAPPDATA%\\PULSE - everything Pulse writes for itself.
+
+    THE ONE ROOT, and this is the GUI's half of it. The engine resolves the
+    same path in PowerShell (Get-PulseDataPath, 00-Foundation.ps1) and the
+    two must name the same directory: the backend writes the log and the
+    backups, and this side is what opens them for the user.
+
+    Spelled PULSE in caps to match the engine and the updater's downloads
+    folder. Windows is case-insensitive, so a machine that already has a
+    lowercase `Pulse` directory keeps using it - the casing Explorer shows
+    is whatever created the folder first, which is cosmetic and not worth a
+    migration that renames a directory onto itself.
+    """
+    return os.path.join(local_appdata(), "PULSE")
 
 
 def local_appdata() -> str:

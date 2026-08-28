@@ -423,7 +423,7 @@ $Script:StartupDisabledRegPath = "HKCU:\Software\Pulse\DisabledStartup"
 # one profile. Entries disabled by an older Pulse have no record here and fall
 # back to the old per-user behaviour, which is why lookups must tolerate a miss.
 $Script:StartupOriginRegPath   = "$Script:StartupDisabledRegPath\_Origins"
-$Script:StartupBackupFolder    = "$env:USERPROFILE\Desktop\Pulse_StartupBackup"
+$Script:StartupBackupFolder    = Join-Path (Get-PulseDataPath "Backups") "Startup"
 # The per-user and all-users Run keys / Startup folders an item can be restored
 # to. Kept as data so Enable-StartupItem can validate a recorded origin against
 # a known-good set instead of writing to whatever string it read back.
@@ -435,10 +435,15 @@ $Script:StartupFolderPaths = @(
     "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
     "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
 )
-# Pre-rebrand fallback: shortcuts disabled under v5.x were moved into the old
-# HTCore folder - keep them restorable after the rename to Pulse.
-if (-not (Test-Path $Script:StartupBackupFolder) -and (Test-Path "$env:USERPROFILE\Desktop\HTCore_StartupBackup")) {
-    $Script:StartupBackupFolder = "$env:USERPROFILE\Desktop\HTCore_StartupBackup"
+# Pre-v10.7 homes, migrated in rather than fallen back to. The old code
+# REPOINTED the variable at the legacy folder instead of moving it, which
+# kept working but left a disabled startup shortcut permanently on the
+# Desktop of a machine that had upgraded twice - and meant the folder the
+# user could see and the folder Enable-StartupItem read from drifted apart
+# the moment a new item was disabled. Moving makes one of them the answer.
+foreach ($LegacyStartup in @("$env:USERPROFILE\Desktop\Pulse_StartupBackup",
+                             "$env:USERPROFILE\Desktop\HTCore_StartupBackup")) {
+    [void](Move-LegacyPulseData -From $LegacyStartup -To $Script:StartupBackupFolder)
 }
 
 # ============================================================
