@@ -242,12 +242,29 @@ function Get-PulseTweakState {
     # Deliberately binary (never "mixed"): the probe cannot distinguish
     # "half removed" from "half never installed", and MODIFIED would claim
     # a knowledge of history it does not have.
+    #
+    # MATCHED WITH -like, NOT -contains, AND THAT IS NOT A REFINEMENT.
+    # $Script:BloatApps became a list of WILDCARDS in v10.8 ("*YourPhone*",
+    # "king.com.*"), because publisher prefixes and package suffixes move
+    # between Windows builds. `-contains` is exact equality, so against a
+    # pattern list it matches nothing at all - and "nothing remaining" is
+    # this probe's definition of APPLIED. Left as it was, every machine on
+    # earth would have reported a clean bill of health, including one with
+    # the whole catalog installed. It survived a live check only because
+    # two catalog entries are still literal names.
+    #
+    # The optional Xbox tier is deliberately NOT excluded: the question
+    # this answers is "is catalogued bloatware on my system?", which does
+    # not depend on whether a bulk purge would have swept it.
     try {
         if (-not $Script:BloatApps) {
             $state["RemoveBloatware"] = $null      # catalog missing - can't judge
         } else {
             $installed = @(Get-AppxPackage -ErrorAction Stop | Select-Object -ExpandProperty Name -ErrorAction Stop)
-            $remaining = @($Script:BloatApps | Where-Object { $installed -contains $_ })
+            $remaining = @($Script:BloatApps | Where-Object {
+                $pattern = $_
+                @($installed | Where-Object { $_ -like $pattern }).Count -gt 0
+            })
             $state["RemoveBloatware"] = if ($remaining.Count -eq 0) { "applied" } else { "default" }
         }
     } catch {

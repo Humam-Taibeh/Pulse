@@ -9570,6 +9570,494 @@ class SelfUpdateDialog(PulseDialog):
 # ============================================================
 #  STARTUP ROW — one startup entry with a live enable/disable switch
 # ============================================================
+class BloatRow(QFrame):
+    """One catalogued package: its plaque, its name, whether it is actually
+    on this machine, and the sentence explaining what removing it costs.
+
+    THE NOTE IS NOT DECORATION. Every other selector in the app offers
+    things the user is choosing to ADD, where a description is a nicety.
+    This one removes software, and half the catalog has a consequence
+    worth knowing before the box is ticked — removing Phone Link ends
+    notification mirroring, removing the Gaming Overlay takes Game Bar's
+    screen capture with it, "Paint 3D" is not the Paint most people mean.
+    So the note rides on the row itself rather than in a tooltip nobody
+    hovers.
+
+    A row for a package that is NOT installed still renders, greyed and
+    unticked. Hiding them would leave the user unable to tell "Pulse does
+    not remove this" from "this is already gone", which is the difference
+    between a clean machine and an incomplete catalog.
+    """
+
+    #: The plaque glyph per catalog group. One mark per LAYER rather than
+    #: per app: fifty distinct icons would be a spectrum, which is exactly
+    #: what the palette pass removed from the rest of the app.
+    _GLYPHS = {
+        "promo":  "delete",
+        "core":   "layers",
+        "gaming": "game",
+        "codec":  "disk",
+    }
+
+    def __init__(self, entry: dict, t: dict):
+        super().__init__()
+        self.entry_id = str(entry.get("Id") or "")
+        self.group = str(entry.get("Group") or "promo")
+        self.detected = bool(entry.get("Detected"))
+        self.optional = bool(entry.get("Optional"))
+        self._name = str(entry.get("Name") or self.entry_id)
+
+        outer = QHBoxLayout(self)
+        row_padding(outer)
+        outer.setSpacing(TH.SPACE["md"])
+
+        # THE SHARED 36px WELL, the same object a card and a nav entry
+        # wear (see theme.PLAQUE_SIZE) rather than this dialog's own idea
+        # of an icon.
+        self.plaque = IconPlaque("")
+        self.plaque.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
+        glyph_key = self._GLYPHS.get(self.group, "delete")
+        char, is_fluent = TH.glyph(glyph_key)
+        self._plaque_font = TH.icon_font(TH.ICON["plaque"]) if is_fluent else None
+        self.plaque.setText(char)
+        outer.addWidget(self.plaque, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        col = QVBoxLayout()
+        col.setSpacing(TH.SPACE["xxs"])
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(TH.SPACE["sm"])
+        self.checkbox = QCheckBox(self._name)
+        self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.checkbox.setEnabled(self.detected)
+        name_row.addWidget(self.checkbox)
+
+        self._badge = QLabel("DETECTED" if self.detected else "NOT PRESENT")
+        name_row.addWidget(self._badge)
+
+        self._optional_badge: QLabel | None = None
+        if self.optional:
+            self._optional_badge = QLabel("OPTIONAL")
+            self._optional_badge.setToolTip(
+                "Left unticked by a Select All. Removing the Xbox stack can "
+                "break Game Bar's screen capture and Store game sign-in.")
+            name_row.addWidget(self._optional_badge)
+        name_row.addStretch()
+        col.addLayout(name_row)
+
+        note = str(entry.get("Note") or "")
+        packages = list(entry.get("Installed") or []) + list(entry.get("Provisioned") or [])
+        if packages:
+            # The real package names, once, at caption weight. A purge is
+            # the one operation where "what exactly are you about to
+            # delete" is a fair question, and the answer is not the
+            # friendly name.
+            shown = ", ".join(sorted(set(packages))[:3])
+            if len(set(packages)) > 3:
+                shown += ", …"
+            note = f"{note}  ·  {shown}" if note else shown
+        self._note = QLabel(note)
+        self._note.setWordWrap(True)
+        col.addWidget(self._note)
+        outer.addLayout(col, 1)
+
+        self.apply_theme(t)
+
+    def set_checked(self, on: bool):
+        """Tick only what is actually here. A Select All that ticked
+        absent packages would report a purge of things that were never
+        installed."""
+        if self.detected:
+            self.checkbox.setChecked(on)
+
+    def is_selected(self) -> bool:
+        return bool(self.detected and self.checkbox.isChecked())
+
+    def apply_theme(self, t: dict):
+        self.setProperty("disabled_item", not self.detected)
+        self.setStyleSheet(TH.startup_row_qss(t))
+        accent = t["accent"] if self.detected else t["text_faint"]
+        self.plaque.apply_theme(t, accent)
+        if self._plaque_font is not None:
+            self.plaque.setFont(self._plaque_font)
+        self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
+        self._badge.setStyleSheet(
+            TH.micro_chip_qss(t, "warn" if self.detected else "neutral"))
+        if self._optional_badge is not None:
+            self._optional_badge.setStyleSheet(TH.micro_chip_qss(t, "accent"))
+        self._note.setStyleSheet(TH.label_qss(t, "caption"))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+# ============================================================
+#  BLOATWARE PURGE — scan, classify, remove permanently
+# ============================================================
+class BloatwarePurgeDialog(PulseDialog):
+    """Scans the machine against the bloatware catalog and hands back the
+    Ids to purge.
+
+    IT DECIDES, IT DOES NOT DO. Unlike the Startup Manager — which owns its
+    own toggles and closes having already changed the machine — this dialog
+    returns `selected_ids` and lets main.py run RemoveBloatware through the
+    ordinary task pipeline. That is deliberate: a purge takes a restore
+    point, writes policy keys and can run for minutes, and every one of
+    those wants the app's live console, its concurrency guard and its
+    single-task queue rather than a private worker inside a modal.
+
+    THE SCAN IS UNPRIVILEGED, THE PURGE IS NOT. Enumerating packages needs
+    no rights, so opening this dialog never raises a UAC prompt; the task
+    it hands back is admin-gated like every other machine-scope operation.
+
+    Two sections, because the catalog has two kinds of entry and they are
+    not the same decision:
+
+        RECOMMENDED   promo stubs, redundant Microsoft apps, codec
+                      leftovers. Ticked by Select All.
+        OPTIONAL      the Xbox stack. Never ticked by Select All, because
+                      Game Bar's overlay is load-bearing for screen
+                      capture and Store games sign in through the identity
+                      provider.
+    """
+
+    #: Section order and copy. `optional` decides which side of the Select
+    #: All line a group sits on, so a new catalog group joins the right
+    #: half by declaring itself here rather than by editing the CTA.
+    SECTIONS = [
+        ("promo",  "Pre-installed stubs and promotions", False),
+        ("core",   "Redundant Windows apps", False),
+        ("codec",  "Third-party leftovers", False),
+        ("gaming", "Xbox and gaming (optional)", True),
+    ]
+
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+        super().__init__(parent)
+        self._t = t
+        self._ps1_path = ps1_path
+        self.selected_ids: list[str] = []
+        self._caveat = ""
+        self._rows: dict[str, BloatRow] = {}
+        #: (header label, its rows, how many of them are present) — the
+        #: grouping _sync_visibility folds and unfolds.
+        self._sections: list[tuple[QLabel, list, int]] = []
+        self._thread: QThread | None = None
+        self._worker: PowerShellTask | None = None
+
+        accent = t["accent"]
+        panel = _dialog_chrome(self, t, accent, responsive=True)
+        lay = dialog_body(panel, "sm")
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(TH.SPACE["xxs"])
+        title = QLabel("🧹  Bloatware Purge")
+        title.setStyleSheet(TH.label_qss(t, "dialog"))
+        title_col.addWidget(title)
+        self._subtitle = QLabel("Scanning installed and staged packages…")
+        self._subtitle.setWordWrap(True)
+        self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
+        title_col.addWidget(self._subtitle)
+        lay.addLayout(title_col)
+
+        self._stack = fit_stack(QStackedWidget())
+        self._stack.setStyleSheet(TH.stack_qss())
+        lay.addWidget(self._stack, 1)
+        self._loading_page = self._build_loading_page()
+        self._stack.addWidget(self._loading_page)
+        self._error_page = self._build_error_page()
+        self._stack.addWidget(self._error_page)
+        self._results_page = self._build_results_page()
+        self._stack.addWidget(self._results_page)
+        self._stack.setCurrentWidget(self._loading_page)
+
+        self._footer = dialog_footer(lay, self._cancel_btn, self._purge_btn)
+        self._start_scan()
+
+    # -- pages ---------------------------------------------------------
+    def _build_loading_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["lg"])
+        lay.addStretch()
+        self._shimmer = ShimmerBar(height=6)
+        self._shimmer.set_theme(t)
+        lay.addWidget(self._shimmer)
+        self._loading_label = QLabel(
+            "Reading installed packages, staged provisioning templates and "
+            "the uninstall registry…")
+        self._loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._loading_label.setWordWrap(True)
+        self._loading_label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._loading_label)
+        lay.addStretch()
+        return page
+
+    def _build_error_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+        icon = QLabel("⚠️")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(
+            f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
+        lay.addWidget(icon)
+        self._error_label = QLabel("")
+        self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._error_label.setWordWrap(True)
+        self._error_label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._error_label)
+        lay.addStretch()
+        return page
+
+    def _build_results_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(TH.SPACE["sm"])
+
+        bar = QHBoxLayout()
+        bar.setSpacing(TH.SPACE["lg"])
+        self._all_btn = QPushButton("Select All Bloatware")
+        self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._all_btn.setToolTip(
+            "Ticks every DETECTED package outside the optional Xbox section.")
+        self._all_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._all_btn.clicked.connect(lambda: self._select_all(True))
+        bar.addWidget(self._all_btn)
+        self._none_btn = QPushButton("Deselect All")
+        self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._none_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._none_btn.clicked.connect(lambda: self._select_all(False))
+        bar.addWidget(self._none_btn)
+        bar.addStretch()
+        # THE CATALOG IS 48 ENTRIES AND A CLEAN MACHINE HAS ONE OF THEM.
+        # Rendering every row unconditionally was the first build's
+        # behaviour and it buried the only result that mattered under
+        # forty-seven "NOT PRESENT" rows in three sections the user had to
+        # scroll past. Hiding them is not hiding information — the section
+        # header still reports "1 of 25 present", so the catalog's size and
+        # this machine's score are both on screen — it is putting the
+        # answer above the evidence.
+        #
+        # The toggle exists because the evidence is a fair question: "does
+        # Pulse know about TikTok?" is answerable in one click rather than
+        # by reading the source.
+        self._show_absent = QCheckBox("Show packages that aren't installed")
+        self._show_absent.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._show_absent.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
+        self._show_absent.toggled.connect(self._sync_visibility)
+        bar.addWidget(self._show_absent)
+        self._count = QLabel("0 selected")
+        self._count.setStyleSheet(TH.label_qss(t, "caption"))
+        bar.addWidget(self._count)
+        lay.addLayout(bar)
+
+        self._scroll = FitScroll()
+        self._scroll.setStyleSheet(TH.scroll_area_qss(t))
+        host = QWidget()
+        host.setStyleSheet("background: transparent;")
+        self._host_lay = scroll_host_layout(host, "sm")
+        self._host_lay.addStretch()
+        self._scroll.setWidget(host)
+        lay.addWidget(self._scroll, 1)
+
+        self._empty = QLabel("Nothing catalogued is installed — this system is clean.")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setStyleSheet(TH.empty_state_qss(t))
+        self._empty.hide()
+        lay.addWidget(self._empty)
+
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setStyleSheet(TH.dialog_cancel_qss(t))
+        self._cancel_btn.clicked.connect(self.reject)
+        self._purge_btn = QPushButton("Safe Purge")
+        self._purge_btn.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
+        self._purge_btn.setEnabled(False)
+        self._purge_btn.clicked.connect(self._accept_selection)
+        return page
+
+    # -- scan ----------------------------------------------------------
+    def _start_scan(self):
+        if self._thread is not None:
+            return
+        self._shimmer.start()
+        thread = QThread(self)
+        worker = PowerShellTask(self._ps1_path, "BloatwareScan", timeout=180)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_scan_finished)
+        worker.failed.connect(self._on_scan_failed)
+        for signal in (worker.finished, worker.failed, worker.cancelled):
+            signal.connect(thread.quit)
+        thread.finished.connect(self._cleanup)
+        self._thread, self._worker = thread, worker
+        thread.start()
+
+    def _on_scan_finished(self, result: TaskResult):
+        self._shimmer.stop()
+        message = str(result.message or "")
+        marker = "Staged packages could not be read"
+        self._caveat = message[message.index(marker):] if marker in message else ""
+        entries = result.data if isinstance(result.data, list) else None
+        if not result.success or entries is None:
+            self._on_scan_failed(result.message or "The package scan returned nothing.")
+            return
+        self._render(entries)
+
+    def _on_scan_failed(self, message: str):
+        self._shimmer.stop()
+        self._error_label.setText(
+            f"{message}\n\nNothing was changed. Close this and try again, or "
+            "run the purge without a selection to remove the recommended set.")
+        self._stack.setCurrentWidget(self._error_page)
+        self._purge_btn.setEnabled(False)
+
+    def _cleanup(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+        if self._thread is not None:
+            self._thread.deleteLater()
+            self._thread = None
+
+    # -- rendering ------------------------------------------------------
+    def _render(self, entries: list):
+        t = self._t
+        by_group: dict[str, list] = {}
+        for entry in entries:
+            if isinstance(entry, dict):
+                by_group.setdefault(str(entry.get("Group") or "promo"), []).append(entry)
+
+        detected = 0
+        for key, title, _optional in self.SECTIONS:
+            rows = by_group.get(key) or []
+            # Detected first inside a section, then alphabetically. A user
+            # opening this wants to see what is actually there, and a list
+            # that leads with fourteen "NOT PRESENT" rows buries it.
+            rows.sort(key=lambda e: (not e.get("Detected"), str(e.get("Name") or "")))
+            if not rows:
+                continue
+            present = sum(1 for e in rows if e.get("Detected"))
+            detected += present
+            header = self._add_header(f"{title}  ·  {present} of {len(rows)} present")
+            built = []
+            for entry in rows:
+                row = BloatRow(entry, t)
+                row.checkbox.toggled.connect(self._sync_count)
+                self._rows[row.entry_id] = row
+                self._insert(row)
+                built.append(row)
+            # The header travels WITH its rows: a section whose every entry
+            # is hidden must not leave a heading floating over the next
+            # section's contents.
+            self._sections.append((header, built, present))
+
+        self._empty.setVisible(detected == 0)
+        self._scroll.setVisible(detected > 0 or bool(self._rows))
+        summary = (
+            "Nothing catalogued is installed on this machine."
+            if detected == 0 else
+            f"{detected} catalogued package(s) found. Ticked packages are "
+            "removed for every profile, deprovisioned so they cannot return "
+            "after a Windows update, and their Start menu promotions "
+            "disabled.")
+        # The backend appends a caveat when it could not read the staged
+        # packages (that read needs elevation). Passing it through matters:
+        # "clean" and "clean as far as I could see" are different claims,
+        # and the second one is what an unelevated scan can make.
+        if self._caveat:
+            summary = f"{summary}  {self._caveat}"
+        self._subtitle.setText(summary)
+        # PRE-TICKED, and only the recommended half. The catalog's whole
+        # premise is that these should not be here; making the user tick
+        # thirty boxes to agree would be theatre. The optional section is
+        # the exception and stays untouched.
+        self._select_all(True)
+        if detected == 0:
+            # Nothing to fold away, and nothing to fold it behind.
+            self._show_absent.setChecked(True)
+            self._show_absent.setEnabled(False)
+        self._sync_visibility()
+        self._stack.setCurrentWidget(self._results_page)
+        self._scroll.refresh()
+
+    def _add_header(self, text: str) -> QLabel:
+        label = QLabel(text.upper())
+        label.setStyleSheet(TH.label_qss(self._t, "section"))
+        label.setContentsMargins(TH.SPACE["xs"], TH.SPACE["sm"],
+                                 TH.SPACE["xs"], 0)
+        self._insert(label)
+        return label
+
+    def _sync_visibility(self):
+        """Show what is here; show the rest only when asked.
+
+        On a machine where NOTHING was detected the toggle is forced on
+        and disabled: an empty list under a "1 of 25 present" header would
+        read as the dialog having failed to load, and there is nothing to
+        bury it under anyway."""
+        show_all = self._show_absent.isChecked() or not self._any_detected()
+        for header, rows, present in self._sections:
+            for row in rows:
+                row.setVisible(show_all or row.detected)
+            header.setVisible(show_all or present > 0)
+        self._scroll.refresh()
+
+    def _any_detected(self) -> bool:
+        return any(row.detected for row in self._rows.values())
+
+    def _insert(self, widget: QWidget):
+        self._host_lay.insertWidget(self._host_lay.count() - 1, widget)
+
+    # -- selection -------------------------------------------------------
+    def _select_all(self, on: bool):
+        """Select All means the RECOMMENDED set, never the optional one.
+
+        A control labelled "Select All Bloatware" that silently ticked the
+        Xbox stack would be the single most damaging click in the app: Game
+        Bar's overlay is what Win+G opens and what most capture tools hook,
+        and removing the identity provider can lock a user out of games
+        they already own. Deselect All is unconditional — turning
+        everything off is never the dangerous direction."""
+        optional_groups = {key for key, _title, opt in self.SECTIONS if opt}
+        for row in self._rows.values():
+            if on and row.group in optional_groups:
+                continue
+            row.set_checked(on)
+        self._sync_count()
+
+    def _sync_count(self):
+        chosen = [r for r in self._rows.values() if r.is_selected()]
+        self._count.setText(f"{len(chosen)} selected")
+        self._purge_btn.setEnabled(bool(chosen))
+        self._purge_btn.setText(
+            "Safe Purge" if not chosen else f"Safe Purge ({len(chosen)})")
+
+    def _accept_selection(self):
+        self.selected_ids = [r.entry_id for r in self._rows.values() if r.is_selected()]
+        if not self.selected_ids:
+            return
+        self.accept()
+
+    # -- lifecycle -------------------------------------------------------
+    def showEvent(self, e):
+        super().showEvent(e)
+        _present_dialog(self)
+
+    def done(self, code: int):
+        """Settle the scan before the wrapper goes away — the same guard
+        every dialog that owns a worker thread carries (see
+        PulseDialog.done)."""
+        if self._worker is not None:
+            self._worker.cancel()
+        super().done(code)
+
+
 class StartupRow(QFrame):
     """One startup entry: name, boot-impact badge, recommendation tag and
     the backend's plain-language reason, plus a ToggleSwitch that fires

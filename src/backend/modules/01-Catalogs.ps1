@@ -376,20 +376,162 @@ $Script:OptionalServices = @(
 # ============================================================
 #  DEBLOAT CATALOG
 # ============================================================
+#  THREE LAYERS, NOT ONE LIST. The catalog used to be 30 bare package
+#  names, which is enough to remove them and not enough to let anyone
+#  decide WHETHER to. A user looking at "Microsoft.549981C3F5F10" cannot
+#  tell it is Cortana; a user looking at "Microsoft.XboxGamingOverlay"
+#  cannot tell that removing it also takes Game Bar's screen capture with
+#  it. Both of those are decisions, and a decision needs a name, a
+#  sentence and a group.
+#
+#  Group is the layer the entry belongs to, and the GUI renders one
+#  section per group:
+#
+#     promo   Pre-installed stubs and Start-menu promotions. Nothing in
+#             Windows depends on any of them.
+#     core    Microsoft's own redundant or telemetry-adjacent apps. Safe,
+#             but a user may genuinely want Maps or Mail.
+#     gaming  The Xbox stack. OPTIONAL BY DEFAULT (Optional = $true) and
+#             deselected in the GUI until asked for, because Game Bar's
+#             overlay is load-bearing for screen capture and some titles
+#             sign in through XboxIdentityProvider.
+#     codec   Not an AppX package at all - a classic MSI/EXE uninstall
+#             found through the registry. See Uninstall-DesktopBloat.
+#
+#  Match is a WILDCARD, and that is deliberate: publisher prefixes and
+#  package suffixes move between Windows builds ("Microsoft.YourPhone" on
+#  one, "Microsoft.WindowsPhoneExperienceHost" on the next; Facebook ships
+#  Instagram under two different publisher hashes). Matching on a stable
+#  fragment survives that where an exact name does not.
+#
+#  A WILDCARD IS ALSO HOW YOU DELETE THE SHELL BY ACCIDENT, so nothing
+#  here is applied without first being filtered through
+#  $Script:BloatProtected below. See Resolve-BloatwareTargets.
+$Script:BloatCatalog = @(
+    # ---- A. PRE-INSTALLED STUBS, PROMOS AND CASUAL GAMES ------------
+    @{ Id = "Instagram";        Name = "Instagram";               Group = "promo";  Match = "*Instagram*";                Note = "Store stub that opens the web app. Nothing depends on it." }
+    @{ Id = "PrimeVideo";       Name = "Prime Video";             Group = "promo";  Match = "*PrimeVideo*";               Note = "Amazon's pre-installed player stub." }
+    @{ Id = "Messenger";        Name = "Messenger";               Group = "promo";  Match = "*Messenger*";                Note = "Facebook Messenger stub." }
+    @{ Id = "TikTok";           Name = "TikTok";                  Group = "promo";  Match = "*TikTok*";                   Note = "Pre-installed on many OEM images." }
+    @{ Id = "Facebook";         Name = "Facebook";                Group = "promo";  Match = "*Facebook*";                 Note = "Store stub that opens the web app." }
+    @{ Id = "DisneyPlus";       Name = "Disney+";                 Group = "promo";  Match = "*Disney*";                   Note = "Pre-installed streaming stub." }
+    @{ Id = "SpotifyStub";      Name = "Spotify (Store stub)";    Group = "promo";  Match = "SpotifyAB.SpotifyMusic";     Note = "The Store build. Removing it does NOT touch a desktop Spotify install." }
+    #  ONE ENTRY, NOT TWO. Candy Crush ships as king.com.CandyCrushSaga
+    #  and king.com.CandyCrushSodaSaga, so a separate "*CandyCrush*"
+    #  entry beside "king.com.*" matched the same packages twice - two
+    #  rows in the GUI for one app, and a user who unticked one of them
+    #  still had it removed by the other.
+    @{ Id = "KingGames";        Name = "Candy Crush and King games"; Group = "promo"; Match = "king.com.*";              Note = "Candy Crush, Bubble Witch, Farm Heroes and the rest of the King suite." }
+    @{ Id = "MarchOfEmpires";   Name = "March of Empires";        Group = "promo";  Match = "*MarchofEmpires*";           Note = "Gameloft promotional install." }
+    @{ Id = "Sudoku";           Name = "Microsoft Sudoku";        Group = "promo";  Match = "*MicrosoftSudoku*";          Note = "Casual game, ad-supported." }
+    @{ Id = "Solitaire";        Name = "Solitaire Collection";    Group = "promo";  Match = "*MicrosoftSolitaireCollection*"; Note = "Casual game, ad-supported." }
+    @{ Id = "Todos";            Name = "Microsoft To Do";         Group = "promo";  Match = "Microsoft.Todos";            Note = "Task app. Removing it does not affect Outlook tasks." }
+    @{ Id = "OneNoteWin10";     Name = "OneNote for Windows 10";  Group = "promo";  Match = "Microsoft.Office.OneNote";   Note = "The retired Store OneNote, superseded by OneNote in Microsoft 365." }
+    @{ Id = "Paint3D";          Name = "Paint 3D";                Group = "promo";  Match = "Microsoft.MSPaint";          Note = "Paint 3D only. Classic Paint (mspaint.exe) is a separate app and is untouched." }
+    @{ Id = "MixedReality";     Name = "Mixed Reality Portal";    Group = "promo";  Match = "Microsoft.MixedReality.Portal"; Note = "Windows Mixed Reality, retired by Microsoft." }
+    @{ Id = "Builder3D";        Name = "3D Builder";              Group = "promo";  Match = "Microsoft.3DBuilder";        Note = "Retired 3D modelling app." }
+    @{ Id = "Skype";            Name = "Skype";                   Group = "promo";  Match = "Microsoft.SkypeApp";         Note = "Consumer Skype stub." }
+    @{ Id = "LinkedIn";         Name = "LinkedIn";                Group = "promo";  Match = "*LinkedInforWindows*";       Note = "Store wrapper around the website." }
+    @{ Id = "Clipchamp";        Name = "Clipchamp";               Group = "promo";  Match = "Clipchamp.Clipchamp";        Note = "Pre-installed video editor." }
+    @{ Id = "StickyNotes";      Name = "Sticky Notes";            Group = "promo";  Match = "Microsoft.MicrosoftStickyNotes"; Note = "Notes app. Existing notes sync to OneNote and survive removal." }
+    @{ Id = "OfficeHub";        Name = "Office Hub";              Group = "promo";  Match = "Microsoft.MicrosoftOfficeHub"; Note = "The 'Office' launcher tile, not Office itself." }
+    @{ Id = "TeamsPersonal";    Name = "Microsoft Teams (personal)"; Group = "promo"; Match = "MSTeams";                   Note = "The consumer Teams that ships with Windows 11. Work/school Teams is a separate install." }
+    @{ Id = "OutlookNew";       Name = "Outlook (new)";           Group = "promo";  Match = "Microsoft.OutlookForWindows"; Note = "The web-wrapper Outlook Microsoft pre-installs." }
+    @{ Id = "ZuneMusic";        Name = "Groove Music";            Group = "promo";  Match = "Microsoft.ZuneMusic";        Note = "Legacy Groove/Media Player entry." }
+    @{ Id = "ZuneVideo";        Name = "Movies & TV";             Group = "promo";  Match = "Microsoft.ZuneVideo";        Note = "Legacy video player." }
+
+    # ---- B. REDUNDANT WINDOWS CORE AND TELEMETRY BLOAT --------------
+    @{ Id = "PhoneLink";        Name = "Phone Link";              Group = "core";   Match = "*YourPhone*";                Note = "Android/iPhone linking. Removing it ends notification mirroring." }
+    @{ Id = "PhoneExperience";  Name = "Phone Link host";         Group = "core";   Match = "*PhoneExperienceHost*";      Note = "Phone Link's background host. Remove alongside Phone Link." }
+    @{ Id = "Copilot";          Name = "Microsoft Copilot";       Group = "core";   Match = "*Windows.Copilot*";          Note = "The Copilot app. The taskbar button is a separate tweak." }
+    @{ Id = "CopilotWeb";       Name = "Copilot (web wrapper)";   Group = "core";   Match = "Microsoft.Copilot";          Note = "The Store wrapper build shipped on newer 11 images." }
+    @{ Id = "Cortana";          Name = "Cortana";                 Group = "core";   Match = "*549981C3F5F10*";           Note = "Retired assistant. Windows Search is unaffected." }
+    @{ Id = "MailCalendar";     Name = "Mail and Calendar";       Group = "core";   Match = "*windowscommunicationsapps*"; Note = "The classic Mail/Calendar pair, retired in favour of new Outlook." }
+    @{ Id = "BingWeather";      Name = "Weather";                 Group = "core";   Match = "Microsoft.BingWeather";      Note = "Also feeds the taskbar weather widget." }
+    @{ Id = "BingNews";         Name = "News";                    Group = "core";   Match = "Microsoft.BingNews";         Note = "MSN news feed." }
+    @{ Id = "BingFinance";      Name = "Finance";                 Group = "core";   Match = "Microsoft.BingFinance";      Note = "MSN money feed." }
+    @{ Id = "BingSports";       Name = "Sports";                  Group = "core";   Match = "Microsoft.BingSports";       Note = "MSN sports feed." }
+    @{ Id = "Maps";             Name = "Windows Maps";            Group = "core";   Match = "Microsoft.WindowsMaps";      Note = "Offline maps app, retired by Microsoft." }
+    @{ Id = "FeedbackHub";      Name = "Feedback Hub";            Group = "core";   Match = "*FeedbackHub*";              Note = "Sends diagnostics and feedback to Microsoft." }
+    @{ Id = "GetHelp";          Name = "Get Help";                Group = "core";   Match = "*GetHelp*";                  Note = "Support-contact app." }
+    @{ Id = "Tips";             Name = "Tips";                    Group = "core";   Match = "Microsoft.Getstarted";       Note = "The 'Get Started' / Tips promo app." }
+    @{ Id = "People";           Name = "People";                  Group = "core";   Match = "Microsoft.People";           Note = "Contacts app used by the retired Mail client." }
+    @{ Id = "Widgets";          Name = "Widgets";                 Group = "core";   Match = "MicrosoftWindows.Client.WebExperience"; Note = "The Widgets board and its MSN feed." }
+
+    # ---- C. XBOX AND GAMING (OPTIONAL) ------------------------------
+    #  Optional = $true means the GUI leaves these UNTICKED. Game Bar's
+    #  overlay is what Win+G opens and what many capture tools hook, and
+    #  XboxIdentityProvider is how Store games sign in - a purge that
+    #  silently took those would break something the user did not ask
+    #  about.
+    @{ Id = "XboxTCUI";         Name = "Xbox TCUI";               Group = "gaming"; Optional = $true; Match = "Microsoft.Xbox.TCUI";              Note = "Xbox in-game UI framework. Some Store games need it to sign in." }
+    @{ Id = "XboxGameOverlay";  Name = "Xbox Game Overlay";       Group = "gaming"; Optional = $true; Match = "Microsoft.XboxGameOverlay";        Note = "The Win+G overlay surface." }
+    @{ Id = "XboxGamingOverlay";Name = "Xbox Gaming Overlay";     Group = "gaming"; Optional = $true; Match = "Microsoft.XboxGamingOverlay";      Note = "Game Bar itself, including its screen capture." }
+    @{ Id = "XboxSpeech";       Name = "Xbox Speech To Text";     Group = "gaming"; Optional = $true; Match = "Microsoft.XboxSpeechToTextOverlay"; Note = "Live captions inside Xbox games." }
+    @{ Id = "XboxIdentity";     Name = "Xbox Identity Provider";  Group = "gaming"; Optional = $true; Match = "Microsoft.XboxIdentityProvider";   Note = "Store game sign-in. Removing it can lock you out of installed games." }
+    @{ Id = "XboxApp";          Name = "Xbox app";                Group = "gaming"; Optional = $true; Match = "Microsoft.XboxApp";                Note = "The legacy Xbox console companion." }
+
+    # ---- D. THIRD-PARTY DESKTOP LEFTOVERS ---------------------------
+    #  Desktop = the registry DisplayName to look for under the Uninstall
+    #  hives. These have no AppX identity at all, so Match is unused and
+    #  the removal path is Uninstall-DesktopBloat rather than the AppX
+    #  pipeline.
+    @{ Id = "KLiteCodec";       Name = "K-Lite Codec Pack";       Group = "codec";  Desktop = "K-Lite Codec Pack*";       Note = "Bundled codec pack. Windows plays every mainstream format without it." }
+)
+
+#  PACKAGES NO WILDCARD MAY EVER MATCH.
+#
+#  This list is the reason the catalog is allowed to use wildcards at all.
+#  "*Messenger*" is a reasonable way to find Facebook Messenger and also
+#  matches nothing else today - but "today" is doing a lot of work in that
+#  sentence, and the cost of being wrong is not a failed removal, it is a
+#  shell that no longer starts. Every candidate is filtered through this
+#  before anything is removed, so a catalog pattern that grows a new match
+#  on some future Windows build fails CLOSED.
+#
+#  Everything here is either the shell itself, a runtime other packages
+#  are built against, or the thing that would be needed to reinstall
+#  anything afterwards.
+$Script:BloatProtected = @(
+    "*WindowsStore*"                  # the Store - the way back from a mistake
+    "*DesktopAppInstaller*"           # winget itself
+    "*VCLibs*"                        # C++ runtime other packages link
+    "*NET.Native*"                    # .NET Native runtimes
+    "*UI.Xaml*"                       # WinUI runtime
+    "*ShellExperienceHost*"           # the shell
+    "*StartMenuExperienceHost*"       # the Start menu
+    "*Windows.Search*"                # search host
+    "*SecHealthUI*"                   # Windows Security UI
+    "*Windows.Client.CBS*"            # servicing UI
+    "*Windows.CloudExperienceHost*"   # OOBE / account flows
+    "*Windows.ImmersiveControlPanel*" # Settings
+    "*Windows.ShellComponents*"
+    "*WindowsTerminal*"
+    "*Microsoft.UI.Xaml*"
+    "*Microsoft.WindowsAppRuntime*"
+    #  FOUND BY THE FIRST LIVE SCAN, and both are the reason this
+    #  list is maintained rather than reasoned about: each is a SHELL
+    #  COMPONENT whose name is one character away from a catalog
+    #  entry. "Microsoft.People" is the removable contacts app;
+    #  "Microsoft.Windows.PeopleExperienceHost" is the taskbar's own
+    #  people surface. "Microsoft.XboxApp" is the removable console
+    #  companion; "Microsoft.XboxGameCallableUI" is what Store games
+    #  call to show a sign-in prompt. Neither is matched by the
+    #  catalog as it stands - they are listed so that a future
+    #  loosening to "*People*" or "*Xbox*" fails closed.
+    "*PeopleExperienceHost*"
+    "*XboxGameCallableUI*"
+)
+
+#  The flat name list the pre-v10.7 callers still read (11-StateProbe's
+#  "is this machine clean?" verdict and 20-Menus' console flow). Derived
+#  from the catalog rather than maintained beside it, because two lists of
+#  the same fact is how the old catalog and the probe came to disagree
+#  about what counts as bloatware.
 $Script:BloatApps = @(
-    "Microsoft.3DBuilder", "Microsoft.BingFinance", "Microsoft.BingNews", "Microsoft.BingSports",
-    "Microsoft.BingWeather", "Microsoft.GetHelp", "Microsoft.Getstarted", "Microsoft.MicrosoftOfficeHub",
-    "Microsoft.MicrosoftSolitaireCollection", "Microsoft.MixedReality.Portal", "Microsoft.People",
-    "Microsoft.SkypeApp", "Microsoft.WindowsFeedbackHub", "Microsoft.WindowsMaps", "Microsoft.Xbox.TCUI",
-    "Microsoft.XboxApp", "Microsoft.XboxGameOverlay", "Microsoft.XboxGamingOverlay", "Microsoft.XboxIdentityProvider",
-    "Microsoft.XboxSpeechToTextOverlay", "Microsoft.YourPhone", "Microsoft.ZuneMusic", "Microsoft.ZuneVideo",
-    # --- v9.4 expansion: modern Win11 preinstalls users asked to purge ---
-    "7EE7776C.LinkedInforWindows",              # LinkedIn
-    "Clipchamp.Clipchamp",                      # Clipchamp video editor
-    "Microsoft.OutlookForWindows",              # "new" Outlook
-    "Microsoft.MicrosoftStickyNotes",           # Sticky Notes
-    "MSTeams",                                  # new Microsoft Teams (personal)
-    "MicrosoftWindows.Client.WebExperience"     # Widgets / Web Experience pack
+    $Script:BloatCatalog |
+        Where-Object { $_.ContainsKey("Match") } |
+        ForEach-Object { $_.Match }
 )
 
 # ============================================================

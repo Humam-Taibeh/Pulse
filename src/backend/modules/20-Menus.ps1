@@ -379,7 +379,7 @@ function Show-PrivacySecurityMenu {
     do {
         Write-Banner "🛡️ PRIVACY & SECURITY"
         Write-ModulePreview -Items @(
-            "Remove Bloatware - uninstalls $($Script:BloatApps.Count) pre-loaded Store apps",
+            "Remove Bloatware - purges the recommended set of $(@($Script:BloatCatalog | Where-Object { -not $_.Optional }).Count) catalogued packages (Xbox tier skipped)",
             "Disable Telemetry & Diagnostics - stops data collection services/tasks",
             "Disable Advertising ID - removes the per-user ad identifier",
             "Disable Activity History Sync - stops Timeline data collection"

@@ -16,6 +16,105 @@ GUI version, with core changes called out explicitly.
 
 ---
 
+## [10.8.0] — 2026-08-30
+
+Bloatware that stays removed.
+
+### Added — the bloatware purge, in three tiers
+- **`Remove-AppxPackage` alone is a temporary fix, and that is why removed
+  apps came back.** The purge now runs three tiers, and skipping any one of
+  them is a different way for the same app to return:
+  1. the INSTALLED package, for every profile;
+  2. the PROVISIONED template — the staged copy servicing re-applies, which
+     is what puts an app back after a feature update or on a new profile;
+  3. the CONTENT DELIVERY subscription that silently reinstalls promotional
+     apps and re-pins their tiles on its own schedule
+     (`SilentInstalledAppsEnabled`, `SubscribedContent-338388Enabled`,
+     `PreInstalledAppsEnabled`, `OemPreInstalledAppsEnabled`,
+     `SubscribedContent-338389Enabled`, `ContentDeliveryAllowed`), plus a
+     Start-menu tile-cache rebuild so a dead tile stops being a live
+     install link.
+  Tier 3 is the one that makes the other two permanent. Every value is
+  snapshotted through `Backup-OriginalRegValue`, so **Reset All Tweaks**
+  puts the user's own settings back like any other policy Pulse writes.
+- **A classified catalog replaces the flat name list.** 30 bare package
+  names became 48 entries carrying an Id, a display name, a layer and a
+  sentence saying what removing it costs — because a user looking at
+  `Microsoft.549981C3F5F10` cannot tell it is Cortana, and a user looking
+  at `Microsoft.XboxGamingOverlay` cannot tell that removing it takes Game
+  Bar's screen capture with it. Four layers: `promo` (Instagram, Prime
+  Video, Messenger, TikTok, Facebook, Disney+, the Spotify Store stub, the
+  King suite, Sudoku, Solitaire, To Do, OneNote for Windows 10, Paint 3D
+  and the rest), `core` (Phone Link and its host, Copilot and its web
+  wrapper, Cortana, Mail and Calendar, the four Bing feeds, Maps, Feedback
+  Hub, Get Help, Tips, Widgets), `gaming` (the Xbox stack) and `codec`
+  (K-Lite, removed through the registry's uninstall string rather than the
+  AppX pipeline).
+- **The Xbox tier is optional and stays untouched by a bulk purge.** Game
+  Bar's overlay is what Win+G opens and what most capture tools hook, and
+  Store games sign in through `XboxIdentityProvider`. A control labelled
+  "Select All Bloatware" that swept those would be the single most
+  damaging click in the app, so `Optional` entries are never ticked by
+  Select All and never removed by a headless `-Task RemoveBloatware`.
+  **This changes `ApplyAllPrivacy`**, which previously took the whole Xbox
+  stack with it.
+- **Matching moved to wildcards, and wildcards needed a net.** Publisher
+  prefixes and package suffixes move between builds — Phone Link is
+  `Microsoft.YourPhone` on one and `WindowsPhoneExperienceHost` on the
+  next — so the catalog matches on stable fragments. The cost is that a
+  pattern can grow a match nobody intended, and the thing it grows a match
+  on might be the shell: every candidate is therefore filtered through
+  `$Script:BloatProtected` (the Store, winget, the VCLibs/.NET Native/WinUI
+  runtimes, the shell and Start hosts, Search, Windows Security, Settings)
+  and a pattern that reaches one of those **fails closed** — recorded as
+  blocked, named in the log, never removed.
+
+### Added — the Bloatware Purge selector
+- **Scan first, then decide.** The card used to remove whatever the catalog
+  listed without ever saying which of those were on the machine. It now
+  opens a selector that scans, groups by layer, badges each row
+  DETECTED / NOT PRESENT, names the actual package ids, and hands back
+  exactly the shape every other selector does — a list on `-AppIds`, so the
+  concurrency guard, the live console and the toasts are unchanged.
+- **The selector replaces the confirm sheet rather than sitting behind
+  one.** It names every package it is about to remove, which is a stronger
+  confirmation than a yes/no dialog and a worse experience to click through
+  twice.
+- **Absent rows are folded away by default.** The catalog is 48 entries and
+  a clean machine has one of them; the first build buried that one result
+  under forty-seven "NOT PRESENT" rows across three sections. The section
+  headers still report "1 of 25 present", and one checkbox unfolds the rest.
+- **The scan is unprivileged; the purge is not.** Enumerating packages
+  needs no rights, so opening the dialog never raises a UAC prompt. Reading
+  the PROVISIONED list does need elevation, and when it fails the dialog
+  says so — "clean" and "clean as far as I could see" are different claims,
+  and only the second is true unelevated.
+
+### Fixed
+- **The applied-state probe would have reported every machine clean.**
+  `11-StateProbe.ps1` tested the catalog with `-contains`, which is exact
+  equality; against a list that had become wildcards it matches nothing,
+  and "nothing remaining" is that probe's definition of APPLIED. It
+  survived a live check only because two catalog entries are still literal
+  names. Now matched with `-like`.
+
+### Tests
+- `tests/backend/Bloatware.Tests.ps1` — 20 Pester cases against a **mocked
+  AppX inventory**. `Resolve-BloatwareTargets` takes the installed,
+  provisioned and protected lists as arguments precisely so the dangerous
+  rules can be exercised without removing anything: a protected package
+  caught by a catalog wildcard, an entry that is provisioned but not
+  installed, an empty selection meaning "the recommended set" rather than
+  "everything", and a deliberately reckless `*Windows*` pattern that must
+  fail closed.
+- `tests/test_bloatware.py` — 13 cases on the seam between the two halves
+  (every catalog group has a section and a plaque glyph, the optional tier
+  agrees end to end) and on the safety policy only the GUI enforces
+  (Select All never sweeps the optional tier, an absent package can never
+  be selected).
+
+---
+
 ## [10.7.0] — 2026-08-29
 
 One accent, flat surfaces, and a shell that stops moving underneath you.

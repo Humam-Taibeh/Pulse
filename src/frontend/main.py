@@ -70,6 +70,7 @@ from frontend.widgets import (  # noqa: E402
     BrandMark,
     CloseConfirmDialog, CommandPalette, ConfirmDialog, DepthCard,
     ContextMenuDialog, DnsSwitcherDialog, ElidedCaption,
+    BloatwarePurgeDialog,
     ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
     HubDialog,
     NavButton,
@@ -2755,6 +2756,31 @@ class PulseApp(QMainWindow):
                 self.toasts.show(
                     "info", "No apps were selected — nothing to deploy.", 3500)
                 return
+        elif item.get("bloatware"):
+            # SCAN FIRST, THEN DECIDE. The purge is the one destructive
+            # bulk operation in the app, and running it blind was the old
+            # behaviour: the card removed whatever the catalog listed,
+            # without ever telling the user which of those were actually
+            # on their machine. The dialog turns that into a choice, and
+            # hands back exactly the shape every other selector does — a
+            # list of ids on -AppIds — so the concurrency guard, the live
+            # console and the toasts are unchanged.
+            #
+            # NO SEPARATE CONFIRM STEP: the dialog IS the confirmation, it
+            # names every package, and it opens with the recommended set
+            # already ticked. A modal asking "are you sure?" on top of a
+            # modal the user just finished reading is the kind of double
+            # prompt people learn to click through.
+            dialog = BloatwarePurgeDialog(self, self.ps1_path, self.theme.t)
+            if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
+                return
+            if not dialog.selected_ids:
+                self.toasts.show(
+                    "info", "No packages were selected — nothing was removed.", 3500)
+                return
+            app_ids = dialog.selected_ids
+            item = {**item}
+            item.pop("confirm", None)   # the selector WAS the confirm step
         elif item.get("wizard") == "office":
             wizard = OfficeWizardDialog(self, self.theme.t)
             if self._exec_dialog(wizard) != QDialog.DialogCode.Accepted:

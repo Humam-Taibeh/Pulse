@@ -170,7 +170,7 @@ $ErrorActionPreference = "Stop"
 # two lines above, so an unreadable file here would abort the engine before
 # a single module loaded — over a string used in a banner. Being
 # approximately right about a version beats refusing to run.
-$Script:ScriptVersion = "10.7.0"
+$Script:ScriptVersion = "10.8.0"
 try {
     $VersionFile = Join-Path $PSScriptRoot "..\..\VERSION"
     if (Test-Path -LiteralPath $VersionFile) {

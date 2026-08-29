@@ -568,9 +568,39 @@ function Invoke-GuiTask {
             }
 
             # ============ 4. PRIVACY & SECURITY ============
+            "BloatwareScan" {
+                # READ-ONLY, and deliberately NOT admin-gated: enumerating
+                # packages needs no rights, and gating the scan would raise
+                # a UAC prompt just to look at what is installed. The purge
+                # that follows IS gated (see $Script:AdminRequiredTasks).
+                $Inventory = @(Get-BloatwareInventory)
+                Write-GuiData -Data $Inventory
+                $Detected = @($Inventory | Where-Object { $_.Detected })
+                $Optional = @($Detected | Where-Object { $_.Optional }).Count
+                # ONE log append for the whole scan, not one per entry.
+                Write-LogBatch (@("BLOATWARE SCAN: $($Detected.Count) of $($Inventory.Count) catalogued package(s) present") +
+                                @($Detected | ForEach-Object { "  DETECTED $($_.Id) [$($_.Group)]" }))
+                # A scan that could not read the staged packages says so.
+                # "Clean" and "clean as far as I could see" are different
+                # claims, and only one of them is true unelevated.
+                $Caveat = if ($Script:BloatProvisionedReadable) { "" } else {
+                    " Staged packages could not be read without elevation, so apps that would return after a Windows update are not listed."
+                }
+                if ($Detected.Count -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|No catalogued bloatware found - this system is already clean.$Caveat"
+                } else {
+                    $Suffix = if ($Optional -gt 0) { " ($Optional optional)" } else { "" }
+                    Write-Output "##PULSE##SUCCESS|$($Detected.Count) bloatware package(s) detected$Suffix.$Caveat"
+                }
+                break
+            }
             "RemoveBloatware" {
-                Complete-GuiTask -Action { Remove-Bloatware } `
-                    -SuccessMessage "Bloatware sweep complete — pre-loaded Store apps removed." `
+                # $Script:SelectedAppIds carries the GUI's ticked catalog
+                # Ids. Empty means a headless run, which removes every
+                # NON-OPTIONAL entry - see Resolve-BloatwareTargets for why
+                # "empty" is not "everything".
+                Complete-GuiTask -Action { Remove-Bloatware -SelectedIds $Script:SelectedAppIds } `
+                    -SuccessMessage "Bloatware purged - packages removed, staged copies deprovisioned, and Start menu promotions disabled." `
                     -FailureMessage "Some bloatware packages could not be removed (policy-protected)."
                 break
             }

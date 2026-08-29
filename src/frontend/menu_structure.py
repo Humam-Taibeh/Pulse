@@ -477,9 +477,17 @@ CATEGORIES = [
             # the equal-stretch treatment that fills the panel properly.
             {"title": "PREINSTALLED & BUNDLED", "items": [
                 {"icon": "📦", "title": "Remove Bloatware",
-                 "desc": "Uninstall pre-loaded Store apps you never asked for.",
+                 "desc": "Scan for pre-installed stubs, promo apps and "
+                         "redundant Microsoft apps — then purge the ones you "
+                         "pick, permanently.",
                  "glyph": "delete", "task": "RemoveBloatware", "timeout": 900,
-                 "confirm": True},
+                 # `bloatware` opens BloatwarePurgeDialog first (see
+                 # main.PulseApp.request_task). It replaces `confirm`
+                 # rather than joining it: the selector names every
+                 # package it is about to remove, which is a stronger
+                 # confirmation than a yes/no sheet and a worse experience
+                 # to sit behind one.
+                 "bloatware": True},
                 {"icon": "🌐", "glyph": "globe", "title": "Microsoft Edge",
                  "desc": "Purge Chromium Edge from Windows — or put it back. "
                          "A backup is kept either way, so the removal is reversible.",

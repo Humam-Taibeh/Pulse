@@ -524,6 +524,10 @@ def _navigation_timers(window):
 _WORKER_DIALOGS = [
     "HealthReportDialog", "ActivationStatusDialog", "InspectorDialog",
     "StorageAnalyzerDialog", "UpdateCenterDialog", "StartupManagerDialog",
+    # v10.8: the bloatware purge runs a read-only inventory scan on its
+    # own thread before the user chooses anything, so it needs the same
+    # settle-on-close guard as every other scanning dialog.
+    "BloatwarePurgeDialog",
 ]
 
 

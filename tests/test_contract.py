@@ -50,6 +50,11 @@ _PROGRAMMATIC = {
     # here — its card declares the task name directly, exactly like the
     # Startup Manager's StartupReport.)
     "PowerHealth", "RestorePoints",
+    # v10.8 bloatware purge. Same shape again: the CARD's task is
+    # RemoveBloatware, and the read-only inventory behind it is run by
+    # widgets.BloatwarePurgeDialog's own PowerShellTask so the user can
+    # see what is actually installed before agreeing to remove it.
+    "BloatwareScan",
     # v1.0+ Phase 2 DNS switcher. Same shape as the Startup Manager's
     # per-row actions: the CARD declares the read task (NetworkProfiles),
     # and these two mutations are fired per adapter from inside
