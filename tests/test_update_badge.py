@@ -262,15 +262,20 @@ def test_f_the_lock_is_derived_not_hardcoded(qapp):
 def test_f_the_badge_sits_directly_above_the_identity_line(qapp, window):
     """The whole point of the v14 move: the answer and the control the user
     reaches for are ONE place. A badge somewhere else in the shell is a
-    second surface to keep in sync, which is the defect it came from."""
+    second surface to keep in sync, which is the defect it came from.
+
+    v15 folded the identity line into widgets.StatusRail along with the
+    theme toggle and the elevation state, so the neighbour the badge has
+    to sit above is now the rail — but it must still SIT ABOVE IT, and it
+    must still be the last thing before it."""
     side = window._sidebar.layout()
     widgets = [side.itemAt(i).widget() for i in range(side.count())
                if side.itemAt(i).widget() is not None]
     assert window.update_badge in widgets, (
         "the update badge has left the sidebar")
     assert (widgets.index(window.update_badge) + 1
-            == widgets.index(window._side_footer)), (
-        "the badge is no longer directly above the identity line it shares "
+            == widgets.index(window.status_rail)), (
+        "the badge is no longer directly above the status rail it shares "
         "a handler with")
 
 
@@ -472,9 +477,16 @@ def test_i_the_footer_no_longer_reports_update_status():
 
 
 def test_i_both_entry_points_share_one_handler():
-    """The badge and the footer must honour the same in-flight and
-    pending-update guards; two copies would let a second check start."""
+    """The badge and the rail's version line must honour the same
+    in-flight and pending-update guards; two copies would let a second
+    check start.
+
+    v15 moved the second entry point: the standalone `_side_footer`
+    button became the version cell of widgets.StatusRail, which reports
+    the click through a signal rather than owning the handler. The
+    guarantee is unchanged and so is the handler."""
     import frontend.main as main_mod
     source = inspect.getsource(main_mod.PulseApp._build_ui)
     assert "self.update_badge.clicked.connect(self._on_footer_clicked)" in source
-    assert "self._side_footer.clicked.connect(self._on_footer_clicked)" in source
+    assert ("self.status_rail.version_clicked.connect(self._on_footer_clicked)"
+            in source)

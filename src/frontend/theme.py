@@ -100,24 +100,35 @@ def _parse_color(value: str) -> tuple[int, int, int, float]:
     return r, g, b, 1.0
 
 
-#: The fraction of a glass surface's height its translucent top sheen
-#: covers — glass_fill's default, named rather than repeated at its call
-#: sites. It used to have a second reader: the ambient field asked how far
-#: down a card the wash still showed through, so it could subtract the rest
-#: as an occluder. That field, and the whole occlusion system with it, is
-#: gone as of v10.6; the sheen it describes is not.
-GLASS_SHEEN_STOP = 0.13
-
-
-def glass_fill(t: dict, base: str, sheen_stop: float = GLASS_SHEEN_STOP) -> str:
-    """The one frosted-glass gradient every translucent surface in the app
-    shares: a top sheen highlight falling into a flat base tone. Cards, the
-    Welcome hero banner and dialog panels all call this with their own base
-    color so the whole app reads as one material, not several slightly
-    different ad-hoc gradients (which is what card_qss and the old insight
-    tiles had before this — 0.12 vs 0.15 sheen stops, purely accidental)."""
-    return (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            f"stop:0 {t['card_sheen']}, stop:{sheen_stop} {base}, stop:1 {base})")
+#: THE SURFACE RULE, v15: A SURFACE IS ONE FLAT COLOUR.
+#:
+#: Every elevated surface in the app used to be a `glass_fill` — a
+#: qlineargradient running a translucent white sheen down into the base
+#: tone over the top 13-20% of the widget. Six surfaces shared it (cards in
+#: five states, the hero banner, dialog panels, toasts), which made it
+#: consistent; it did not make it quiet. On the obsidian canvas the wash
+#: reads as a soft vertical smear across the top third of every card on the
+#: page, and fourteen of them on a category grid is fourteen smears — the
+#: single largest contributor to the "visually cluttered" reading, because
+#: it puts a luminance ramp on a surface whose whole job is to be a calm
+#: plate for text.
+#:
+#: The elevation it was reaching for is bought TWICE OVER by the two cues
+#: that survive, and both of them live at the EDGE where they cost the
+#: plate nothing:
+#:
+#:   * the 1px hairline (card_line / panel_line), and
+#:   * the painted top sheen + multi-layer cast shadow
+#:     (animations.paint_top_sheen / paint_drop_shadow, tuned by
+#:     sheen_alphas / shadow_alphas).
+#:
+#: So there is no `glass_fill` any more and no `card_sheen` token feeding
+#: it. A QSS surface declares its base colour and nothing else, which is
+#: what "strictly pure, static surfaces" means in a stylesheet.
+#:
+#: Pinned by test_visual_polish.test_no_surface_paints_a_gradient_across_
+#: its_own_face — a re-added qlineargradient on a surface fill fails there
+#: rather than quietly coming back.
 
 
 def brand_gradient(t: dict, a1: float, a2: float | None = None) -> str:
@@ -137,16 +148,22 @@ def resolve_accent(t: dict, accent: str) -> str:
     """A MODULE KEY ('software') -> that module's accent for the CURRENT
     theme; a literal '#rrggbb' passes straight through.
 
-    v10: the six module colours used to be single hex literals living in
-    menu_structure.py, so light mode reused values tuned for a near-black
-    canvas — every one of them measured 1.86-2.64:1 against the porcelain
-    card, far under the 3:1 floor for an icon, which is why the "Spectrum"
-    identity washed out in light mode. They are tokens now (one set per
-    mode, solved so each clears 4.5:1 as text on the card and 3:1 as a glyph
-    inside its own tinted plaque well), and menu_structure carries only the
-    semantic key. Widgets MUST store the key and call this from
-    apply_theme() — resolving once at construction would freeze a card on
-    whichever theme happened to be active when it was built."""
+    v10 made the module colours TOKENS rather than hex literals in
+    menu_structure.py, because light mode was reusing values tuned for a
+    near-black canvas. v15 then collapsed the table so every key resolves
+    to the same interactive accent (see the note on _DARK["module"]) — but
+    the indirection is exactly as load-bearing as it was, for two reasons
+    that have nothing to do with how many colours the table holds:
+
+      * a widget MUST store the KEY and call this from apply_theme().
+        Resolving once at construction freezes a card on whichever theme
+        happened to be active when it was built, and light and dark still
+        answer differently (#5465b4 vs #8a9edb).
+      * the table is the one place a future palette edits to give the
+        modules their own colours back.
+
+    A literal '#rrggbb' passes straight through, which is what lets a
+    caller hand over an already-resolved colour without special-casing."""
     if not accent:
         return t["accent"]
     if accent.startswith("#") or accent.startswith("rgb"):
@@ -178,9 +195,57 @@ SPACE = {
     "xs":  4,    # icon<->label, tight inline pairs
     "sm":  8,    # inside a row / between sibling controls
     "md":  12,   # between related blocks
-    "lg":  16,   # grid gutters, card padding
-    "xl":  24,   # section separation, dialog padding
+    "lg":  16,   # grid gutters, card and container padding
+    # v15.1 — THE ONLY GAP THE RAMP HAD. Every other neighbouring pair is
+    # 4px apart at this end of the scale (4-8-12-16); 16 -> 24 jumped 8,
+    # and that gap is exactly where a dialog panel's padding wants to sit.
+    # Panels ran at `xl`, which is a card's 16 plus half again, and next
+    # to a 16px card the sheet holding it read loose rather than
+    # comfortable. See PAD, which is where the two now get their names.
+    "ml":  20,   # inside a floating sheet (dialog panels)
+    "xl":  24,   # section separation
     "xxl": 32,   # air around an empty state / a top-anchored dialog
+}
+
+#: THE TWO PADDINGS, NAMED BY THE KIND OF SURFACE RATHER THAN THE NUMBER.
+#:
+#: SPACE says how far apart two things sit. It said nothing about how much
+#: air a surface puts INSIDE itself, so every container picked for itself
+#: and the app shipped five recipes for one question:
+#:
+#:     dialog panel .......... 24 / 24 / 24 / 16
+#:     command palette ....... 16 / 16 / 16 / 12
+#:     content frame ......... 24 / 16 / 24 / 16
+#:     sidebar ............... 16 / 24 / 16 / 16
+#:     welcome page .......... 24 / 16 / 24 / 16
+#:     category page .......... 8 /  8 /  8 /  8
+#:
+#: The last two are the visible one: both pages sit inside the SAME
+#: content frame, so a 16px difference in their own padding moved the
+#: entire content column sideways when you opened a module. Measured at
+#: 1500px wide, the dashboard's column started at x=347 and a category
+#: page's at x=331 — a jump on every navigation, in a shell whose two
+#: halves are otherwise pixel-aligned.
+#:
+#: Two roles, and the distinction between them is real rather than a
+#: second name for one number:
+#:
+#:   surface  16  Anything with a hairline that sits IN the layout — a
+#:                card, a tile, a list row, the sidebar, the content
+#:                frame. Air at card scale, because these things are read
+#:                next to each other and a container padded differently
+#:                from the cards inside it reads as a frame around them.
+#:
+#:   sheet    20  A panel that FLOATS over the app — a dialog, the command
+#:                palette. It holds prose the user reads through rather
+#:                than scans, it has no neighbours to agree with, and it
+#:                is the one surface where a little more air reads as
+#:                quality rather than as slack.
+#:
+#: Enforced by test_layout_contract.
+PAD = {
+    "surface": 16,
+    "sheet":   20,
 }
 
 # Semantic radii — named by the surface they belong to, so a card and a
@@ -347,6 +412,15 @@ TYPE = {
     "label":   13,   # card titles, nav entries, list rows
     "lead":    15,   # sub-headings, dialog section leads
     "glyph":   18,   # chevrons and inline directional marks
+    # v15 — THE STAT-TILE VALUE, and the one step between `glyph` and the
+    # dashboard hero. A health tile is a figure with a label under it: the
+    # figure has to out-weigh every other number on the page at a glance
+    # and must NOT compete with the masthead wordmark, which is the view's
+    # single hero (display, 34). 18 reads as body copy in a tile that size;
+    # 34 makes four of them shout over the thing they sit beneath. Added
+    # rather than reused because no existing step is in the gap — the ramp
+    # jumps 18 -> 34, which is exactly the hole a stat tile falls into.
+    "metric":  26,
     "display": 34,   # the dashboard's hero heading
     "hero":    40,   # the empty-state glyph inside a dialog
 }
@@ -709,6 +783,13 @@ GLYPHS: dict[str, tuple[str, str]] = {
     # same rule: 'code', 'puzzle', 'shield' and 'tools' had no call site,
     # and 'shield' was in any case the same U+E72E as 'lock'.)
     'chevron':       ("\uE76C", "\u203a"),        # ChevronRight
+    # v15 — the theme toggle moved out of the title bar (which drew its
+    # glyphs from the CAPTION font, a different family with different
+    # metrics) into the sidebar's status rail, which draws from this table
+    # like every other glyph in the app. 'sun' is its light-mode face; the
+    # existing 'moon' below is its dark one, and the rail's session-state
+    # button reuses 'shieldplain'.
+    'sun':           ("\uE706", "\u2600\ufe0f"),   # Brightness — light theme
     'lock':          ("\uE72E", "\U0001f512"),    # Lock — admin-gated affordance
     # --- modules (sidebar) ---
     'package':       ("\uE7B8", "\U0001f4e6"),    # Software Management
@@ -858,8 +939,22 @@ _DARK = {
     # contrast directly, so the tone moves and the alpha does not (see the
     # same note on the light side's `overlay`). The tint is solved so that
     # 0.45 of it over the shell lands exactly on #121417.
-    "overlay":     "rgba(29, 32, 38, 0.45)",
-    "panel":       "rgba(29, 32, 38, 0.45)",
+    # v15 PULLS THE CONTAINERS BACK DOWN TOWARD THE CANVAS, and that is
+    # the arithmetic consequence of the spec naming exactly TWO dark
+    # neutrals: base canvas #090A0B and elevated surface #121418. v14 had
+    # spent #121417 on the containers, which is the elevated-surface value
+    # — so the sidebar and the content frame were sitting at card
+    # brightness, and the actual cards had to climb to #181A1F to stay
+    # above them. Three tones where the design language has two, and the
+    # card is the one that ended up in the wrong place.
+    #
+    # Composited on the shell these land at #0C0D10: a whisper off the
+    # canvas, enough that a container reads as a bounded region rather
+    # than a hole, far enough under the card that the card is
+    # unambiguously THE elevated tier (1.054:1 above the container,
+    # against 1.06 before — the separation is kept, the register is not).
+    "overlay":     "rgba(16, 17, 22, 0.45)",
+    "panel":       "rgba(16, 17, 22, 0.45)",
     # The system hairline, at the weight the redesign specifies. Chrome
     # containers (sidebar, content frame, rails, dialog edges) all draw
     # their edge with this; `card_line` below is heavier for a reason it
@@ -884,18 +979,36 @@ _DARK = {
     # one step: every text token in the ramp is LIGHT, so a darker plate
     # only ever raises their ratios. The badge that pinned #22252E as a
     # ceiling (text_faint at 4.59:1) measures 5.61:1 here.
-    "card":        "rgba(24, 26, 31, 1.0)",
+    # THE ELEVATED SURFACE, #121418 EXACTLY. Opaque, and flat: as of v15
+    # nothing paints a gradient across it (see the surface rule above
+    # `blend`). Opaque and not translucent because a card must look
+    # identical on the well, inside a dialog and over the console — a
+    # translucent card tinted itself differently in each.
+    #
+    # DARKENING IS FREE FOR CONTRAST, which is why the tier can keep
+    # falling: every text token in the ramp is LIGHT, so a darker plate
+    # only ever raises their ratios. text_faint, the badge that pins the
+    # ceiling, measures 5.53:1 here against 5.32:1 on the v14 plate.
+    "card":        "rgba(18, 20, 24, 1.0)",
     # hero/featured tier — a small, deliberate step (1.08:1). It reads
     # because it sits next to the card, not because it out-brightens it.
     # Moved WITH the card and by the ratio it always had (1.077:1): left at
     # #1C1F26 the "elevated" tier would have ended up DARKER than the
     # ordinary card it exists to sit above.
-    "card_hi":     "rgba(30, 33, 38, 1.0)",
-    # hover: a cool indigo lift, paired with the accent border and the glow
-    # frame in card_qss — the "subtle glowing accent on hover" the redesign
-    # asks for, kept low so a pointer sweep lights the grid rather than
-    # flashing it.
-    "card_hover":  "rgba(150, 168, 224, 0.085)",
+    "card_hi":     "rgba(23, 26, 31, 1.0)",
+    # HOVER IS ONE NEUTRAL LIFT, APP-WIDE — rgba(255,255,255,0.05), the
+    # value the v15 spec names, and the SAME value `row_hover` carries
+    # below. Through v14 these were two different answers to one question:
+    # a card lifted toward indigo at 0.085 while a menu row lifted toward
+    # white at 0.06, so "the pointer is here" was rendered in two colours
+    # at two weights depending on which surface it was over.
+    #
+    # The card gives up the colour, not the answer. Hover still lights the
+    # accent hairline and the cursor-tracking glow frame (see card_qss and
+    # widgets.GlowController) — those are the accent's job, and they are
+    # painted at the EDGE. The tint's job was only ever to raise the plate,
+    # and a plate is raised by light, not by hue.
+    "card_hover":  "rgba(255, 255, 255, 0.05)",
     # THE MENU/LIST HOVER PILL, and deliberately NOT `card_hover`.
     #
     # A card's hover is an accent-tinted LIFT: the pointer lands on one
@@ -908,10 +1021,12 @@ _DARK = {
     # Linear, Raycast) uses a NEUTRAL translucent pill here for exactly
     # that reason: it reads as "the pointer is here" and as nothing else.
     #
-    # 0.06 white on the obsidian tiers is the standard weight, and it is
-    # low enough that a row under the pointer never competes with a row
-    # that is genuinely SELECTED (which keeps the accent tint, at 0.16).
-    "row_hover":   "rgba(255, 255, 255, 0.06)",
+    # 0.05 white on the obsidian tiers, and — as of v15 — the identical
+    # value `card_hover` carries. One hover weight for every surface in
+    # the app. It stays low enough that a row under the pointer never
+    # competes with a row that is genuinely SELECTED (which keeps the
+    # accent tint, at 0.16).
+    "row_hover":   "rgba(255, 255, 255, 0.05)",
     # THE ICON WELL, and it is deliberately NEUTRAL.
     #
     # Through v10.5 every plaque was washed in its own MODULE ACCENT — the
@@ -936,12 +1051,11 @@ _DARK = {
     # you can only find by looking for it — while 0.13 holds 1.47:1. Chrome
     # containers do carry the spec value; see `panel_line` above.
     "card_line":   "rgba(255, 255, 255, 0.13)",
-    "card_sheen":  "rgba(255, 255, 255, 0.045)",  # top stop of the glass gradient
     # Dialogs and toasts sit OVER dense text (card grids, the console):
     # fully/near-fully opaque, or the content underneath bleeds through
     # and reads as overlapping text.
-    "dialog_bg":   "rgba(24, 26, 31, 1.0)",
-    "toast_bg":    "rgba(30, 33, 38, 0.99)",
+    "dialog_bg":   "rgba(18, 20, 24, 1.0)",
+    "toast_bg":    "rgba(23, 26, 31, 0.99)",
 
     # ================================================================
     #  v12.1 — THE CALM RE-SOLVE (applies to every accent below, in
@@ -976,13 +1090,36 @@ _DARK = {
     #  raising it walks the palette straight back toward neon.
     # ================================================================
 
-    # brand — Aurora tri-tone. Still indigo -> violet -> magenta and still
-    # the app's signature sweep; v12.1 drains ~38% of its chroma so the
-    # sweep reads as a considered brand gesture rather than an electric one.
-    # indigo (primary) → violet → magenta.
-    "accent":      "#8a9edb",
-    "accent2":     "#9c8ed8",
-    "accent3":     "#d196df",
+    # ================================================================
+    #  v15 — THE SEMANTIC PALETTE. Three colours, each with one job.
+    #
+    #  What this replaces is the "Aurora" tri-tone (indigo -> violet ->
+    #  magenta) plus a seven-hue module spectrum: ten distinct chromatic
+    #  identities in an app whose entire chromatic vocabulary needs to be
+    #  "you can act on this", "this is applied" and "this will destroy
+    #  something". Everything past those three was decoration that the eye
+    #  has to triage on every screen.
+    #
+    #      accent  / accent2  INDIGO -> CYAN   active, focus, selection,
+    #                                          the brand sweep, and EVERY
+    #                                          module (see `module` below)
+    #      ok                 EMERALD          applied / safe / succeeded
+    #      err                RUBY             destructive / failed
+    #      warn               AMBER            needs attention (kept: it is
+    #                                          a state, not an identity)
+    #
+    #  THE RE-HUE IS LUMINANCE-PRESERVING. accent2/accent3 move from violet
+    #  and magenta to cyan along a bisection that holds relative luminance
+    #  fixed (drift < 0.002), for the reason the v12.1 chroma drain gives:
+    #  WCAG's ratio is a function of luminance alone, so every measured
+    #  relationship in the app — the beta pill, the update badge's
+    #  tone-vs-warn ordering, the nav indicator, the aurora edge — carries
+    #  over unchanged and only the hue moves. The drop in chroma is a
+    #  bonus of the hue, not a second edit: 10.79 -> 8.53 and 12.01 -> 7.17.
+    # ================================================================
+    "accent":      "#8a9edb",   # indigo — the one interactive colour
+    "accent2":     "#51a3b8",   # cyan   — focus/selection, second sweep stop
+    "accent3":     "#72b5c5",   # cyan, lifted — the sweep's far stop
 
     # ---- TEXT RAMP (v10 construction, re-measured for v11) -----------
     # Built EVENLY IN CIE L* rather than by eye, with the floor pinned just
@@ -1005,54 +1142,43 @@ _DARK = {
     "text_faint":  "#858d9d",   #  5.32:1 on card, 4.58:1 worst-case <- floor
 
     # ---- MODULE ACCENTS ----------------------------------------------
-    # The seven sidebar/category colours as real tokens (see resolve_accent).
+    # v15 COLLAPSES THE SPECTRUM. Every module key resolves to the ONE
+    # interactive accent, in both themes.
     #
-    # v12 RE-SOLVES THE WHOLE SET FOR PEER PARITY, which is a different
-    # criterion from the one v10/v11 used. Those versions solved each colour
-    # independently against a FLOOR (4.5:1 as text on the card, 3:1 as a
-    # glyph in its own plaque well) and kept whatever it landed on. Every
-    # value passed, and the set still did not read as a family: measured
-    # in-plaque, the seven spanned 4.64:1 to 6.80:1 — a 1.46x spread — so
-    # teal and amber carried visibly more weight than blue and pink, and the
-    # "Spectrum" identity read as a few loud modules next to a few quiet
-    # ones rather than as one system. (Light mode had already been solved
-    # this way; see the peer-ratio note on _LIGHT's automation entry. Dark
-    # never was.)
+    # The seven-colour "Spectrum" identity was solved harder than anything
+    # else in this file — a floor per colour, then peer parity in-plaque,
+    # then a chroma ceiling, then a pairwise dE floor so no two modules
+    # rendered as one colour. Every one of those constraints was met, and
+    # the result was still the app's loudest problem: a category page puts
+    # up to fourteen cards on screen, a sidebar four more, and a colour
+    # that identifies a MODULE is repeated on every card inside it. So the
+    # hue was never actually distinguishing anything the user was looking
+    # at — inside a module it is constant, and between modules the page
+    # header, the breadcrumb and the selected nav rail have already said
+    # which one you are in. What it did do is spend the app's entire
+    # chromatic budget on decoration, leaving the three colours that carry
+    # real meaning (applied / attention / destructive) competing against a
+    # background of teal, amber, pink and violet for the eye's attention.
     #
-    # Each colour is now solved along its OWN hue and saturation — nothing
-    # here is re-hued for contrast — until it measures 5.50:1 against its
-    # own plaque well.
+    # One accent, and colour goes back to meaning something. Card glyphs,
+    # nav glyphs, focus rings and selection all speak indigo; emerald,
+    # amber and ruby are then the only other hues on the page, and each of
+    # them means exactly what it says.
     #
-    # v12.1 CARRIES THAT PARITY THROUGH THE CHROMA DRAIN. The re-solve
-    # above is luminance-preserving, so the peer relationship the v12 work
-    # bought is preserved by construction rather than re-derived: measured
-    # after, the set sits in a 4.83-4.95 band in-plaque (1.025x, against a
-    # 1.10x cap) with a minimum pairwise CIE76 dE of 14.3 — six times the
-    # ~2.3 just-noticeable threshold, so every module keeps its identity.
+    # THE KEYS SURVIVE, and deliberately so. menu_structure still labels
+    # each category with its semantic key and every widget still stores
+    # the key and calls resolve_accent() at paint time (see the note
+    # there). That is what keeps this a ONE-LINE decision to revisit: a
+    # future palette that wants per-module colour back edits this table,
+    # not fourteen widgets.
     "module": {
-        "software":     "#8eace2",
-        "optimization": "#d4a05e",
-        "maintenance":  "#67b8a1",
-        "privacy":      "#d997ab",
-        # v12 RE-HUES THIS ONE, the single exception to "own hue preserved".
-        # 'information' was #6598ff against 'software' #5e96ff: CIE76 dE 1.6
-        # apart, BELOW the ~2.3 just-noticeable-difference threshold, when
-        # the next-closest pair in the set sat at 20.0. Two top-level modules
-        # were therefore not merely similar but perceptually the SAME colour,
-        # sitting adjacent in the sidebar — and equalising lightness alone
-        # would have preserved that exactly (dE 1.5). A palette cannot claim
-        # seven identities while rendering six.
-        #
-        # 190deg is the real gap in the wheel the other six leave: teal stops
-        # at 168 and blue starts at 220. At this hue the closest peer is
-        # 37.9 away and the brand accent 49.2, so every module is now
-        # unambiguously itself.
-        "information":  "#65b5cb",
-        "safety":       "#6cb988",
-        # v10.3 — Automation (playbooks, health report). Violet is the one
-        # hue the original six left unclaimed, so the module reads as new
-        # rather than as a relative of an existing one.
-        "automation":   "#b5a2e3",
+        "software":     "#8a9edb",
+        "optimization": "#8a9edb",
+        "maintenance":  "#8a9edb",
+        "privacy":      "#8a9edb",
+        "information":  "#8a9edb",
+        "safety":       "#8a9edb",
+        "automation":   "#8a9edb",
     },
 
     # status — was GitHub-dark grade; v12.1 takes it a step quieter still.
@@ -1145,13 +1271,16 @@ _LIGHT = {
     # not from luminance — chasing a lighter-than-white card is the one
     # elevation move this mode can never make.
     "card_hi":     "rgba(255, 255, 255, 1.0)",
-    "card_hover":  "rgba(84, 101, 180, 0.055)",
-    # The light twin of dark's neutral hover pill (see the note there).
-    # INVERTED, not merely re-alphaed: white at any weight is invisible on
-    # porcelain, so the pill darkens instead of lightening. 0.05 black
-    # rather than 0.06 white because a subtractive pill on paper reads
-    # heavier than an additive one on obsidian at equal alpha.
-    "row_hover":   "rgba(0, 0, 0, 0.05)",
+    # ONE NEUTRAL HOVER, on every surface — the light twin of dark's, and
+    # the same v15 decision (see the note on _DARK["card_hover"]). The card
+    # used to lift toward indigo here while a menu row lifted toward black;
+    # both now darken by the same 0.04. INVERTED rather than re-alphaed,
+    # because white at any weight is invisible on porcelain, and a
+    # subtractive pill on paper reads heavier than an additive one on
+    # obsidian — which is why the light pair sits a point under dark's 0.05
+    # rather than matching its number.
+    "card_hover":  "rgba(0, 0, 0, 0.04)",
+    "row_hover":   "rgba(0, 0, 0, 0.04)",
     # The light twin of dark's neutral icon well (see the note there).
     # INVERTED rather than re-alphaed: white on porcelain is invisible, so
     # the well darkens instead of lightening.
@@ -1163,17 +1292,25 @@ _LIGHT = {
     # pure white, black at 0.08 lands at 1.19:1 and at 0.17 holds 1.48:1.
     # Chrome containers carry the spec's 0.08 — see `panel_line` above.
     "card_line":   "rgba(0, 0, 0, 0.17)",
-    "card_sheen":  "rgba(255, 255, 255, 0.9)",    # top stop of the glass gradient
     # Same opacity rule as dark: overlays never let text bleed through.
     "dialog_bg":   "rgba(255, 255, 255, 1.0)",
     "toast_bg":    "rgba(255, 255, 255, 0.99)",
 
-    # brand — Aurora tri-tone, ink-saturated for paper: indigo → violet →
-    # magenta. Same v12.1 chroma drain as dark (see the block there): the
+    # brand — the light twin of dark's v15 semantic palette: indigo ->
+    # cyan, re-hued at FIXED LUMINANCE so every ratio light mode was
+    # solved for carries over untouched (see the block in _DARK). The
     # brand must be the SAME gesture in both themes or it is two brands.
-    "accent":      "#5465b4",
-    "accent2":     "#725da9",
-    "accent3":     "#aa68b2",
+    # v15 re-solves the light indigo's CHROMA (12.52 -> 10.66) at fixed
+    # luminance, so every ratio it was solved for is untouched. It has to
+    # move because the module collapse changed what
+    # test_the_two_themes_stay_equally_calm actually measures: the module
+    # set used to average seven hues per theme, and now it IS the accent.
+    # Dark's indigo sits at 9.25; a 12.52 twin means light mode is wearing
+    # a visibly hotter version of the same brand, which is what that test
+    # exists to catch. 10.66 puts the pair at 1.15x.
+    "accent":      "#5866a9",   # indigo — the one interactive colour
+    "accent2":     "#357181",   # cyan   — focus/selection, second sweep stop
+    "accent3":     "#3d8b96",   # cyan, lifted — the sweep's far stop
 
     # Text ramp — same L*-even construction as dark (see the note in
     # _DARK), with the floor pinned just clear of AA and the three steps
@@ -1195,35 +1332,19 @@ _LIGHT = {
     "text_muted":  "#454f5f",   #  8.28:1
     "text_faint":  "#5d6c81",   #  5.35:1 on card, 4.56:1 worst-case <- floor
 
-    # v10 module accents, ink-saturated for paper. Same solve as dark: 4.5:1
-    # as text on the card, 3:1 as a glyph in the plaque well. Amber is the
-    # one hue that cannot be both bright and legible on white, so
-    # 'optimization' lands as a deep gold rather than a light one.
-    #
-    # v12.1 applies the same luminance-preserving chroma drain as dark (see
-    # the block there). Light needed it at least as badly: 'software' shipped
-    # at 100% saturation / 90.2% chroma and 'privacy' at 92.9%, against
-    # 'maintenance' at 38.8% — the widest spread in either theme. After:
-    # 4.36-4.43 in-plaque (1.016x) with a minimum pairwise dE of 9.4.
+    # The light twin of dark's collapsed module table — same decision,
+    # same single value, and the reason it must be the same decision in
+    # both modes is the one the old table already documented: a module
+    # that changes hue between themes has no identity at all. See the note
+    # on _DARK["module"] for why the spectrum is gone.
     "module": {
-        "software":     "#4072ce",
-        "optimization": "#8e6f43",
-        "maintenance":  "#497e71",
-        "privacy":      "#bf4e63",
-        # v12 — the light twin of dark's re-hued 'information' (see the note
-        # there). A module must be the SAME colour in both themes or it has
-        # no identity at all, so this moves to the same 190deg. Cyan is a
-        # light hue, so on paper it lands as a deep teal-cyan for the same
-        # reason amber lands as a deep gold two lines up — dead centre of
-        # the peer band (4.68:1 at v12, 4.67:1 after the v12.1 drain).
-        "information":  "#437c8b",
-        "safety":       "#507f62",
-        # v10.3 — Automation. Solved deliberately to the peer band the other
-        # light accents share rather than to maximum contrast: on paper
-        # these read as a set only if they carry the same visual weight.
-        # The v12.1 chroma drain preserves that by construction, since it
-        # moves chroma at fixed luminance (4.66:1, inside the band).
-        "automation":   "#706cb6",
+        "software":     "#5866a9",
+        "optimization": "#5866a9",
+        "maintenance":  "#5866a9",
+        "privacy":      "#5866a9",
+        "information":  "#5866a9",
+        "safety":       "#5866a9",
+        "automation":   "#5866a9",
     },
 
     # status — GitHub-light grade, nudged a few points darker in v11 so each
@@ -1236,16 +1357,18 @@ _LIGHT = {
     # colour subtracts contrast from exactly the thing the chip exists to
     # make legible — measured, the old values landed at 4.17-4.40:1. The
     # shift is invisible side by side and buys the whole family compliance.
-    # (report_badge_qss and strip_status_qss avoid the trap differently, by
-    # refusing a fill at all; both notes explain why that was necessary
-    # there, where the text runs down to 11px.)
+    # (report_badge_qss avoids the trap differently, by refusing a fill at
+    # all; its note explains why that was necessary there, where the text
+    # runs down to 11px. strip_status_qss used to be the second example
+    # and was retired in v15 with the masthead pills it styled — see
+    # main.WelcomePage for where those two facts report now.)
     "ok":          "#43744b",
     "warn":        "#83663c",
     "err":         "#b34341",
     "danger_line": "rgba(179, 67, 65, 0.35)",
 
     "scroll":      "rgba(60, 60, 67, 0.20)",
-    "scroll_hov":  "rgba(84, 101, 180, 0.55)",
+    "scroll_hov":  "rgba(88, 102, 169, 0.55)",
     "shimmer_track": (60, 60, 67, 18),
     "titlebar_hover": "rgba(60, 60, 67, 0.08)",
     "close_hover":    "#c42b1c",               # native Win11 caption red
@@ -1433,33 +1556,33 @@ def card_qss(t: dict, accent: str, danger: bool = False,
     # v11: every state fill is BLENDED onto the card tier rather than
     # declared as a bare tint (see blend()), so hover/running/flash add
     # colour to an elevated surface instead of replacing it with a
-    # see-through one. Frosted-glass base on top: a subtle top sheen via
-    # qlineargradient (QSS-native, cached, radius-safe — per-side highlight
-    # borders artifact on rounded corners). State rules AFTER base/hover:
-    # QSS is last-match-wins at equal specificity, and a verdict flash must
-    # outrank a stale hover.
+    # see-through one. v15 drops the frosted top sheen that used to sit
+    # over each of those fills (see the surface rule above `blend`): every
+    # state is now ONE FLAT COLOUR, and the card's edge does the elevating.
+    # State rules AFTER base/hover: QSS is last-match-wins at equal
+    # specificity, and a verdict flash must outrank a stale hover.
     card = t["card"]
     hover_fill = blend(card, t["card_hover"])
     return f"""
         GlassCard {{
-            background-color: {glass_fill(t, card)};
+            background-color: {card};
             border: 1px solid {line};
             border-radius: {RADIUS['card']}px;
         }}
         GlassCard:hover {{
-            background-color: {glass_fill(t, hover_fill)};
+            background-color: {hover_fill};
             border: 1px solid {hover_line};
         }}
         GlassCard[running="true"] {{
-            background-color: {glass_fill(t, blend(card, alpha(t['accent'], STATE_TINT)))};
+            background-color: {blend(card, alpha(t['accent'], STATE_TINT))};
             border: 1px solid {t['accent']};
         }}
         GlassCard[flash="ok"] {{
-            background-color: {glass_fill(t, blend(card, alpha(t['ok'], STATE_TINT)))};
+            background-color: {blend(card, alpha(t['ok'], STATE_TINT))};
             border: 1px solid {alpha(t['ok'], 0.85)};
         }}
         GlassCard[flash="err"] {{
-            background-color: {glass_fill(t, blend(card, alpha(t['err'], STATE_TINT)))};
+            background-color: {blend(card, alpha(t['err'], STATE_TINT))};
             border: 1px solid {alpha(t['err'], 0.85)};
         }}
     """
@@ -1641,7 +1764,8 @@ def state_chip_qss(t: dict, verdict: str) -> str:
     the chip's own hue, and that is a contrast fix as much as a finish one.
 
     A pill tinted in its own tone subtracts contrast from the text it
-    carries — the "badge-tint trap" strip_status_qss documents and avoids.
+    carries — the "badge-tint trap", documented at the `ok`/`warn`/`err`
+    tokens in _LIGHT and avoided outright by report_badge_qss.
     These chips were doing it anyway, at 9px, the smallest type in the app.
     Measured against the worst surface a chip can land on (a card wearing a
     STATE_TINT wash while running or flashing):
@@ -1828,45 +1952,122 @@ def empty_state_qss(t: dict) -> str:
             "background: transparent; border: none;")
 
 
-def elevate_button_qss(t: dict) -> str:
-    """Sidebar-footer 'Run as Administrator' call-to-action — the relocated,
-    far more discoverable home for elevation (was a cramped title-bar badge).
-    Amber `warn` tone: a standing 'do this to unlock system actions' prompt,
-    not a red failure. Full-width, left-aligned with room for a leading shield
-    glyph, sitting in the sidebar's app-control zone right above Exit."""
+#: The one icon-only control size in the app's chrome. A 28px square
+#: inside a CONTROL_H rail leaves 4px of air above and below, which is
+#: what keeps the rail reading as one object rather than as a button with
+#: a border drawn around it.
+RAIL_BUTTON = 28
+
+#: The rail's own content inset, DERIVED rather than picked: it is exactly
+#: the air left over once a RAIL_BUTTON control is centred in a CONTROL_H
+#: row, less the container's 1px border on each side. Written as an
+#: expression because it is not a GAP between two things (which is what
+#: SPACE measures) but the thickness of a frame around one — and because a
+#: literal here would be the first hand-picked pixel back in the layout
+#: after the scale was enforced.
+RAIL_INSET = (CONTROL_H - RAIL_BUTTON) // 2 - 1
+
+
+def status_rail_qss(t: dict) -> str:
+    """THE SIDEBAR'S BOTTOM STATUS RAIL (v15) — one container holding the
+    three things that describe the SESSION rather than the work: what
+    theme is on, what version is running (and the way to check for a newer
+    one), and whether this process holds an Administrator token.
+
+    It replaces three separately-styled footer surfaces that had
+    accumulated one per feature:
+
+        elevate_button_qss   a full-width amber CTA, or
+        admin_status_qss     a full-width green chip in its place,
+        sidebar_version_qss  a full-width ghost text button under it,
+
+    plus a fourth control that was not even in the sidebar — the theme
+    toggle, which sat in the title bar and needed a hole punched through
+    the HTCAPTION drag strip to stay clickable (the `_over_theme_button`
+    carve-out in main.nativeEvent, now deleted along with it).
+
+    Four controls, four visual languages, three of them full-width and
+    stacked, for a total of about 110px of rail spent saying things the
+    user glances at once a session. As one 36px row they cost a third of
+    that and finally read as what they are: chrome, not choices.
+
+    The container itself is deliberately quiet — the plaque well's neutral
+    fill and the chrome hairline, no accent anywhere. Colour in this row
+    belongs to the session-state button alone (see rail_state_qss), which
+    is the only part of it that can ever be reporting something.
+    """
+    return f"""
+        QFrame#statusRail {{
+            background: {t['plaque_well']};
+            border: 1px solid {t['panel_line']};
+            border-radius: {RADIUS['plaque']}px;
+        }}
+    """
+
+
+def rail_button_qss(t: dict) -> str:
+    """A neutral icon-only control inside the status rail (the theme
+    toggle). Ghost at rest so the rail reads as one surface; the shared
+    neutral hover pill on the pointer, exactly like every other row-shaped
+    thing in the app (see the note on `row_hover`)."""
     return f"""
         QPushButton {{
-            background: {alpha(t['warn'], 0.13)};
-            border: 1px solid {alpha(t['warn'], 0.42)};
-            border-radius: {RADIUS['plaque']}px;
-            color: {t['warn']};
-            font-size: {TYPE['body']}px; font-weight: 600;
-            text-align: left; padding-left: 16px;
+            background: transparent; border: none;
+            border-radius: {inner_radius(RADIUS['plaque'], 2)}px;
+            color: {t['text_muted']}; font-size: {TYPE['label']}px;
+        }}
+        QPushButton:hover {{ background: {t['row_hover']}; color: {t['text']}; }}
+        QPushButton:pressed {{ background: {alpha(t['accent'], 0.18)}; color: {t['text']}; }}
+    """
+
+
+def rail_state_qss(t: dict, elevated: bool) -> str:
+    """The session-state button that closes the status rail: emerald while
+    Pulse holds an Administrator token, amber while it does not.
+
+    ONE CONTROL, TWO STATES — which is the whole reason the elevation UI
+    could shrink to this. The packaged app ships `requireAdministrator`
+    (see main.spec), so the unelevated state is one Windows can no longer
+    put a *packaged* Pulse into; what remains of it is a developer running
+    `python src/frontend/main.py` at their own level, and a
+    policy-restricted account that can be denied the token. Neither
+    deserves a standing full-width amber call-to-action in the rail, and
+    the app was carrying THREE surfaces that announced elevation (this
+    footer, the masthead's pills, and the per-task prompt) for a fact that
+    is now true on essentially every real launch.
+
+    Tinted fill rather than a wireframe, at the weight every other
+    semantic surface in the app uses (0.12 plate / 0.34 line) — see the
+    destructive rows in action_row_qss for the same construction. A bare
+    coloured outline is the "harsh wireframe" register this pass is
+    removing everywhere it appears.
+    """
+    tone = t["ok"] if elevated else t["warn"]
+    return f"""
+        QPushButton {{
+            background: {alpha(tone, 0.12)};
+            border: 1px solid {alpha(tone, 0.34)};
+            border-radius: {inner_radius(RADIUS['plaque'], 2)}px;
+            color: {tone}; font-size: {TYPE['label']}px;
         }}
         QPushButton:hover {{
-            background: {alpha(t['warn'], 0.24)};
-            border: 1px solid {alpha(t['warn'], 0.65)};
-            color: {t['text']};
+            background: {alpha(tone, 0.22)};
+            border: 1px solid {alpha(tone, 0.55)};
         }}
-        QPushButton:pressed {{ background: {alpha(t['warn'], 0.36)}; color: {t['text']}; }}
+        QPushButton:pressed {{ background: {alpha(tone, 0.32)}; }}
+        QPushButton:disabled {{
+            background: {alpha(tone, 0.12)};
+            border: 1px solid {alpha(tone, 0.34)};
+            color: {tone};
+        }}
     """
 
 
-def admin_status_qss(t: dict) -> str:
-    """Sidebar-footer counterpart shown when Pulse IS already elevated — a
-    quiet, non-interactive green `ok` status chip confirming Administrator
-    rights, so the elevation state is always legible in the same spot whether
-    or not action is needed."""
-    return f"""
-        QLabel {{
-            background: {alpha(t['ok'], 0.10)};
-            border: 1px solid {alpha(t['ok'], 0.32)};
-            border-radius: {RADIUS['plaque']}px;
-            color: {t['ok']};
-            font-size: {TYPE['body']}px; font-weight: 600;
-            padding: 0 16px;
-        }}
-    """
+def rail_divider_qss(t: dict) -> str:
+    """The 1px vertical hairline between the rail's cells. Same token as
+    every other separator in the app (see hairline_qss, its horizontal
+    twin) — painted as a background so a 1px-wide frame renders it."""
+    return f"background: {t['panel_line']}; border: none;"
 
 
 def titlebar_button_qss(t: dict, hover: str) -> str:
@@ -1917,13 +2118,13 @@ def beta_badge_qss(t: dict) -> str:
 
 
 def toast_qss(t: dict, accent: str) -> str:
-    """One toast notification card: app-material surface (same frosted
-    treatment as dialogs), a slim colored status spine on the left, and
+    """One toast notification card: app-material surface (the same flat
+    plate dialogs wear), a slim colored status spine on the left, and
     the theme's own text/border tokens — light mode gets a real light
     toast instead of the old hardcoded dark rectangle."""
     return f"""
         QFrame#toast {{
-            background-color: {glass_fill(t, t['toast_bg'], sheen_stop=0.20)};
+            background-color: {t['toast_bg']};
             border: 1px solid {t['panel_line']};
             border-left: 3px solid {accent};
             border-radius: {RADIUS['plaque']}px;
@@ -2085,8 +2286,10 @@ def chip_strip_qss(t: dict) -> str:
 
 
 # (chip_qss was removed in v1.0: its only caller was the hero banner's
-# Engine/Admin chip column, which folded into the system status strip —
-# strip_status_qss now owns that pill.)
+# Engine/Admin chip column. That pill passed to strip_status_qss, which
+# v15 retired in turn — the two session facts it carried are a caption on
+# the dashboard's footer rule now, and the elevation half of the pair has
+# a permanent home in the status rail. See rail_state_qss.)
 
 
 def badge_qss(t: dict) -> str:
@@ -2170,14 +2373,14 @@ def report_subcard_title_qss(t: dict) -> str:
 
 
 def dialog_panel_qss(t: dict, accent: str) -> str:
-    """Same frosted-glass material as GlassCard (glass_fill), so a dialog
+    """Same flat material as GlassCard, so a dialog
     reads as depth-consistent with the surface that opened it instead of a
     flatter, unrelated modal — paired with paint_bevel_frame on the
     DepthCard panel that hosts this (see widgets.ConfirmDialog /
     SoftwareCatalogDialog / CommandPalette)."""
     return f"""
         QFrame {{
-            background-color: {glass_fill(t, t['dialog_bg'], sheen_stop=0.18)};
+            background-color: {t['dialog_bg']};
             border: 1px solid {alpha(accent, 0.35)};
             border-radius: {RADIUS['panel']}px;
         }}
@@ -2639,6 +2842,23 @@ def menu_surface_qss(t: dict) -> str:
     """
 
 
+#: THE SELECTED-ROW WEIGHTS, shared by every floating list in the app.
+#:
+#: A row in a dropdown, a row in the command palette and a row in a combo
+#: popup are the same object — the mark on the entry a list is currently
+#: reporting — and until v15.1 the two sheets that draw it carried the
+#: numbers separately. That was survivable while both were built by
+#: menu_item_qss; the palette's rows became item WIDGETS in the same
+#: change (they have to be, to align a hint to the right edge), so its
+#: sheet stopped being able to compose that function and the weights
+#: would have been a copy from the moment they were written.
+#:
+#: Hover is not here because it is already a token: `row_hover`, the one
+#: neutral pointer pill (see the note on it).
+ROW_SELECT_TINT = 0.16
+ROW_SELECT_LINE = 0.40
+
+
 def menu_item_qss(t: dict, selector: str) -> str:
     """The row rules inside a menu_surface_qss list, for whichever item
     selector the widget class uses (`QListWidget::item`, `QComboBox
@@ -2655,9 +2875,9 @@ def menu_item_qss(t: dict, selector: str) -> str:
             background: {t['row_hover']};
         }}
         {selector}:selected {{
-            background: {alpha(t['accent'], 0.16)};
+            background: {alpha(t['accent'], ROW_SELECT_TINT)};
             color: {t['text']};
-            border: 1px solid {alpha(t['accent'], 0.40)};
+            border: 1px solid {alpha(t['accent'], ROW_SELECT_LINE)};
         }}
     """
 
@@ -2812,49 +3032,198 @@ def link_button_qss(t: dict, accent: str) -> str:
     """
 
 
-def command_input_qss(t: dict) -> str:
-    """Ctrl+K command palette search field."""
+#: Height of one result row in the command palette, and of the search
+#: field above it.
+#:
+#: The row is a CONTROL_H control plus a hairline of breathing room on
+#: each side: a palette row carries a glyph, a title and a right-aligned
+#: hint, which is the same anatomy an ActionRow has, and it is scrubbed
+#: with the arrow keys rather than clicked — a row the pointer never has
+#: to find can be tighter than one it does. The FIELD is deliberately a
+#: full step taller: it is the one thing you type into, it is the first
+#: thing the palette shows, and matching it to the rows underneath made
+#: the whole surface read as an undifferentiated list.
+PALETTE_ROW_H = CONTROL_H + SPACE["xs"]
+PALETTE_FIELD_H = CONTROL_H + SPACE["md"]
+
+#: Height of a section divider between two groups of results.
+#:
+#: DELIBERATELY A STEP SHORTER THAN A RESULT ROW, which is the whole
+#: statement: a divider that measured the same as the rows around it is a
+#: row, and the eye counts it as one while the arrow keys skip over it —
+#: the specific way a grouped list stops feeling keyboard-driven.
+#:
+#: Stated as a height at all (rather than left to the label's own hint)
+#: because a QListWidget sizes an item widget from the hint it is GIVEN,
+#: and a QLabel's hint before its stylesheet has been polished reports the
+#: default font rather than the 10px letterspaced caption it will become.
+#: Rows overlapping their headers is what that looks like.
+PALETTE_SECTION_H = PALETTE_ROW_H - SPACE["md"]
+
+
+def palette_field_qss(t: dict) -> str:
+    """The Ctrl+K search field — a bordered container holding a leading
+    glyph and a chromeless QLineEdit, rather than a styled QLineEdit.
+
+    The glyph is why. A search field with no mark on it is a text box;
+    every palette worth copying (Raycast, Linear, VS Code) leads with one,
+    because it is what tells you the surface is a search rather than a
+    prompt before you have read the placeholder. A QLineEdit cannot carry
+    a leading glyph without either an icon resource or a QAction, so the
+    border moves out to a frame and the field inside it goes transparent.
+    """
     return f"""
-        QLineEdit {{
+        QFrame#paletteField {{
             background: {t['panel']};
             border: 1px solid {t['panel_line']};
             border-radius: {RADIUS['control']}px;
+        }}
+        QFrame#paletteField:hover {{
+            border: 1px solid {alpha(t['accent'], FIELD['hover'])};
+        }}
+        /* FOCUS IS A PROPERTY HERE, NOT A PSEUDO-STATE, and that is forced
+           by the composite: the thing that receives focus is the QLineEdit
+           INSIDE this frame, QSS has no parent selector, and a :focus rule
+           on a chromeless input would light a border nobody draws. The
+           dialog flips `focused` from the input's own focus events (see
+           CommandPalette._apply_field_focus), so the guarantee — that this
+           field answers the keyboard at FIELD['focus'] and the pointer at
+           FIELD['hover'], like every other field in the app — is
+           unchanged; only the mechanism moved. Listed AFTER :hover so
+           focus outranks it at equal specificity. */
+        QFrame#paletteField[focused="true"] {{
+            border: 1px solid {alpha(t['accent'], FIELD['focus'])};
+        }}
+        QFrame#paletteField QLineEdit {{
+            background: transparent; border: none;
             color: {t['text']};
             font-size: {TYPE['lead']}px;
-            padding: 0 14px;
             selection-background-color: {alpha(t['accent'], 0.35)};
         }}
-        QLineEdit:hover {{ border: 1px solid {alpha(t['accent'], FIELD['hover'])}; }}
-        QLineEdit:focus {{ border: 1px solid {alpha(t['accent'], FIELD['focus'])}; }}
+        QFrame#paletteField QLabel {{
+            background: transparent; border: none;
+            color: {t['text_faint']};
+        }}
     """
 
 
-def command_list_qss(t: dict) -> str:
-    """Ctrl+K command palette result list.
+def palette_list_qss(t: dict) -> str:
+    """The result list.
 
-    Carries the shared scrollbar rules: a QListWidget scrolls ITSELF
-    rather than living inside a QScrollArea, so it never picked up
-    scroll_area_qss — and the palette, the most-used surface in the app,
-    was the one place that showed a stock Windows scrollbar, arrow
-    buttons and all.
+    THE ROWS ARE ITEM WIDGETS NOW, so this sheet paints the SELECTION PILL
+    and nothing else — the row's own text comes from palette_row_qss. That
+    split is what buys the two things a flat QListWidget of concatenated
+    strings could not have: a hint aligned to the RIGHT edge of the row
+    (one string has one alignment), and section headers that are visibly
+    not results.
 
-    The ROWS come from menu_item_qss, shared with every dropdown in the
-    app. The list's own frame stays transparent because it sits INSIDE the
-    palette's dialog panel, which is already the floating surface — drawing
-    menu_surface_qss's border here too would put a second box inside the
-    first. The hover weight was the visible drift this fixed: the palette
-    was the one list still hovering on `card_hover`, the accent-tinted card
-    lift, so scrubbing the results painted an indigo streak down them.
+    The pill keeps menu_item_qss's weights rather than inventing its own,
+    because it is the same object — the pointer/keyboard mark on a row in
+    a floating list — and the palette was the last surface in the app to
+    disagree with the dropdowns about what that looks like.
     """
     return scroll_area_qss(t) + f"""
         QListWidget {{
             background: transparent;
             border: none;
             outline: none;
-            font-size: {TYPE['label']}px;
-            color: {t['text_soft']};
         }}
-    """ + menu_item_qss(t, "QListWidget::item")
+        QListWidget::item {{
+            border-radius: {RADIUS['plaque']}px;
+            margin: 1px {SPACE['xxs']}px;
+            border: 1px solid transparent;
+        }}
+        QListWidget::item:hover {{ background: {t['row_hover']}; }}
+        QListWidget::item:selected {{
+            background: {alpha(t['accent'], ROW_SELECT_TINT)};
+            border: 1px solid {alpha(t['accent'], ROW_SELECT_LINE)};
+        }}
+    """
+
+
+def palette_section_qss(t: dict) -> str:
+    """A category divider between groups of results. The `section` label
+    role, exactly as the dashboard's band headers and the sidebar's
+    MODULES label wear it — a group of results inside a palette and a band
+    of cards on a page are the same idea at two scales."""
+    return label_qss(t, "section")
+
+
+def palette_row_qss(t: dict, selected: bool = False) -> str:
+    """One result row's TEXT, over whatever pill the list is painting.
+
+    Transparent throughout: the row widget must not paint a background of
+    its own or it would mask the selection pill underneath it, which is
+    the one thing an item widget can get catastrophically wrong.
+
+    Selection lifts the title to full `text` — the pill alone reads as
+    "the pointer is here", and on a surface where Enter RUNS something the
+    active row should also read as "this is the one".
+    """
+    title = t["text"] if selected else t["text_soft"]
+    return f"""
+        QLabel#paletteTitle {{
+            background: transparent; border: none;
+            color: {title}; font-size: {TYPE['label']}px;
+            font-weight: {WEIGHT['semi']};
+        }}
+        QLabel#paletteGlyph {{
+            background: transparent; border: none;
+            color: {t['accent'] if selected else t['text_muted']};
+        }}
+        QLabel#paletteHint {{
+            background: transparent; border: none;
+            color: {t['text_faint']}; font-size: {TYPE['meta']}px;
+        }}
+    """
+
+
+def palette_footer_qss(t: dict) -> str:
+    """The hint bar closing the palette: what the arrow keys do, what
+    Enter does, and how many results there are.
+
+    It exists because the palette is the app's only keyboard-first
+    surface and it was shipping with no statement of its own bindings —
+    Up/Down/Enter/Escape all worked and nothing said so, which makes a
+    power feature discoverable only by guessing. Separated from the list
+    by a hairline so it reads as chrome rather than as a last result."""
+    return f"""
+        QFrame#paletteFooter {{
+            background: transparent;
+            border: none;
+            border-top: 1px solid {t['panel_line']};
+        }}
+        QFrame#paletteFooter QLabel {{
+            background: transparent; border: none;
+            color: {t['text_faint']}; font-size: {TYPE['meta']}px;
+        }}
+    """
+
+
+def palette_keycap_qss(t: dict) -> str:
+    """The hint bar's key marks — the shortcut sheet's keycap, shrunk.
+
+    Same construction as the shortcut sheet's keycap — a raised plate, a
+    firm hairline, a little tracking — at the smaller scale these need,
+    sitting as they do on a 10px caption row rather than in a 13px table.
+
+    THE PLATE IS A TINT OF THE INK, NOT THE CARD TONE, and that is the one
+    real difference from keycap_qss. A shortcut sheet's keycaps sit on a
+    dialog panel and can afford an opaque `card` fill; the palette draws
+    one ON THE SELECTED ROW, whose pill is LIGHTER than the panel — an
+    opaque card-toned cap there reads as a hole punched through the
+    selection rather than as a key raised off it. A tint of `text`
+    inverts with the theme for free (light ink on obsidian, dark ink on
+    porcelain) and lifts off whatever it lands on."""
+    return f"""
+        color: {t['text_muted']}; font-size: {TYPE['micro']}px;
+        font-weight: {WEIGHT['bold']};
+        background: {alpha(t['text'], 0.10)};
+        border: 1px solid {alpha(t['text'], 0.22)};
+        border-radius: {inner_radius(RADIUS['chip'], 2)}px;
+        padding: 2px {SPACE['xs']}px;
+        letter-spacing: 0.5px;
+    """
 
 
 def dialog_secondary_go_qss(t: dict, accent: str) -> str:
@@ -3154,48 +3523,80 @@ _LABEL_ROLES = {
 
 
 def hero_banner_qss(t: dict) -> str:
-    """The Welcome dashboard's identity banner (v9.2): the app's most
-    important surface, so it wears the full frosted-glass card material
-    (same glass_fill every premium surface shares) with a firm hairline —
-    an authoritative masthead, not a floating splash mark."""
+    """The Welcome dashboard's identity banner: the app's most important
+    surface, so it wears the same flat card plate every other elevated
+    surface wears, with a firm hairline — an authoritative masthead, not a
+    floating splash mark. v15 dropped the frosted wash it used to carry
+    along with every other one (see the surface rule near `blend`)."""
     return f"""
         QFrame#heroBanner {{
-            background: {glass_fill(t, t['card'])};
+            background: {t['card']};
             border: 1px solid {t['card_line']};
             border-radius: {RADIUS['panel']}px;
         }}
     """
 
 
-def strip_status_qss(t: dict, ok: bool) -> str:
-    """An Engine/Admin state pill, right-anchored in the hero masthead.
+#: How far a ratio may climb before a health tile stops reading it as
+#: normal, and then as fine. Two thresholds, one pair, because CPU load,
+#: memory pressure and disk usage are the same question about different
+#: resources and answering them at different cut-offs would make the row
+#: incomparable at a glance — which is the whole point of a KPI row.
+#:
+#: 0.70 / 0.90 are the conventional headroom bands: below 70% a machine
+#: has room, 70-90% is working hard, past 90% it is the thing to fix.
+HEALTH_WARN, HEALTH_ALERT = 0.70, 0.90
 
-    The name is historical: v1.0 moved these out of the hero into a
-    separate system status strip, and the v1.0 RC layout pass deleted that
-    strip and brought them back. Two session facts on the masthead is all
-    the dashboard states about itself now.
 
-    Transparent fill with a toned border, NOT a tint of its own tone: a pill
-    tinted in its own hue subtracts contrast from the text it carries (the
-    measured badge-tint trap), and these run down to 11px. Contrast is then
-    tone-against-the-card, which the palette already solves in both modes.
+def health_tone(t: dict, fraction: float | None) -> str:
+    """The colour a health tile's meter carries for `fraction` of a
+    resource used — accent, then warn, then err.
 
-    The not-ok state is `warn` (amber), not `err` (red), for two reasons
-    that agree: "Not Elevated" and "Engine Missing" are heads-up states the
-    user acts on, not the failure of an operation the red tone is reserved
-    for; and the sidebar's own unelevated CTA is already amber, so the two
-    read as one signal. It is also the one that clears AA — the red measured
-    3.98:1 on this brighter card-glass surface in dark mode."""
-    color = t["ok"] if ok else t["warn"]
+    SEVERITY IS THE ONLY JOB COLOUR DOES HERE. The tile's figure and its
+    label both stay on the text ramp whatever the meter says (see
+    health_tile_value_qss), because a number that changes colour is a
+    number the eye re-reads instead of reading; the meter beneath it is
+    the channel that carries state, and it is never the only one — the
+    figure itself is the label, in words, right above it.
+    """
+    if fraction is None:
+        return t["text_faint"]
+    if fraction >= HEALTH_ALERT:
+        return t["err"]
+    if fraction >= HEALTH_WARN:
+        return t["warn"]
+    return t["accent"]
+
+
+def health_tile_qss(t: dict) -> str:
+    """One tile in the dashboard's health row — the same flat card plate
+    every other elevated surface wears, so the KPI row reads as part of
+    the page rather than as a widget dropped onto it."""
     return f"""
-        QLabel {{
-            color: {color}; font-size: {TYPE['caption']}px; font-weight: 700;
-            background: transparent;
-            border: 1px solid {alpha(color, 0.50)};
-            border-radius: {RADIUS['chip']}px;
-            padding: 4px 12px;
+        QFrame#healthTile {{
+            background: {t['card']};
+            border: 1px solid {t['card_line']};
+            border-radius: {RADIUS['card']}px;
         }}
     """
+
+
+def health_tile_value_qss(t: dict) -> str:
+    """The figure. Deliberately on the TEXT ramp and not on the meter's
+    tone: a value that recolours itself is one the eye stops reading and
+    starts interpreting, and the app already has a channel for severity
+    (the meter) plus one for identity (the caption)."""
+    return (f"color: {t['text']}; font-size: {TYPE['metric']}px; "
+            f"font-weight: {WEIGHT['semi']}; letter-spacing: -0.5px; "
+            "background: transparent; border: none;")
+
+
+def health_tile_caption_qss(t: dict) -> str:
+    """The tile's label. Sentence case, no trailing colon, and quieter
+    than the figure by a full ramp step."""
+    return (f"color: {t['text_faint']}; font-size: {TYPE['meta']}px; "
+            f"font-weight: {WEIGHT['semi']}; letter-spacing: 1px; "
+            "background: transparent; border: none;")
 
 
 def label_qss(t: dict, role: str) -> str:
@@ -3205,9 +3606,14 @@ def label_qss(t: dict, role: str) -> str:
 
 
 def sidebar_version_qss(t: dict) -> str:
-    """The sidebar footer's identity line, which is ALSO the self-updater's
-    manual "check for updates" button (main.PulseApp._on_footer_clicked).
-    Pairs with elevate_button_qss as the rail's two footer controls.
+    """The identity line at the centre of the status rail, which is ALSO
+    the self-updater's manual "check for updates" button (reported through
+    StatusRail.version_clicked to main.PulseApp._on_footer_clicked).
+
+    v15 moved it INTO the rail rather than leaving it as a full-width
+    button beneath one; the styling did not have to change, which is the
+    useful part of the story — it was already a quiet ghost control, and a
+    quiet ghost control is exactly what a status bar cell wants.
 
     Its size, weight and tracking are DERIVED from the `caption` label role
     it replaced, not retyped, so the line that closes the rail looks

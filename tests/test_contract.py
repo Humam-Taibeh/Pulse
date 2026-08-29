@@ -893,6 +893,13 @@ def test_wql_filters_escape_interpolated_values():
         + "\n  ".join(offenders))
 
 
+def _bullets(failures) -> str:
+    """One failure per indented line — the shape every palette assertion in
+    this file reports in, kept in one place so a multi-line f-string does
+    not have to be spelled out at each call site."""
+    return "".join(chr(10) + "  " + line for line in failures)
+
+
 class TestThemes:
     @staticmethod
     def _themes(qapp):
@@ -1250,16 +1257,64 @@ class TestThemes:
                     f"{best} outweighs {worst}")
         assert not failures, "module accent parity:\n  " + "\n  ".join(failures)
 
-    def test_no_two_modules_are_the_same_colour(self, qapp):
-        """Two modules whose accents are within a just-noticeable difference
-        do not have separate identities, whatever the token table claims.
+    def test_every_module_resolves_to_the_one_interactive_accent(self, qapp):
+        """THIS TEST USED TO ASSERT THE OPPOSITE, and the inversion is the
+        record of a decision rather than a bug being fixed.
 
-        'software' #5e96ff and 'information' #6598ff shipped through v11 at
-        CIE76 dE 1.6 — under the ~2.3 JND — while the next-closest pair in
-        the set sat at 20.0. Both are TOP-LEVEL modules and their entries
-        are adjacent in the sidebar, so the palette was rendering six
-        colours and calling them seven. A floor test cannot catch this
-        either: both values were individually compliant.
+        It shipped as `test_no_two_modules_are_the_same_colour`: two
+        modules within a just-noticeable difference did not have separate
+        identities whatever the token table claimed, and it caught a real
+        defect — 'software' #5e96ff and 'information' #6598ff were dE 1.6
+        apart, under the ~2.3 JND, while the next-closest pair sat at 20.0.
+        The palette was rendering six colours and calling them seven.
+
+        v15 answers that by rendering ONE and calling it one. The reasoning
+        is in the note on theme._DARK["module"]: a module colour is
+        constant inside the module it names and redundant between modules
+        (the page header, the breadcrumb and the selected nav rail all
+        already say where you are), so the spectrum was spending the app's
+        whole chromatic budget on decoration and leaving emerald / amber /
+        ruby to compete with teal, pink and violet for the eye.
+
+        So the guarantee inverts with it. A future edit that gives one
+        module its own colour back is no longer a palette tweak — it is a
+        return to the spectrum, and it should have to come through here.
+        """
+        from frontend import theme as TH
+
+        failures = []
+        for name, tokens in self._themes(qapp).items():
+            expected = tokens["accent"]
+            for key, value in tokens["module"].items():
+                if value.lower() != expected.lower():
+                    failures.append(
+                        f"{name}: module {key!r} is {value}, not the "
+                        f"interactive accent {expected}")
+            # resolve_accent is the path every widget actually takes, and
+            # it is the one that has to agree — a table that matched while
+            # the resolver did not would be a palette nobody sees.
+            for key in tokens["module"]:
+                got = TH.resolve_accent(tokens, key)
+                if got.lower() != expected.lower():
+                    failures.append(
+                        f"{name}: resolve_accent({key!r}) gave {got}, "
+                        f"not {expected}")
+        assert not failures, (
+            "the module spectrum is growing back:" + _bullets(failures))
+
+    def test_the_semantic_tones_stay_tellable_apart(self, qapp):
+        """What the module collapse makes MORE important, not less.
+
+        With one interactive colour, the only other hues on a page are the
+        three that carry meaning — applied (emerald), attention (amber) and
+        destructive (ruby) — plus the accent itself. Those four are now
+        doing all of the app's colour work, so two of them landing within a
+        just-noticeable difference would collapse a real distinction, which
+        is exactly the failure the retired module-dE test guarded against
+        one level up.
+
+        The floor is the one that test used (8.0, well clear of the ~2.3
+        JND) applied to the set that still needs it.
         """
         import itertools
         import math
@@ -1279,21 +1334,19 @@ class TestThemes:
             fx, fy, fz = f(x), f(y), f(z)
             return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
 
-        # Well clear of the ~2.3 JND, well under the 14.6 the closest
-        # surviving pair (maintenance/safety, light) actually measures.
         floor = 8.0
         failures = []
         for name, tokens in self._themes(qapp).items():
-            for a, b in itertools.combinations(tokens["module"], 2):
-                delta = math.dist(lab(tokens["module"][a]),
-                                  lab(tokens["module"][b]))
+            roles = {key: tokens[key]
+                     for key in ("accent", "ok", "warn", "err")}
+            for a, b in itertools.combinations(roles, 2):
+                delta = math.dist(lab(roles[a]), lab(roles[b]))
                 if delta < floor:
                     failures.append(
-                        f"{name}: {a} ({tokens['module'][a]}) and {b} "
-                        f"({tokens['module'][b]}) are dE {delta:.1f} apart "
-                        f"(floor {floor})")
+                        f"{name}: {a} ({roles[a]}) and {b} ({roles[b]}) are "
+                        f"dE {delta:.1f} apart (floor {floor})")
         assert not failures, (
-            "modules sharing a colour:\n  " + "\n  ".join(failures))
+            "semantic tones sharing a colour:" + _bullets(failures))
 
 
     #: OKLCh chroma ceilings, in percent, for any single accent and for the
@@ -1371,7 +1424,15 @@ class TestThemes:
     def test_the_two_themes_stay_equally_calm(self, qapp):
         """A module must be the SAME colour in both themes, so it must also
         carry the same WEIGHT. Re-saturating one mode on its own gives the
-        app two palettes wearing one set of names."""
+        app two palettes wearing one set of names.
+
+        v15 made this test SHARPER without changing a line of it. The
+        module set used to average seven hues per theme, so one hot value
+        could hide inside the mean; the set is now a single colour, so this
+        measures the interactive accent itself and nothing else. It caught
+        the collapse's own first draft — a #5465b4 light indigo against
+        dark's #8a9edb reads at 1.35x — which is why theme._LIGHT's accent
+        carries a chroma re-solve note."""
         means = {}
         for name, tokens in self._themes(qapp).items():
             values = list(tokens["module"].values())

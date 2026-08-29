@@ -12,6 +12,7 @@ is_sizable() is tested as its own first-class invariant.
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import QPoint
 
 from conftest import WINDOWS_ONLY, settle
 import win32_probe as w32
@@ -85,17 +86,38 @@ def test_caption_buttons_are_non_client(floating, role, expected):
     assert w32.hit_name(hwnd, x, y) == expected
 
 
-def test_theme_toggle_stays_a_client_hole(floating):
-    """The one title-bar control that must remain an ordinary Qt button —
-    if the HTCAPTION strip swallowed it, it would become dead chrome."""
+def test_the_caption_strip_has_no_client_holes_left(floating):
+    """THIS TEST USED TO ASSERT THE OPPOSITE, and the inversion records a
+    decision rather than a fix.
+
+    It shipped as `test_theme_toggle_stays_a_client_hole`: the theme
+    toggle was an ordinary Qt button living inside the title bar, so the
+    HTCAPTION strip had to leave a hand-measured hole over it or the
+    button became dead chrome. That hole was real work —
+    `PulseApp._over_theme_button`, DPI-aware physical-pixel mapping that
+    had to track the button's geometry — and it was a standing hazard: a
+    drag strip with a hole in it develops a dead spot the moment a
+    neighbouring control moves and nothing re-measures.
+
+    v15 moved the toggle into the sidebar's status rail (widgets.
+    StatusRail) with the rest of the session chrome, so the strip is
+    uniform again. What is asserted now is that it STAYS uniform: every
+    pixel of the title bar that is not one of the three caption buttons
+    answers HTCAPTION, all the way to the brand block on the left.
+    """
     hwnd = w32.hwnd_of(floating)
     rect = w32.window_rect(hwnd)
-    btn = floating.titlebar.theme_button()
     dpr = floating.devicePixelRatioF()
-    centre = btn.mapTo(floating, btn.rect().center())
-    x = rect.left + round(centre.x() * dpr)
-    y = rect.top + round(centre.y() * dpr)
-    assert w32.hit_name(hwnd, x, y) == "CLIENT"
+    titlebar = floating.titlebar
+    y = rect.top + round((titlebar.height() // 2) * dpr)
+    # sample across the strip, stopping well short of the caption cluster
+    left_edge = titlebar.caption_buttons()["min"].mapTo(
+        floating, QPoint(0, 0)).x()
+    for frac in (0.05, 0.2, 0.4, 0.6, 0.8):
+        x = rect.left + round((left_edge * frac) * dpr)
+        assert w32.hit_name(hwnd, x, y) == "CAPTION", (
+            f"the title-bar strip is not draggable at x={x} — a client "
+            "hole has come back")
 
 
 def test_resize_loop_clamps_to_the_layout_floor(floating):

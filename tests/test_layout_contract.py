@@ -26,6 +26,7 @@ import re
 import pytest
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton
 
+from conftest import settle
 from frontend import theme as TH
 from frontend.main import CategoryPage
 from frontend.menu_structure import (
@@ -273,6 +274,122 @@ def test_every_icon_size_comes_off_the_scale(module):
     assert not off_ramp, (
         f"{len(off_ramp)} icon size literal(s) off the ramp "
         f"{sorted(tiers)}:" + chr(10) + listing)
+
+
+# ============================================================
+#  THE PADDING ROLES
+# ============================================================
+def test_every_padding_role_lands_on_the_spacing_scale():
+    """PAD names two of SPACE's steps; it does not invent numbers.
+
+    The point of a second vocabulary is to say WHICH step a kind of
+    surface takes, not to open a second scale beside the first — which is
+    exactly how the app came to have five padding recipes for one
+    question in the first place.
+    """
+    steps = set(TH.SPACE.values())
+    for role, value in TH.PAD.items():
+        assert value in steps, (
+            f"PAD[{role!r}] = {value} is not a SPACE step {sorted(steps)}")
+    assert TH.PAD["sheet"] > TH.PAD["surface"], (
+        "a floating sheet must carry MORE air than a card, or the two "
+        "roles are one role with two names")
+
+
+@pytest.mark.parametrize("width", [1000, 1400, 2200])
+def test_home_and_a_module_share_one_content_column(window, qapp, width):
+    """Opening a module must not move the page sideways.
+
+    Both pages are swapped into the same QStackedWidget inside the same
+    content frame, so any difference in their own root padding shifts the
+    whole column on every navigation. It did: the dashboard padded itself
+    by `xl` and a category page by `sm`, which measured as a 16px jump at
+    every window size — flush on neither side of the transition, in a
+    shell whose two halves are otherwise pixel-aligned.
+
+    Measured at the SHELL, not at each page, because that is the frame
+    both are drawn into and the only one in which "did it move?" is a
+    question with an answer.
+    """
+    from PySide6.QtCore import QPoint
+
+    original = window.size()
+    window.resize(width, 900)
+    settle(qapp, 120)
+    try:
+        def left(widget):
+            return widget.mapTo(window._shell, QPoint(0, 0)).x()
+
+        window.go_home()
+        settle(qapp, 120)
+        home = left(window.welcome._hero)
+
+        window.open_category(1)
+        settle(qapp, 200)
+        page = window.pages[1]
+        module = left(page._home)
+
+        assert home == module, (
+            f"@{width}px the dashboard's column starts at x={home} and a "
+            f"module page's at x={module} — the content jumps "
+            f"{abs(home - module)}px sideways when you navigate")
+    finally:
+        window.resize(original)
+        window.go_home()
+        settle(qapp, 120)
+
+
+def test_every_card_grid_shares_one_gutter(qapp, window):
+    """Three card grids at three gutters is the "almost aligned" feel the
+    spacing scale exists to remove.
+
+    The dashboard's health row ran 12, its quick actions 24, and a module
+    page's card grid 16 — and the first two sit one above the other on the
+    same screen, so the mismatch was visible without navigating anywhere.
+    """
+    welcome = window.welcome
+    gutter = TH.SPACE["lg"]
+    grids = {
+        "the dashboard's health row": welcome._tile_row.spacing(),
+        "the dashboard's quick actions": welcome._grid.spacing(),
+        "a module page's card grid": window.pages[0]._grid.spacing(),
+    }
+    off = {name: value for name, value in grids.items() if value != gutter}
+    assert not off, (
+        f"card grids off the shared {gutter}px gutter: {off}")
+
+
+def test_six_quick_actions_stay_a_two_by_three_block(window, qapp):
+    """A ten-element launcher does not get denser as the window grows.
+
+    v14 let the quick actions resolve to SIX columns from about 1440p up,
+    on the argument that three columns would stretch each card past 500px.
+    Measured at 2560 maximised, six across gave a 340px card whose own
+    title wrapped to two lines — the crowded half of the same defect, and
+    a composition that reads as one squeezed row above a void rather than
+    as a launcher.
+
+    The even-split rule (see WelcomePage._even_split) still narrows the
+    block on a small window; what it may never do is widen it, because 4
+    and 5 leave orphans and 6 crushes.
+    """
+    original = window.size()
+    try:
+        for width in (1400, 2000, 2400):
+            window.resize(width, 1000)
+            settle(qapp, 200)
+            assert window.welcome._cols == 3, (
+                f"@{width}px the quick actions laid out at "
+                f"{window.welcome._cols} columns, not the 2x3 block six "
+                "actions are composed as")
+        # ...and it still narrows when there genuinely is no room
+        window.resize(_MIN_W, _MIN_H)
+        settle(qapp, 200)
+        assert window.welcome._cols <= 2, (
+            "the block did not narrow at the app's minimum width")
+    finally:
+        window.resize(original)
+        settle(qapp, 120)
 
 
 # ============================================================
@@ -918,6 +1035,109 @@ def test_a_selector_grows_with_its_content(window, qapp, quiet_update_center):
         "space for rows that do not exist")
 
 
+def test_a_fit_scroll_measures_its_content_at_the_width_it_gets(window, qapp):
+    """THE SECOND HALF OF "HUG YOUR CONTENT", and the one that shipped
+    broken for as long as FitScroll existed.
+
+    FitScroll forwards the inner widget's height so a dialog can size to
+    what is actually in it. It asked for that height with
+    `layout.sizeHint()`, which Qt measures against the layout's own
+    PREFERRED width — and every wrapping QLabel in the app prefers a
+    narrower column than an 840px selector panel gives it. So the hint
+    described a taller, skinnier version of the content than the one that
+    would be painted: the dialog sized itself to the phantom, the real
+    text wrapped onto fewer lines, and the leftover became dead space
+    under the last row.
+
+    Measured on the DNS switcher before the fix: the host layout hinted
+    311px while the same content at the panel's real width occupied 266.
+    45px of void on a 467px dialog, entirely from asking the wrong
+    question — which is the same class of defect, and the same visible
+    symptom, that FitScroll was written to remove.
+
+    The guard is stated against a widget whose height genuinely depends on
+    its width, so it fails if the height-for-width path is dropped.
+    """
+    from PySide6.QtWidgets import QLabel, QWidget
+    from frontend import widgets as W
+
+    host = QWidget()
+    lay = W.scroll_host_layout(host)
+    label = QLabel("word " * 220)
+    label.setWordWrap(True)
+    lay.addWidget(label)
+    lay.addStretch()
+
+    scroll = W.FitScroll()
+    scroll.setWidget(host)
+    scroll.setParent(window)
+    scroll.resize(840, 400)
+    qapp.processEvents()
+
+    at_width = scroll._content_height()
+    naive = lay.sizeHint().height()
+    try:
+        assert lay.hasHeightForWidth(), (
+            "the fixture no longer has a width-dependent height, so it "
+            "cannot detect the defect it was written for")
+        assert at_width < naive, (
+            f"FitScroll reports {at_width}px for content that occupies "
+            f"{at_width}px at 840 wide but hints {naive}px — it is back to "
+            "measuring at the layout's preferred width")
+        assert at_width == pytest.approx(
+            lay.heightForWidth(scroll.viewport().width()), abs=4), (
+            "the reported height is not the content's height at the width "
+            "the viewport actually gives it")
+    finally:
+        scroll.setParent(None)
+        scroll.deleteLater()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize("name", ["dns", "power", "restore", "storage"])
+def test_an_inspector_leaves_no_void_under_its_content(window, qapp, name):
+    """The same guarantee end to end, on the dialogs the redesign named.
+
+    A panel whose height exceeds what its own scroll area is showing IS
+    the black void, whatever the intermediate hints claim — so this
+    measures the finished geometry rather than any one widget's opinion of
+    it.
+    """
+    from frontend import widgets as W
+
+    builders = {
+        "dns":     lambda: W.DnsSwitcherDialog(window, "", window.theme.t),
+        "power":   lambda: W.PowerHealthDialog(window, "", window.theme.t),
+        "restore": lambda: W.RestorePointDialog(window, "", window.theme.t),
+        "storage": lambda: W.StorageAnalyzerDialog(window, "", window.theme.t),
+    }
+    dialog = builders[name]()
+    dialog.show()
+    settle(qapp, 120)
+    try:
+        scroll = dialog._scroll
+        # The area may be squeezed by the panel's cap (a long report
+        # scrolls, which is correct); what must never happen is the
+        # reverse — the area given MORE room than its content fills.
+        slack = scroll.height() - scroll._content_height()
+        # ...unless the panel is sitting on the band's own FLOOR, which is
+        # a different thing from a void and the one case where empty space
+        # is a decision. A dialog is not allowed to be 150px tall just
+        # because that is all it has to say; below _SELECTOR_HEIGHT_MIN it
+        # stops reading as a panel and starts reading as a tooltip. The
+        # defect this guards against measured 45px of slack at a panel
+        # height of 467 — nowhere near the floor.
+        at_floor = dialog.panel.height() <= W._SELECTOR_HEIGHT_MIN + 2
+        assert slack <= 4 or at_floor, (
+            f"{name}: {slack}px of empty scroll viewport under the last "
+            f"row at a panel height of {dialog.panel.height()} — the panel "
+            "is reserving space for content that is not there")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
 def test_a_selector_stops_growing_at_the_cap_and_scrolls(
         window, qapp, quiet_update_center):
     """Hugging is not licence to outgrow the window. Past the cap the list
@@ -1062,18 +1282,193 @@ def test_fit_scroll_can_be_squeezed_below_its_content(window, qapp):
 def test_every_menu_surface_composes_the_shared_material(qapp):
     """The command palette and every combo popup are the same object: a
     list floating over the page. They had drifted - the palette hovered on
-    `card_hover` (the accent-tinted CARD lift, which paints an indigo
+    `card_hover` (then an accent-tinted CARD lift, which paints an indigo
     streak down a menu being scrubbed) while the combo popup had no hover
-    rule at all and no item padding."""
+    rule at all and no item padding.
+
+    THE SECOND HALF OF THAT GUARANTEE MOVED IN v15 rather than being
+    dropped. It used to be spelled "and not card_hover", which only worked
+    while the two tokens differed; the palette now answers hover with ONE
+    neutral lift on every surface in the app, so card_hover IS row_hover
+    and the old assertion would fail on the fix. What it was actually
+    protecting - that a menu row never lifts toward the brand - is now
+    asserted directly against the accent, which is the thing that must not
+    appear.
+    """
     for mode in ("dark", "light"):
         t = TH.ThemeManager(mode, None).t
-        surfaces = {"palette": TH.command_list_qss(t),
+        surfaces = {"palette": TH.palette_list_qss(t),
                     "combo": TH.filter_combo_qss(t, t["accent"])}
         for name, qss in surfaces.items():
             assert t["row_hover"] in qss, (
                 f"{mode}/{name} does not use the neutral hover pill")
-            assert t["card_hover"] not in qss, (
-                f"{mode}/{name} still hovers on the accent-tinted card lift")
+            assert TH.alpha(t["accent"], 0.05) not in qss, (
+                f"{mode}/{name} hovers on an accent tint rather than the "
+                "shared neutral pill")
+
+
+def test_one_hover_weight_answers_the_pointer_everywhere(qapp):
+    """A card and a menu row are two surfaces asking one question, and
+    through v14 they answered it differently: the card lifted toward indigo
+    at 0.085 while a row lifted toward white at 0.06. Same pointer, same
+    meaning, two colours at two weights depending on what it happened to be
+    over. v15 gives the app one hover."""
+    for mode in ("dark", "light"):
+        t = TH.ThemeManager(mode, None).t
+        assert t["card_hover"] == t["row_hover"], (
+            f"{mode}: the card and the menu row hover differently "
+            f"({t['card_hover']} vs {t['row_hover']})")
+        r, g, b, _a = TH._parse_color(t["card_hover"])
+        assert r == g == b, (
+            f"{mode}: the hover lift {t['card_hover']} carries a hue - a "
+            "plate is raised by light, not by colour")
+
+
+# ============================================================
+#  THE COMMAND PALETTE
+# ============================================================
+def _palette(window):
+    from frontend.menu_structure import iter_leaf_items
+    from frontend.widgets import CommandPalette
+    return CommandPalette(window, window.theme.t, list(iter_leaf_items()))
+
+
+def _press(dialog, key, qapp):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    dialog.eventFilter(dialog._search,
+                       QKeyEvent(QEvent.Type.KeyPress, key,
+                                 Qt.KeyboardModifier.NoModifier))
+    qapp.processEvents()
+
+
+def test_the_palette_groups_results_under_module_headers(window, qapp):
+    """Results carry their module as a DIVIDER, not as trailing text.
+
+    Rows used to be one formatted string — icon, title, category and the
+    reason a catalog card matched, all concatenated — so the module name
+    was repeated on every row and long titles were pushed into an
+    ellipsis by context nobody was reading twice.
+
+    Grouping must not cost relevance: groups are ordered by their own
+    best-scoring member, so the top result overall is still the first row
+    on screen. It has simply acquired a heading.
+    """
+    from PySide6.QtCore import Qt
+
+    dialog = _palette(window)
+    dialog.show()
+    settle(qapp, 80)
+    try:
+        dialog._search.setText("re")
+        settle(qapp, 80)
+        rows = [(i, dialog._list.item(i).data(Qt.ItemDataRole.UserRole))
+                for i in range(dialog._list.count())]
+        headers = [i for i, data in rows if data == dialog._HEADER]
+        assert headers, "no section dividers — the results are not grouped"
+        assert headers[0] == 0, (
+            "the list opens on a result rather than on the divider that "
+            "names its group")
+        # every result is under a header, and the first selectable row is
+        # the one immediately after the first header — i.e. the top hit
+        assert dialog._list.currentRow() == 1, (
+            f"the palette opened on row {dialog._list.currentRow()}, not on "
+            "the top result")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
+def test_palette_navigation_steps_over_its_own_dividers(window, qapp):
+    """Section headers are items in the same list — that is what lets a
+    divider scroll with the group it names — so Up/Down have to step OVER
+    them. A keyboard-first surface where an arrow key can land on a
+    non-selectable row is one where Enter sometimes does nothing.
+    """
+    from PySide6.QtCore import Qt
+
+    dialog = _palette(window)
+    dialog.show()
+    settle(qapp, 80)
+    try:
+        dialog._search.setText("re")
+        settle(qapp, 80)
+        headers = {i for i in range(dialog._list.count())
+                   if not dialog._is_result(i)}
+        assert headers, "the fixture query no longer produces dividers"
+
+        seen = []
+        for _ in range(dialog._list.count() + 2):     # past the wrap point
+            _press(dialog, Qt.Key.Key_Down, qapp)
+            seen.append(dialog._list.currentRow())
+        assert not (set(seen) & headers), (
+            f"Down landed on divider rows {sorted(set(seen) & headers)}")
+        assert seen[-1] in seen[:-1], (
+            "Down never wrapped — the last result is a dead end")
+
+        for _ in range(dialog._list.count() + 2):
+            _press(dialog, Qt.Key.Key_Up, qapp)
+            assert dialog._list.currentRow() not in headers, (
+                "Up landed on a divider")
+
+        # ...and Enter runs whatever is selected
+        _press(dialog, Qt.Key.Key_Return, qapp)
+        assert dialog.chosen_item is not None, (
+            "Enter did not launch the selected result")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
+def test_the_palette_states_its_own_bindings(window, qapp):
+    """The app's only keyboard-first surface shipped with no statement of
+    what its keys do — Up/Down/Enter/Escape all worked and nothing said
+    so, which makes a power feature discoverable by guessing."""
+    from PySide6.QtWidgets import QLabel
+
+    dialog = _palette(window)
+    dialog.show()
+    settle(qapp, 80)
+    try:
+        captions = " ".join(w.text() for w in dialog.findChildren(QLabel))
+        for word in ("navigate", "run", "close"):
+            assert word in captions, (
+                f"the palette's hint bar does not mention {word!r}")
+        dialog._search.setText("re")
+        settle(qapp, 80)
+        assert "result" in dialog._count.text(), (
+            "the palette does not report how many results it found")
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+
+def test_every_floating_list_marks_selection_at_one_weight(qapp):
+    """A row in a dropdown and a row in the command palette are the same
+    object: the entry the list is currently reporting.
+
+    Until v15.1 one function drew both, so they could not disagree. The
+    palette's rows became item WIDGETS in that change — they have to be,
+    to align a hint to the right edge of the row — which means its sheet
+    can no longer compose menu_item_qss, and the weights would have been
+    a copy from the moment they were written. They come off named
+    constants instead, and this is what says so.
+    """
+    for mode in ("dark", "light"):
+        t = TH.ThemeManager(mode, None).t
+        tint = TH.alpha(t["accent"], TH.ROW_SELECT_TINT)
+        line = TH.alpha(t["accent"], TH.ROW_SELECT_LINE)
+        for name, qss in (("palette", TH.palette_list_qss(t)),
+                          ("menu", TH.menu_item_qss(t, "QListWidget::item"))):
+            assert tint in qss, (
+                f"{mode}/{name} does not fill a selected row at "
+                f"ROW_SELECT_TINT ({TH.ROW_SELECT_TINT})")
+            assert line in qss, (
+                f"{mode}/{name} does not outline a selected row at "
+                f"ROW_SELECT_LINE ({TH.ROW_SELECT_LINE})")
 
 
 def test_the_hover_pill_never_outweighs_a_real_selection(qapp):
@@ -1385,16 +1780,22 @@ def test_the_nav_label_clears_the_plaque_it_sits_beside():
 #: to be argued for here before it can ship:
 #:
 #:    22  status/state chip     26  rail tool, Stop button
-#:    24  update badge          28  drawer chevron
-#:    30  chip-strip pill       32  inline drive selector
-#:    34  the page accent rail  44  the Activity rail itself
-#:    46  nav row, search field 50  wizard link row
-#:    96  dashboard hero       172  live console
-#:   200  a scrolled sub-list
+#:    24  update badge          28  drawer chevron, rail button
+#:    30  caption button        34  the page accent rail
+#:    44  the Activity rail     46  nav row, search field
+#:    50  wizard link row       96  dashboard hero
+#:   172  live console         200  a scrolled sub-list
 #:
 #: Deliberately pruned to what the tree actually uses — a list carrying
 #: values nothing sets is a list that exempts the next stray by accident.
-_CONTROL_HEIGHT_EXEMPT = {22, 24, 26, 28, 30, 32, 34, 44, 46, 50,
+#:
+#: v15 RETIRED 32 AND RE-LABELLED 30. The two 32px entries were the
+#: category page's filter combo and the Storage Analyzer's drive picker —
+#: dropdowns, which are operable controls and now sit on the scale with
+#: every other one. 30 survives for exactly one object: the title bar's
+#: 40x30 caption buttons, whose geometry is Windows', not ours. (The
+#: chip-strip pill it used to name is CONTROL_H now; see widgets._CHIP_H.)
+_CONTROL_HEIGHT_EXEMPT = {22, 24, 26, 28, 30, 34, 44, 46, 50,
                           96, 172, 200}
 
 

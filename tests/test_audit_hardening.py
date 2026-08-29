@@ -934,8 +934,21 @@ def test_closing_settles_all_three_background_threads(window, qapp, monkeypatch)
         "window after settling — Qt would destroy them mid-run, which is "
         "qFatal (an abort), not an exception")
 
+    # DRAINING UNTIL IT STOPS, WITHOUT ASSUMING THE WRAPPER SURVIVES.
+    # `thread` is a Python handle on an object the app owns and is in the
+    # middle of tearing down: settling schedules its deleteLater, and the
+    # very drain loop below is what delivers it. Asking a dangling wrapper
+    # `isRunning()` then raises "Internal C++ object already deleted" — the
+    # thread having gone away IS the condition this loop is waiting for,
+    # so the exception is the success case arriving early rather than a
+    # failure. Observed as an intermittent RuntimeError here under load.
     deadline = time.time() + 10.0
-    while thread.isRunning() and time.time() < deadline:
+    while time.time() < deadline:
+        try:
+            if not thread.isRunning():
+                break
+        except RuntimeError:
+            break          # deleted out from under us: settled, and gone
         _drain(qapp, 1)
     _drain(qapp, 2)
 

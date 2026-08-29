@@ -6,7 +6,7 @@ running app rather than by looking at it, which is the same standard the
 layout and palette suites hold:
 
   * the card status badges tinted themselves in their own hue, the exact
-    "badge-tint trap" strip_status_qss documents and avoids, and it cost
+    "badge-tint trap" the palette's status tokens document, and it cost
     them AA — 4.02:1 in light mode on a state-tinted card, on the smallest
     type in the product;
   * the masthead tagline did not elide, it CLIPPED, losing 40px mid-glyph
@@ -140,7 +140,7 @@ def test_every_scrolling_surface_composes_the_shared_scrollbar():
     t = TH.tokens("dark")
     shared = TH.scrollbar_qss(t)
     for name in ("scroll_area_qss", "console_qss", "chip_strip_qss",
-                 "command_list_qss"):
+                 "palette_list_qss"):
         built = getattr(TH, name)(t)
         assert "QScrollBar::handle:vertical" in built, (
             f"{name} defines no scrollbar at all")
@@ -177,12 +177,22 @@ def test_the_scroll_corner_is_never_platform_grey(mode):
 #  3. INPUT FIELDS — ONE HOVER, ONE FOCUS
 # ============================================================
 #: (builder, needs an accent argument)
+#:
+#: v15.1 renamed the palette's entry. `command_input_qss` styled a bare
+#: QLineEdit; the field is a bordered FRAME around a chromeless input now,
+#: so that it can carry a leading search mark (see palette_field_qss).
 _FIELDS = [
     ("sidebar_search_qss", False),
     ("filter_combo_qss", True),
     ("catalog_search_qss", True),
-    ("command_input_qss", False),
+    ("palette_field_qss", False),
 ]
+
+#: How a field is allowed to say "the keyboard is in me". A pseudo-state
+#: for the fields that ARE the focusable widget; a dynamic property for
+#: the one that is a container around it, where QSS has no parent
+#: selector and a :focus rule would light a border nobody draws.
+_FOCUS_MARKS = (":focus", '[focused="true"]')
 
 
 @pytest.mark.parametrize("name,accented", _FIELDS)
@@ -195,7 +205,8 @@ def test_every_field_answers_both_the_pointer_and_the_keyboard(name, accented, m
         f"{name} never acknowledges the pointer — the defect the Ctrl+K "
         "palette shipped with")
     if name != "sidebar_search_qss":     # a button, focus is not its state
-        assert ":focus" in qss, f"{name} does not mark keyboard focus"
+        assert any(mark in qss for mark in _FOCUS_MARKS), (
+            f"{name} does not mark keyboard focus by any of {_FOCUS_MARKS}")
 
 
 @pytest.mark.parametrize("name,accented", _FIELDS)
@@ -757,3 +768,77 @@ class TestFrostedBackdrop:
         assert dialog._frost is None
         dialog.deleteLater()
         qapp.processEvents()
+
+
+# ============================================================
+#  8. THE FLAT-SURFACE RULE (v15)
+# ============================================================
+#: Every QSS factory that paints a real SURFACE — something a user reads
+#: text off, rather than a chip, a rule or a control. These are the sheets
+#: that carried `glass_fill`.
+_SURFACE_FACTORIES = [
+    ("card",         lambda t: TH.card_qss(t, t["accent"])),
+    ("card/danger",  lambda t: TH.card_qss(t, t["accent"], danger=True)),
+    ("dialog panel", lambda t: TH.dialog_panel_qss(t, t["accent"])),
+    ("hero banner",  lambda t: TH.hero_banner_qss(t)),
+    ("toast",        lambda t: TH.toast_qss(t, t["accent"])),
+    ("sidebar",      lambda t: TH.sidebar_qss(t)),
+    ("content",      lambda t: TH.content_qss(t)),
+]
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+@pytest.mark.parametrize("name,factory", _SURFACE_FACTORIES,
+                         ids=[n for n, _ in _SURFACE_FACTORIES])
+def test_no_surface_paints_a_gradient_across_its_own_face(mode, name, factory):
+    """A SURFACE IS ONE FLAT COLOUR (theme.py, the note above `blend`).
+
+    Through v14 every one of these declared its fill as a `glass_fill` — a
+    qlineargradient running a white sheen down into the base over the top
+    13-20% of the widget. Consistent, and still the single loudest thing on
+    a category page: fourteen cards is fourteen luminance ramps on the
+    exact surfaces whose job is to be a calm plate for text.
+
+    The elevation those ramps were reaching for is bought twice over at the
+    EDGE, where it costs the plate nothing — the 1px hairline, plus the
+    painted top sheen and multi-layer cast shadow (test_elevation measures
+    both). So a gradient in a surface fill is not a tuning choice any more;
+    it is the frosted material coming back.
+
+    The shell is deliberately absent: its gradient IS the canvas, it is
+    pinned by test_contract.test_the_canvas_is_the_specified_obsidian_ramp,
+    and nothing reads text directly off it.
+    """
+    qss = factory(TH.ThemeManager(mode, None).t)
+    offenders = [line.strip() for line in qss.splitlines()
+                 if "gradient" in line and "background" in line]
+    assert not offenders, (
+        f"{mode}/{name} paints a gradient across its own face: {offenders}")
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_elevated_surface_is_the_one_the_spec_names(mode):
+    """Two dark neutrals, and the card is the second of them.
+
+    v14 spent the elevated-surface value (#121418) on the CONTAINERS, so
+    the sidebar and content frame sat at card brightness and the cards had
+    to climb above them — three tones for a language that has two, with the
+    card in the wrong place. The stack is pinned here rather than described
+    in a comment because the failure mode is a container quietly creeping
+    back up to meet the card.
+    """
+    t = TH.ThemeManager(mode, None).t
+    canvas = _rgb(t["bg_solid"])
+    container = _over(TH._parse_color(t["overlay"]), canvas)
+    card = _over(TH._parse_color(t["card"]), canvas)
+    if mode == "dark":
+        assert card == (0x12, 0x14, 0x18), (
+            f"the dark card is {card}, not the specified #121418")
+        assert _lum(card) > _lum(container) > _lum(canvas), (
+            f"the dark stack is not canvas -> container -> card "
+            f"({canvas} / {container} / {card})")
+    else:
+        assert card == (255, 255, 255), (
+            f"the light card is {card}, not pure white")
+        assert _lum(card) > _lum(container), (
+            "the light card no longer rises off its container")

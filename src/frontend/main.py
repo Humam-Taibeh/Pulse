@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import platform
 import subprocess
 import sys
 import time
@@ -68,17 +67,18 @@ from frontend.menu_structure import (  # noqa: E402
 )
 from frontend.widgets import (  # noqa: E402
     ActivationStatusDialog, ActivityDrawer,
-    BreathingIcon,
+    BrandMark,
     CloseConfirmDialog, CommandPalette, ConfirmDialog, DepthCard,
     ContextMenuDialog, DnsSwitcherDialog, ElidedCaption,
-    ElevatePromptDialog, GlassCard, HealthReportDialog, HubDialog,
+    ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
+    HubDialog,
     NavButton,
     NavPill, NoticeDialog, OfficeWizardDialog, PlaybookDialog,
     PowerHealthDialog,
     PulseDialog, RestorePointDialog, RevertChoiceDialog,
     ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
     SoftwareCatalogDialog,
-    StartupManagerDialog, StorageAnalyzerDialog, TitleBar,
+    StartupManagerDialog, StatusRail, StorageAnalyzerDialog, TitleBar,
     ToolInstallWizardDialog, UpdateBadge, UpdateCenterDialog,
     refit_dialog,
 )
@@ -162,99 +162,6 @@ def _locate_icon() -> str | None:
     return resources.find_resource("assets/pulse.ico")
 
 
-# ============================================================
-#  SYSTEM INSIGHTS — cheap, dependency-free hardware snapshot
-# ============================================================
-def _system_insights() -> list[tuple[str, str, str]]:
-    """(icon, value, caption) triplets for the Welcome dashboard.
-    Registry + kernel32 reads only — resolves in microseconds, so it is
-    safe to call on the GUI thread during construction."""
-    insights: list[tuple[str, str, str]] = []
-
-    # -- OS -------------------------------------------------
-    if sys.platform == "win32":
-        build = sys.getwindowsversion().build
-        name = "Windows 11" if build >= 22000 else "Windows 10"
-        try:
-            edition = platform.win32_edition() or ""
-        except OSError:
-            edition = ""
-        insights.append(("🪟", f"{name} {edition}".strip(), f"Build {build}"))
-    else:  # dev on non-Windows
-        insights.append(("🪟", platform.system(), platform.release()))
-
-    # -- CPU ------------------------------------------------
-    cores = os.cpu_count() or 0
-    cpu_name = "Logical processors"
-    if sys.platform == "win32":
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
-                raw = str(winreg.QueryValueEx(key, "ProcessorNameString")[0])
-            cpu_name = " ".join(raw.split())
-            if len(cpu_name) > 26:
-                cpu_name = cpu_name[:25].rstrip() + "…"
-        except OSError:
-            pass
-    insights.append(("🧠", f"{cores} Cores", cpu_name))
-
-    # -- RAM ------------------------------------------------
-    ram_value, ram_caption = "—", "Installed memory"
-    if sys.platform == "win32":
-        try:
-            class _MEMORYSTATUSEX(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", ctypes.c_uint32),
-                    ("dwMemoryLoad", ctypes.c_uint32),
-                    ("ullTotalPhys", ctypes.c_uint64),
-                    ("ullAvailPhys", ctypes.c_uint64),
-                    ("ullTotalPageFile", ctypes.c_uint64),
-                    ("ullAvailPageFile", ctypes.c_uint64),
-                    ("ullTotalVirtual", ctypes.c_uint64),
-                    ("ullAvailVirtual", ctypes.c_uint64),
-                    ("ullAvailExtendedVirtual", ctypes.c_uint64),
-                ]
-
-            status = _MEMORYSTATUSEX()
-            status.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                ram_value = f"{status.ullTotalPhys / 2**30:.1f} GB"
-                ram_caption = f"{status.dwMemoryLoad}% in use"
-        except OSError:
-            pass
-    insights.append(("💾", ram_value, ram_caption))
-    return insights
-
-
-def _system_spec_line() -> str:
-    """"Windows 11 Pro · Build 26200 · 16 cores · 32.0 GB" — the machine's
-    static identity as one caption.
-
-    v1.0 RC: this is what remains of BOTH the removed system status strip
-    and the System Pulse card that replaced it. The strip rendered these
-    three facts as a 66px band of plaques; the card then rendered them as
-    a subtitle over three meter bars. Neither earned its height on a
-    dashboard whose job is to launch operations, so the facts now live in
-    the one place they cost nothing — a single caption on the footer rule
-    (see WelcomePage's status line).
-    """
-    parts = []
-    for _icon, value, caption in _system_insights():
-        value = (value or "").strip()
-        caption = (caption or "").strip()
-        if not value or value == "—":
-            continue
-        # the OS cell carries its build in the caption; the others carry a
-        # descriptor ("Logical processors", "62% in use") that the spec
-        # line does not want — keep only the build.
-        if caption.lower().startswith("build"):
-            parts.append(f"{value} · {caption}")
-        else:
-            parts.append(value)
-    return "  ·  ".join(parts) if parts else "System details unavailable"
-
-
 def _focus_neighbour(cards: list, cols: int, current, direction: str) -> bool:
     """Move keyboard focus to `current`'s neighbour in a `cols`-wide grid.
 
@@ -293,36 +200,64 @@ def _focus_neighbour(cards: list, cols: int, current, direction: str) -> bool:
 #  PAGES
 # ============================================================
 class WelcomePage(QWidget):
-    """Landing view — a launcher, not a splash and not a status console:
+    """SYSTEM HEALTH & QUICK HUB — the landing view, and a control centre
+    rather than a splash:
 
-        ┌──────────────────────────────────────────────────────────┐
-        │ ✦  PULSE                    Engine Ready · Administrator │  hero banner
-        │    Windows Orchestration Toolkit                         │
-        │                                                          │
-        │ QUICK ACTIONS ─────────────────────────────────────────  │
-        │ ┌────────┐ ┌────────┐ ┌────────┐                         │
-        │ │ action │ │ action │ │ action │   … 6, each RUNS         │  the centerpiece
-        │ └────────┘ └────────┘ └────────┘                         │
-        │ ────────────────────────────────────────────────────────  │
-        │ Windows 11 Pro · 16 cores · 32 GB      CPU 6% · Mem 47%  │  status line
-        └──────────────────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────┐
+        │ ✦  PULSE                                             │  masthead
+        │    Windows Orchestration Toolkit                     │
+        │                                                      │
+        │ SYSTEM HEALTH ────────────────────────────────────── │
+        │ ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐              │  the KPI row
+        │ │ 5%    │ │ 47%   │ │466 GB │ │ 3     │              │
+        │ │ CPU   │ │MEMORY │ │ FREE  │ │ DUE   │              │
+        │ └───────┘ └───────┘ └───────┘ └───────┘              │
+        │                                                      │
+        │ QUICK ACTIONS ────────────────────────────────────── │
+        │ ┌──────────┐ ┌──────────┐ ┌──────────┐               │
+        │ │  action  │ │  action  │ │  action  │               │  … 6, each RUNS
+        │ └──────────┘ └──────────┘ └──────────┘               │
+        │ ──────────────────────────────────────────────────── │
+        │                         Administrator · Engine ready │  status line
+        └──────────────────────────────────────────────────────┘
 
-    THREE elements, and the middle one owns the canvas. The QUICK ACTIONS
-    band is the centerpiece and — critically — is NOT a repeat of the
-    sidebar. The left rail already navigates the modules; duplicating them
-    here as a grid was redundant. Instead the dashboard surfaces the
-    highest-value single OPERATIONS (one per module, full accent spectrum)
-    as live cards that RUN on click (action_requested), giving the home
-    screen a distinct control-center purpose the nav can't: do the most
-    common things instantly, without drilling into a module.
+    FOUR ELEMENTS, AND THE MIDDLE TWO ARE THE PAGE. The QUICK ACTIONS band
+    is still the centerpiece and still NOT a repeat of the sidebar: the
+    left rail navigates modules, so duplicating them here as a grid would
+    be redundant. Instead the dashboard surfaces the highest-value single
+    OPERATIONS as live cards that RUN on click (action_requested).
 
-    v1.0 RC: everything that was not that got cut. A telemetry ribbon, a
-    System Pulse meter card and a Maintenance & Attention list had each
-    been added to "fill" the page, and between them they took ~210px to
-    restate facts the Health Report and the cards' own ACTION DUE badges
-    already carry. What survives of all three is the one-line status
-    footer — the page is emptier on purpose, and the actions read louder
-    for it."""
+    v15 PUTS A HEALTH ROW BACK ABOVE THEM, and it is worth saying why,
+    because the v1.0 RC pass deliberately deleted one. What it removed was
+    a 210px band — a telemetry ribbon, a System Pulse meter card and a
+    Maintenance & Attention list — that between them restated facts the
+    Health Report and the cards' own ACTION DUE badges already carried,
+    and cost a third of the canvas to do it. Everything that critique said
+    is still true, and none of it argues for the empty page it left:
+    with six short cards centred in a void, the dashboard read as a view
+    that had failed to finish loading.
+
+    So the band comes back at a QUARTER of the height and answers only
+    what nothing else on this screen can:
+
+      * CPU / MEMORY / STORAGE are the machine's live state, and a
+        launcher for maintenance operations that cannot tell you whether
+        the machine needs maintenance is missing its own premise. As four
+        figures with meters they cost ~84px, against the 158px two cards
+        of meter bars used to.
+      * ACTIONS DUE is the count of badged, overdue operations ACROSS
+        EVERY MODULE — which is precisely the fact the old "Maintenance &
+        Attention" list was criticised for duplicating per-card, stated
+        once instead of enumerated. It is the number that decides whether
+        to open a module at all.
+
+    The status line beneath the actions keeps the machine's static
+    identity and gains the SESSION's: whether Pulse is elevated and
+    whether the engine is present. Those two facts used to be a pair of
+    outlined pills crowding the masthead's right edge, where they competed
+    with the wordmark for the top of the page; as a caption on the footer
+    rule they sit with the other things that are true of this run.
+    """
 
     #: Narrowest a Quick Action card may be laid out at, and therefore what
     #: decides the column count (see _columns_for).
@@ -340,20 +275,48 @@ class WelcomePage(QWidget):
     #: resolves to two columns and scrolls, which is correct: at 620px tall
     #: no arrangement of six cards fits, and scrolling beats crushing.
     ACTION_MIN_W = 224
-    #: v14: 3 -> 6, GOVERNED BY THE EVEN-SPLIT RULE BELOW rather than used
-    #: raw. A fixed 3 is the right composition for six actions at any width
-    #: the app is normally opened at, and the wrong one from about 1440p
-    #: up, where three columns stretch each quick action past 500px and the
-    #: dashboard reads as six placards instead of a launcher. Six is the
-    #: other composition that is actually balanced — one full row.
-    ACTION_MAX_COLS = 6
+    #: v15.1 RETURNS IT TO 3, and the reason the v14 value existed is the
+    #: reason it can now go: it was 6 because "three columns stretch each
+    #: quick action past 500px from about 1440p up, and the dashboard
+    #: reads as six placards instead of a launcher". True of the width
+    #: alone, and answered by making each card wider rather than by
+    #: doubling how many there are: six across at 2560px maximised gave a
+    #: 340px card whose own title wrapped to two lines, which is the
+    #: crowded half of the very same defect.
+    #:
+    #: 2x3 IS THE COMPOSITION, at every width the app can be opened at,
+    #: and stating it is the whole job this constant does.
+    #:
+    #: A CONTENT MEASURE WAS TRIED HERE AND REMOVED, which is worth
+    #: recording because it is the obvious second fix and it is the wrong
+    #: one. Capping the dashboard's column at 3 x 416 + gutters and
+    #: centring it does stop the crowding — and it re-introduces, at
+    #: exactly the window sizes this app is used at, the defect the page
+    #: padding was just unified to remove: the column jumps sideways when
+    #: you open a module, because a category page still fills the width
+    #: and the dashboard no longer does. Rendered side by side at 2200px
+    #: the capped version also simply looks worse: a dense block of cards
+    #: with 400px of empty canvas either side, inside a bordered frame
+    #: that goes all the way to the edge.
+    #:
+    #: Three columns filling the width is what the rest of the app does,
+    #: and at 2200px it lands each action at ~530px — wide, but a card
+    #: whose description is one short line does not suffer for it, and
+    #: nothing wraps.
+    ACTION_MAX_COLS = 3
 
-    #: Ceiling on the air between the masthead and the QUICK ACTIONS header
-    #: — see the note where it is spent. One section break (SPACE["xxl"])
-    #: plus a card gutter: enough that the block is not welded to the
-    #: banner, short enough that the header still reads as belonging to the
-    #: page rather than floating in the middle of it.
-    ACTION_TOP_AIR = TH.SPACE["xxl"] + TH.SPACE["xl"]
+    #: Ceiling on the air between the health band and the QUICK ACTIONS
+    #: header — see the note where it is spent.
+    #:
+    #: v15.1: one clean section break, down from a section break PLUS a
+    #: card gutter (56px). The larger figure was solved when this stretch
+    #: was the only thing standing between the masthead and a header 190px
+    #: below it, and it had to be generous or the page read as unfinished.
+    #: With the health band occupying that slot the stretch stopped holding
+    #: the page together and went back to being what it is named for: the
+    #: step between two sibling sections, which is SPACE["xxl"] everywhere
+    #: else in the app.
+    ACTION_TOP_AIR = TH.SPACE["xxl"]
 
     #: Width the masthead tagline may ask for before it starts eliding.
     #: MEASURED as the natural width of the tagline set below, at the
@@ -407,6 +370,29 @@ class WelcomePage(QWidget):
         "CreateRestorePoint": "A safety checkpoint before big changes.",
     }
 
+    #: The KPI row, in reading order: (key, label). Sentence-cased at the
+    #: source and upper-cased by the tile, so the copy stays readable here
+    #: and the row stays a set of ALL-CAPS labels on screen.
+    #:
+    #: FOUR, and four is a composition rather than a shortlist: three
+    #: leaves a gap at the right of a row the quick-action grid fills
+    #: exactly, and five squeezes a 26px figure under 160px of tile at the
+    #: app's minimum width. The first three are the machine's live
+    #: pressure; the fourth is the only thing on this page that is about
+    #: PULSE rather than about Windows, which is why it closes the row.
+    HEALTH_TILES = [
+        ("cpu",     "CPU load"),
+        ("memory",  "Memory"),
+        ("storage", "System drive"),
+        ("due",     "Actions due"),
+    ]
+
+    #: A health tile's height. Enough for a 26px figure over a 10px label
+    #: with the meter beneath, and NOT enough to be mistaken for a card —
+    #: which matters, because the quick actions directly below it are
+    #: cards and clicking one of them does something.
+    TILE_H = 84
+
     # (item, card) -> PulseApp.request_task — the card rides along so a
     # dashboard action gets the same running-glow + ok/err flash a category
     # card gets (v9.4); object (not GlassCard) keeps this module import-light.
@@ -417,10 +403,28 @@ class WelcomePage(QWidget):
         self._action_cards: list[GlassCard] = []
         self._cols = 0
 
+        # THE SAME ROOT PADDING A CategoryPage USES, and that is the whole
+        # point of the number rather than a coincidence: both pages are
+        # swapped into the same QStackedWidget inside the same content
+        # frame, so any difference here moves the entire content column
+        # sideways the moment you open a module. It did: measured at
+        # 1500px wide, this page's column started at x=347 against a
+        # category page's x=331. The frame owns the page's air (see
+        # PulseApp._build_ui); a page adds only the sliver its own
+        # scroll area needs.
+        # THE SAME ROOT PADDING A CategoryPage USES, and that is the whole
+        # point of the number rather than a coincidence: both pages are
+        # swapped into the same QStackedWidget inside the same content
+        # frame, so any difference here moves the entire content column
+        # sideways the moment you open a module. It did: measured at
+        # 1500px wide, this page's column started at x=347 against a
+        # category page's x=331. The frame owns the page's air (see
+        # PulseApp._build_ui); a page adds only the sliver its own scroll
+        # area needs.
         root = QVBoxLayout(self)
-        root.setContentsMargins(TH.SPACE["xl"], TH.SPACE["lg"],
-                                TH.SPACE["xl"], TH.SPACE["lg"])
-        root.setSpacing(TH.SPACE["md"])
+        root.setContentsMargins(TH.SPACE["sm"], TH.SPACE["sm"],
+                                TH.SPACE["sm"], TH.SPACE["sm"])
+        root.setSpacing(TH.SPACE["lg"])
 
         # ============ 1. HERO BANNER — identity masthead ==================
         # v1.0: a clean identity band. The Engine/Admin status chips that
@@ -438,7 +442,7 @@ class WelcomePage(QWidget):
         hb.setContentsMargins(TH.SPACE["xl"], 0, TH.SPACE["xl"], 0)
         hb.setSpacing(TH.SPACE["lg"])
 
-        self._logo = BreathingIcon("✦", size=58, accent=t["accent"])
+        self._logo = BrandMark("✦", size=58, accent=t["accent"])
         hb.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         id_col = QVBoxLayout()
@@ -465,22 +469,21 @@ class WelcomePage(QWidget):
         hb.addLayout(id_col)
         hb.addStretch()
 
-        # Engine / admin state pills, right-anchored in the masthead.
-        # v1.0 REDUNDANCY PASS: these lived in a separate 66px "system
-        # status strip" that ALSO carried OS/CPU/RAM — the same machine
-        # facts the System Pulse card below reports live. One set of
-        # system stats, in one place: the strip is gone, its two session
-        # pills come back here (where they sat before v1.0), and every
-        # machine metric now belongs to System Pulse.
-        self._status_pills: list[tuple[QLabel, bool]] = []
-        for text, ok in (
-            ("Engine Ready" if engine_ok else "Engine Missing", engine_ok),
-            ("Administrator" if is_admin else "Not Elevated", is_admin),
-        ):
-            pill = QLabel(text)
-            pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._status_pills.append((pill, ok))
-            hb.addWidget(pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        # v15: THE MASTHEAD IS A WORDMARK AND NOTHING ELSE. Two outlined
+        # state pills used to sit at its right edge — "Engine Ready" and
+        # "Administrator" — and they had already been moved twice looking
+        # for a home (into a 66px status strip in v1.0, back out of it in
+        # the v1.0 RC pass). The reason they never settled is that they
+        # are not identity: they are two facts about THIS RUN, rendered as
+        # the loudest chrome on the page, competing with the app's own
+        # name for the top-right corner.
+        #
+        # They now report where the run's other facts are — the footer
+        # status line below, as a caption — and the elevation half of the
+        # pair also has a permanent home in the sidebar's status rail
+        # (widgets.StatusRail). Neither place shouts.
+        self._engine_ok = engine_ok
+        self._is_admin = is_admin
         root.addWidget(self._hero)
 
         # ============ 2. QUICK ACTIONS ====================================
@@ -520,6 +523,34 @@ class WelcomePage(QWidget):
         # the header stays with the masthead at every size, and everything
         # left over falls below the last card — where it is the page's
         # bottom margin, closed by the footer rule.
+        # ---- SYSTEM HEALTH: the KPI row --------------------------------
+        # It sits FIRST, directly under the masthead and hard against it.
+        # A dashboard's state belongs above its controls: you read what the
+        # machine is doing, then decide what to do about it, and reversing
+        # that order turns the health row into a footnote under the thing
+        # it is supposed to inform.
+        #
+        # It also does the job the centring stretch below used to be doing
+        # on its own. That stretch exists because deleting the old health
+        # band left ~190px of nothing between the masthead and the section
+        # header, and a gap that size reads as a missing element rather
+        # than as margin — the eye looks for what used to be there. With
+        # a real band back in the slot, the stretch is no longer holding
+        # the page together; it only tunes the air BETWEEN the two bands.
+        host.addLayout(self._band_head("SYSTEM HEALTH", health=True))
+
+        self._tile_row = tiles = QHBoxLayout()
+        tiles.setContentsMargins(0, TH.SPACE["lg"], 0, 0)
+        tiles.setSpacing(TH.SPACE["lg"])
+        self._tiles: dict[str, HealthTile] = {}
+        for key, caption in self.HEALTH_TILES:
+            tile = HealthTile(caption, t)
+            tile.setFixedHeight(self.TILE_H)
+            self._tiles[key] = tile
+            tiles.addWidget(tile, 1)
+        host.addLayout(tiles)
+
+        # ---- QUICK ACTIONS ---------------------------------------------
         top_air = QWidget()
         top_air.setSizePolicy(QSizePolicy.Policy.Minimum,
                               QSizePolicy.Policy.Expanding)
@@ -528,25 +559,24 @@ class WelcomePage(QWidget):
         # says a widget is WILLING to grow; a QBoxLayout hands its surplus
         # to items with a stretch factor first, so next to the addStretch
         # below this stayed at its zero sizeHint and welded the header to
-        # the masthead — the opposite failure, reached in one line.
+        # the band above it — the opposite failure, reached in one line.
         host.addWidget(top_air, 1)
 
-        head = QHBoxLayout()
-        head.setSpacing(TH.SPACE["lg"])
-        self._section = QLabel("QUICK ACTIONS")
-        head.addWidget(self._section)
-        self._rule = QFrame()
-        self._rule.setFixedHeight(1)
-        head.addWidget(self._rule, 1)
-        host.addLayout(head)
+        host.addLayout(self._band_head("QUICK ACTIONS", health=False))
 
         self._grid = QGridLayout()
-        # xl gutters, not the lg a category page uses: those grids carry up
-        # to twelve cards and want density, this one carries six on an
-        # otherwise empty canvas and wants air. The header gap matches, so
-        # the title sits one gutter above its cards.
-        self._grid.setContentsMargins(0, TH.SPACE["xl"], 0, 0)
-        self._grid.setSpacing(TH.SPACE["xl"])
+        # THE SAME GUTTER EVERY CARD GRID IN THE APP USES. It was `xl`,
+        # on the argument that six cards on an otherwise empty canvas want
+        # more air than a category page's twelve — which was true of the
+        # empty canvas and stopped being true the moment the health row
+        # landed above it. What is left of that argument is three card
+        # grids at three gutters (12 here, 24 there, 16 on a module page),
+        # which is the "almost aligned" feel the scale exists to remove.
+        # The header gap matches the gutter, so a band title sits exactly
+        # one step above the cards it names — the same relationship a
+        # category page's band headers have (see _band_header).
+        self._grid.setContentsMargins(0, TH.SPACE["lg"], 0, 0)
+        self._grid.setSpacing(TH.SPACE["lg"])
         host.addLayout(self._grid)
         host.addStretch(1)
         # the grid re-columns off its OWN width — see ResponsiveGridHost
@@ -600,7 +630,20 @@ class WelcomePage(QWidget):
         self._scroll.viewport().setStyleSheet("background: transparent;")
         root.addWidget(self._scroll, 1)
 
-        # ============ 3. STATUS LINE — one rule, two captions ==============
+        # ============ 3. STATUS LINE — one rule, one caption ==============
+        # v15.1 REMOVES THE MACHINE SPEC. This rule used to carry
+        # "Windows 11 Professional · Build 26200 · 12 Cores · 31.8 GB" on
+        # its left — four facts, none of which changes while the app is
+        # open, none of which any Pulse operation depends on, and three of
+        # which the health row above now reports LIVE and in the units
+        # that matter (a percentage of the RAM, not its size). What was
+        # left was a build number: the single most technical string in the
+        # product, sitting at the bottom of its most-looked-at screen.
+        #
+        # The rule stays, and so does the one caption that reports
+        # something the user can act on. A closing hairline with a quiet
+        # right-aligned status is what a status line is; the spec was a
+        # readout that had nowhere better to be.
         # v1.0 RC LAYOUT PASS. This slot used to be a 158px band of two
         # cards: SYSTEM PULSE (three meter bars) and MAINTENANCE &
         # ATTENTION (a list of overdue routines). Together they cost ~210px
@@ -622,14 +665,16 @@ class WelcomePage(QWidget):
         foot = QHBoxLayout()
         foot.setContentsMargins(0, TH.SPACE["xs"], 0, 0)
         foot.setSpacing(TH.SPACE["lg"])
-        self._spec = QLabel(_system_spec_line())
-        foot.addWidget(self._spec)
         foot.addStretch()
-        # Live load as text, not bars. At caption scale a meter bar reads
-        # as decoration; the number is the whole payload, and three of
-        # them fit on the row the spec line already occupies.
-        self._load = QLabel("")
-        foot.addWidget(self._load)
+        # THE SESSION, in one caption. This slot used to carry the live
+        # CPU / memory / disk figures as text; those are the health row's
+        # job now, and repeating them here would be the same number twice
+        # on one screen at two sizes. What lands in the space they leave
+        # is the pair of facts the masthead's outlined pills used to shout
+        # — is the engine present, is this process elevated — at the
+        # weight a fact about the current run actually deserves.
+        self._session = QLabel("")
+        foot.addWidget(self._session)
         root.addLayout(foot)
 
         self._t = t
@@ -644,6 +689,25 @@ class WelcomePage(QWidget):
 
         self.apply_theme(t)
 
+    # -- section bands -------------------------------------------------
+    def _band_head(self, title: str, health: bool) -> QHBoxLayout:
+        """A section label with a rule running to the right margin — the
+        one header shape this page uses, built once so its two bands
+        cannot drift apart the way the app's headers did before the type
+        and spacing scales existed."""
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["lg"])
+        label = QLabel(title)
+        rule = QFrame()
+        rule.setFixedHeight(1)
+        row.addWidget(label)
+        row.addWidget(rule, 1)
+        if health:
+            self._health_section, self._health_rule = label, rule
+        else:
+            self._section, self._rule = label, rule
+        return row
+
     # -- system pulse lifecycle: sample only while the page is shown ----
     def showEvent(self, e):
         super().showEvent(e)
@@ -655,12 +719,53 @@ class WelcomePage(QWidget):
         self._pulse_timer.stop()
 
     def _tick_pulse(self):
-        s = self._pulse_sampler.sample()
-        cpu = s["cpu"]
-        cpu_text = f"{round(cpu * 100)}%" if cpu is not None else "—"
-        self._load.setText(
-            f"CPU {cpu_text}   ·   Memory {s['mem_text']}"
-            f"   ·   System drive {s['disk_text']}")
+        """Re-report the three live tiles. Kernel32 reads on a 2 s timer
+        that runs ONLY while this page is visible (showEvent/hideEvent) —
+        the same suspend discipline every painted animation in the app
+        follows, applied to data instead of pixels."""
+        sample = self._pulse_sampler.sample()
+
+        cpu = sample["cpu"]
+        self._tiles["cpu"].set_value(
+            f"{round(cpu * 100)}%" if cpu is not None else "—", cpu)
+
+        mem = sample["mem"]
+        self._tiles["memory"].set_value(
+            f"{round(mem * 100)}%" if mem is not None else "—", mem)
+        # the absolute figure is what the percentage does not say, and it
+        # is the reason the tile carries a tooltip rather than a second
+        # line: 47% of 8 GB and 47% of 64 GB are different situations.
+        self._tiles["memory"].setToolTip(
+            f"{sample['mem_text']} in use" if sample["mem_text"] else "")
+
+        disk = sample["disk"]
+        self._tiles["storage"].set_value(sample["disk_text"] or "—", disk)
+        self._tiles["storage"].setToolTip(
+            f"{sample['disk_text']} free on the system drive"
+            if sample["disk_text"] else "")
+
+    def set_pending_actions(self, due: int, total: int):
+        """Report how many operations across the WHOLE app are overdue.
+
+        Fed from PulseApp._refresh_card_badges, which is the one place the
+        state probe and the run history are reconciled into a badge — so
+        this count can never disagree with the ACTION DUE chips the cards
+        themselves are wearing, which is exactly what a second source
+        would eventually do.
+
+        The tone is not a threshold on the number: one overdue routine is
+        already the answer to "is there anything to do", so the tile is
+        emerald at zero and amber at anything above it. The METER still
+        carries a real ratio (due out of everything that can be due), so
+        the length says how much of the app is waiting even though the
+        colour is binary.
+        """
+        tile = self._tiles["due"]
+        tile.set_value(str(due), (due / total) if total else None)
+        tile.set_tone("ok" if due == 0 else "warn")
+        tile.setToolTip(
+            "Nothing is overdue." if due == 0 else
+            f"{due} of {total} operations are due to be run again.")
 
     def action_cards(self) -> list[GlassCard]:
         """The dashboard's Quick Action cards — the applied-state probe
@@ -738,11 +843,12 @@ class WelcomePage(QWidget):
         self._tag.setStyleSheet(
             TH.label_qss(t, "tagline")
             + f"font-size: {TH.TYPE['body']}px; letter-spacing: 1px;")
-        for pill, ok in self._status_pills:
-            pill.setStyleSheet(TH.strip_status_qss(t, ok))
-
-        self._section.setStyleSheet(TH.label_qss(t, "section"))
-        self._rule.setStyleSheet(TH.hub_group_rule_qss(t, t["accent"]))
+        for label in (self._health_section, self._section):
+            label.setStyleSheet(TH.label_qss(t, "section"))
+        for rule in (self._health_rule, self._rule):
+            rule.setStyleSheet(TH.hub_group_rule_qss(t, t["accent"]))
+        for tile in self._tiles.values():
+            tile.apply_theme(t)
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
         for card in self._action_cards:
             card.apply_theme(t)
@@ -750,8 +856,22 @@ class WelcomePage(QWidget):
         # -- footer status line --------------------------------------------
         self._t = t
         self._foot_rule.setStyleSheet(TH.hairline_qss(t))
-        for caption in (self._spec, self._load):
-            caption.setStyleSheet(TH.label_qss(t, "caption"))
+        self._session.setStyleSheet(TH.label_qss(t, "caption"))
+        self._session.setText(self._session_line())
+        # re-run the sampler so the tiles carry the new theme's tones
+        # immediately rather than at the next 2 s tick
+        self._tick_pulse()
+
+    def _session_line(self) -> str:
+        """The run's two facts as one caption: elevation, then the engine.
+
+        Elevation first because it is the one that changes what the app
+        can DO; the engine is a precondition the user cannot influence
+        from here. Only the failing half is ever spelled out at length —
+        a healthy session says so in three words and stops."""
+        parts = ["Administrator" if self._is_admin else "Not elevated"]
+        parts.append("Engine ready" if self._engine_ok else "Engine missing")
+        return "  ·  ".join(parts)
 
 
 class CategoryPage(QWidget):
@@ -889,7 +1009,7 @@ class CategoryPage(QWidget):
         # produce, so a filter can never present a category that renders
         # empty for a state nothing ever reports.
         self._filter = QComboBox()
-        self._filter.setFixedSize(190, 32)
+        self._filter.setFixedSize(190, TH.CONTROL_H)
         self._filter.setCursor(Qt.CursorShape.PointingHandCursor)
         for label, key in self.FILTERS:
             self._filter.addItem(label, key)
@@ -1646,7 +1766,6 @@ class PulseApp(QMainWindow):
 
         self.titlebar = TitleBar(self, t, APP_NAME, APP_VERSION, APP_CHANNEL,
                                   is_admin=self.is_admin)
-        self.titlebar.theme_toggle_requested.connect(self._toggle_theme_animated)
         root.addWidget(self.titlebar)
 
         body = QHBoxLayout()
@@ -1659,9 +1778,9 @@ class PulseApp(QMainWindow):
         # -- sidebar ------------------------------------------
         self._sidebar = QFrame()
         self._sidebar.setFixedWidth(250)
+        pad_side = TH.PAD["surface"]
         side = QVBoxLayout(self._sidebar)
-        side.setContentsMargins(TH.SPACE["lg"], TH.SPACE["xl"],
-                                TH.SPACE["lg"], TH.SPACE["lg"])
+        side.setContentsMargins(pad_side, pad_side, pad_side, pad_side)
         side.setSpacing(TH.SPACE["sm"])
 
         # -- global search doorway (v1.0) ----------------------
@@ -1702,71 +1821,47 @@ class PulseApp(QMainWindow):
         # reach and buys the nav an uncontested column.
         side.addStretch()
 
-        # -- sidebar footer: elevation · identity (v8.1) --------
-        # The sidebar footer is the app's "system controls" zone. Elevation
-        # lives here (relocated from the title bar): a prominent, always-
-        # visible amber CTA when unelevated, or a quiet green confirmation
-        # chip when already Administrator — far more discoverable than the
-        # old title-bar badge, and it drops the fragile native hit-test
-        # carve-out that badge required.
+        # -- sidebar footer: ONE STATUS RAIL (v15) --------------
+        # What used to be here: a full-width amber "Run as Administrator"
+        # call-to-action (or a full-width green "Administrator" chip in its
+        # place), the update badge, and a full-width ghost version button
+        # under both — three stacked surfaces in three visual registers,
+        # roughly 110px of rail, plus a fourth control (the theme toggle)
+        # that was not even in the sidebar.
         #
-        # v8.1: the redundant red "Exit" button was removed. Quitting is the
-        # title bar's native close 'X' — every Windows user's muscle memory —
-        # so a second, louder (red) exit affordance in the sidebar was pure
-        # duplication. Dropping it leaves the elevation chip as the clean,
-        # single focus of this zone, with the quiet identity line closing the
-        # rail beneath it.
-        self._elevate_btn: QPushButton | None = None
-        self._admin_chip: QLabel | None = None
-        if self.is_admin:
-            self._admin_chip = QLabel("🛡  Administrator")
-            self._admin_chip.setFixedHeight(TH.CONTROL_H)
-            self._admin_chip.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-            side.addWidget(self._admin_chip)
-        else:
-            self._elevate_btn = QPushButton("🛡  Run as Administrator")
-            self._elevate_btn.setFixedHeight(TH.CONTROL_H)
-            self._elevate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._elevate_btn.setToolTip(
-                "Some system-level actions need Administrator rights. "
-                "Relaunch Pulse elevated (you'll get a UAC prompt).")
-            self._elevate_btn.clicked.connect(self._relaunch_as_admin)
-            side.addWidget(self._elevate_btn)
-        side.addSpacing(TH.SPACE["lg"])
-
-        # Anchors the nav column so it no longer floats above a void — a
-        # quiet identity line the way VS Code / Linear close their rails.
-        # A QPushButton, not a QLabel (v10.3): clicking it checks for
-        # updates, or opens the SelfUpdateDialog directly for one a silent
-        # background check already found. setFlat + sidebar_version_qss
-        # keep it looking exactly like the plain caption it replaced.
+        # They are one 36px row now. The reasoning, and what the
+        # consolidation costs, is in widgets.StatusRail; the short version
+        # is that all four describe the SESSION rather than the work, and
+        # the app was rendering each of them as though it were an offer.
         #
-        # v12.1: it no longer REPORTS the answer, and v14 brought the
-        # surface that does back to sit directly on top of it. The badge
-        # (widgets.UpdateBadge) is toned and legible at rest, and shows only
-        # when it has something actionable to say; this line is identity
-        # plus the way in. Both share _on_footer_clicked, so they honour the
-        # same in-flight and pending-update guards.
+        # The UpdateBadge stays a separate surface directly above the rail,
+        # and that is deliberate rather than an oversight: it is the one
+        # thing here that appears only when it has something actionable to
+        # report, so folding it into a permanent row would either make it
+        # permanent (it is not) or leave a hole in the row (it would).
         self.update_badge = UpdateBadge(t)
         self.update_badge.clicked.connect(self._on_footer_clicked)
         side.addWidget(self.update_badge)
-        self._side_footer = QPushButton(f"PULSE  v{APP_VERSION}  ·  {APP_CHANNEL.upper()}")
-        self._side_footer.setFlat(True)
-        self._side_footer.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._side_footer.setToolTip("Check for updates")
-        # Chrome, not content: the rail's footer must not join the card
-        # grids' arrow-key traversal or take focus off a page — the same
-        # call the drawer's own toolbar buttons make (widgets.py:733).
-        self._side_footer.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._side_footer.clicked.connect(self._on_footer_clicked)
-        side.addWidget(self._side_footer)
+
+        self.status_rail = StatusRail(t, APP_VERSION, APP_CHANNEL,
+                                      is_admin=self.is_admin,
+                                      engine_ok=bool(self.ps1_path))
+        self.status_rail.theme_toggle_requested.connect(
+            self._toggle_theme_animated)
+        self.status_rail.version_clicked.connect(self._on_footer_clicked)
+        self.status_rail.elevate_requested.connect(self._relaunch_as_admin)
+        side.addWidget(self.status_rail)
         body.addWidget(self._sidebar)
 
         # -- content ------------------------------------------
         self._content = QFrame()
         content = QVBoxLayout(self._content)
-        content.setContentsMargins(TH.SPACE["xl"], TH.SPACE["lg"],
-                                   TH.SPACE["xl"], TH.SPACE["lg"])
+        # PAD["surface"], on all four sides: the content frame is a
+        # bordered container in the layout, exactly like the sidebar
+        # beside it, and the two ran 24/16 and 16/24 respectively — the
+        # same two numbers, swapped, for no reason either of them stated.
+        pad = TH.PAD["surface"]
+        content.setContentsMargins(pad, pad, pad, pad)
         content.setSpacing(TH.SPACE["md"])
 
         self.stack = QStackedWidget()
@@ -1839,12 +1934,8 @@ class PulseApp(QMainWindow):
         self._content.setStyleSheet(TH.content_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
-        self._side_footer.setStyleSheet(TH.sidebar_version_qss(t))
         self.update_badge.apply_theme(t)
-        if self._elevate_btn is not None:
-            self._elevate_btn.setStyleSheet(TH.elevate_button_qss(t))
-        if self._admin_chip is not None:
-            self._admin_chip.setStyleSheet(TH.admin_status_qss(t))
+        self.status_rail.apply_theme(t)
         self.titlebar.apply_theme(t)
         self.welcome.apply_theme(t)
         for btn in self._nav_buttons:
@@ -2030,13 +2121,31 @@ class PulseApp(QMainWindow):
     def _refresh_card_badges(self):
         """Re-decide every card's badge from the current probe state and
         run history. Called by both producers, so whichever lands last
-        renders the same answer."""
+        renders the same answer.
+
+        It also reports the DASHBOARD'S PENDING-ACTION COUNT, and doing it
+        here rather than anywhere else is the whole point: this method is
+        the single place the state probe and the run history are
+        reconciled into a badge, so a count derived from the same pass
+        cannot drift from the ACTION DUE chips the cards are wearing. A
+        second traversal computing the same answer independently is
+        exactly how two surfaces come to disagree about one fact.
+        """
         history = prefs.task_history()
+        due = recurring = 0
         for page in self.pages:
             for card in page.cards:
-                card.set_applied(self._card_badge(card.item, history))
+                badge = self._card_badge(card.item, history)
+                card.set_applied(badge)
+                # Only RECURRING operations can be "due" — a one-shot tweak
+                # is applied or it is not, and counting those as pending
+                # would report a permanent backlog nobody can clear.
+                if recurring_days(card.item) is not None:
+                    recurring += 1
+                    due += badge == "due"
         for card in self.welcome.action_cards():
             card.set_applied(self._card_badge(card.item, history))
+        self.welcome.set_pending_actions(due, recurring)
         for page in self.pages:
             page.refresh_filter()
 
@@ -2921,16 +3030,20 @@ class PulseApp(QMainWindow):
         else:
             self.toasts.show("success", "Engine ready — all modules loaded.", 2500)
         if not self.is_admin:
+            # The copy names the SHIELD, not a button that no longer exists:
+            # the sidebar's "Run as Administrator" CTA was folded into the
+            # status rail's session-state control in v15 (widgets.StatusRail).
             self.toasts.show(
                 "info",
                 "Not running as Administrator — system tasks will prompt to "
-                "relaunch elevated. Or click 'Run as Administrator' in the sidebar.",
+                "relaunch elevated. The shield in the sidebar's status rail "
+                "does it in one click.",
                 8000)
 
     def _relaunch_as_admin(self):
-        """One-click UAC relaunch, triggered by the sidebar footer's 'Run as
-        Administrator' button. Spawns a second, elevated Pulse via the 'runas'
-        verb (which shows Windows' own UAC consent prompt) and quits this
+        """One-click UAC relaunch, triggered by the status rail's session
+        shield (widgets.StatusRail) or by ElevatePromptDialog. Spawns a
+        second, elevated Pulse via the 'runas' verb (which shows Windows' own UAC consent prompt) and quits this
         instance once it's confirmed launched — never before, so declining
         the prompt (or the launch failing outright) leaves the user with
         the still-running unelevated app instead of no app at all."""
@@ -3319,20 +3432,6 @@ class PulseApp(QMainWindow):
             return "min"
         return None
 
-    def _over_theme_button(self, rect, gx: int, gy: int) -> bool:
-        """The theme toggle stays an ordinary Qt button — the HTCAPTION
-        strip must leave a client hole over it or it becomes undraggable
-        dead chrome instead of a clickable control."""
-        btn = self.titlebar.theme_button()
-        if not btn.isVisible():
-            return False
-        dpr = self.devicePixelRatioF()
-        top_left = btn.mapTo(self, QPoint(0, 0))
-        left = rect.left + round(top_left.x() * dpr)
-        top = rect.top + round(top_left.y() * dpr)
-        return (left <= gx < left + round(btn.width() * dpr)
-                and top <= gy < top + round(btn.height() * dpr))
-
     def nativeEvent(self, eventType, message):
         """Native window integration, in two parts:
 
@@ -3413,15 +3512,23 @@ class PulseApp(QMainWindow):
                 if hit is not None:
                     return True, self._HT_CAPTION[hit]
 
-                # the rest of the title-bar strip = native HTCAPTION:
-                # OS-driven drag with Aero Snap, double-click maximize,
-                # right-click system menu — and, because it bypasses Qt's
-                # input routing, it stays LIVE while a modal dialog is
-                # open. Only the theme toggle and the (optional) admin
-                # badge keep an HTCLIENT hole.
+                # THE REST OF THE TITLE-BAR STRIP IS NATIVE HTCAPTION,
+                # with no exceptions any more: OS-driven drag with Aero
+                # Snap, double-click maximize, right-click system menu —
+                # and, because it bypasses Qt's input routing, a strip that
+                # stays LIVE while a modal dialog is open.
+                #
+                # v15 removed the one carve-out. The theme toggle was a
+                # plain Qt button sitting inside this region, so it needed
+                # a hand-measured HTCLIENT hole (`_over_theme_button`, DPI
+                # -aware physical-pixel mapping that had to track the
+                # button's geometry) just to receive a click. It lives in
+                # the sidebar's status rail now, and a drag strip with no
+                # holes in it is a drag strip that cannot develop a dead
+                # spot when a control beside it moves.
                 dpr = self.devicePixelRatioF()
                 tb_bottom = rect.top + round(titlebar.height() * dpr)
-                if y < tb_bottom and not self._over_theme_button(rect, x, y):
+                if y < tb_bottom:
                     return True, 2   # HTCAPTION
 
                 # A MAXIMIZED WINDOW OWNS EVERY REMAINING PIXEL AS CLIENT.

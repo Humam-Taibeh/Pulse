@@ -21,7 +21,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QDateTime, QEasingCurve, QEvent, QEventLoop, QPoint, QPointF, QProcess,
-    QPropertyAnimation, QRect, QRectF, Qt, QThread, QTime, QTimer, QUrl,
+    QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTime, QTimer, QUrl,
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
@@ -861,10 +861,19 @@ def _apply_panel_size(dialog: QDialog):
         panel.setMaximumHeight(_selector_panel_height_cap(dialog))
 
 
-#: Height of a pill in a _chip_strip, and of every control that has to
-#: line up with one (the catalog's filter field). A named constant because
-#: three separate places used to say "30" and a fourth said "34".
-_CHIP_H = 30
+#: Height of a pill in a _chip_strip, and of every control that has to line
+#: up with one (the catalog's filter field). A named constant because three
+#: separate places used to say "30" and a fourth said "34".
+#:
+#: v15 MAKES IT THE CONTROL HEIGHT, 30 -> 36, and the argument is the one
+#: the scale already makes everywhere else: a catalog tab is not a badge,
+#: it is a BUTTON — you click it and the list changes — and it shares its
+#: row with a text field you type into. Both sat six pixels under every
+#: other operable control in the app, on the most-used control row in the
+#: biggest dialog, which is precisely where a size that nobody chose is
+#: most visible. The pill's ROUNDING still says "chip"; its height now says
+#: "control", which is what it is.
+_CHIP_H = TH.CONTROL_H
 
 #: Vertical room the strip reserves BELOW its pills for the horizontal
 #: scrollbar: a 4px handle with 4px of air above it and 2px below (the
@@ -1012,10 +1021,19 @@ def dialog_body(panel: "DepthCard", spacing: str = "md") -> QVBoxLayout:
     `spacing` names the step between the panel's top-level blocks: the
     default "md" suits the usual header / body / action-bar stack, and
     dialogs of dense rows pass "sm".
+
+    v15.1 NAMES THE NUMBER AND SQUARES IT UP. It was 24/24/24/16 — a
+    quartet whose asymmetry nothing explained, and whose 24 was a card's
+    16 plus half again, so a dialog read visibly looser than the cards it
+    was opened from. PAD["sheet"] is the step between (see the note there):
+    enough more air than a card that a floating panel feels like one,
+    close enough that the two belong to one system. Equal on all four
+    sides, because a footer that wants less air below it should say so in
+    its own layout rather than by biasing every dialog's padding.
     """
     lay = QVBoxLayout(panel)
-    lay.setContentsMargins(TH.SPACE["xl"], TH.SPACE["xl"],
-                           TH.SPACE["xl"], TH.SPACE["lg"])
+    pad = TH.PAD["sheet"]
+    lay.setContentsMargins(pad, pad, pad, pad)
     lay.setSpacing(TH.SPACE[spacing])
     return lay
 
@@ -1105,13 +1123,60 @@ class FitScroll(QScrollArea):
         self.updateGeometry()
 
     def _content_height(self) -> int:
+        """How tall the content is AT THE WIDTH IT WILL BE LAID OUT AT.
+
+        THE WIDTH IS THE WHOLE POINT, and asking without it is what put
+        the black voids back into dialogs that this class was written to
+        remove. `layout.sizeHint().height()` is measured against the
+        layout's own PREFERRED width, and every wrapping QLabel in the app
+        prefers a narrower column than a 840px selector panel actually
+        gives it — so the hint describes a taller, skinnier version of the
+        content than the one that gets painted. The dialog then sized
+        itself to that phantom, the real text wrapped onto fewer lines,
+        and the difference showed up as dead space under the last card.
+
+        Measured on the DNS switcher: the host's layout hinted 311px while
+        the same content laid out at the panel's real width occupied 266 —
+        45px of void, on a 467px dialog, entirely from asking the wrong
+        question.
+
+        A QBoxLayout reports hasHeightForWidth() whenever any item in it
+        does (a word-wrapping QLabel does), so this costs nothing on the
+        layouts that have no such dependency: they answer the same number
+        either way.
+
+        The width is taken from the VIEWPORT rather than from self, since
+        that is what the inner widget is actually resized to — they differ
+        by the frame and, once the list is long enough to scroll, by the
+        vertical scrollbar's lane. Before the area has been laid out even
+        once, neither is meaningful and the sizeHint is the only answer
+        available; that first call is always followed by a real one.
+        """
         inner = self.widget()
         if inner is None:
             return 0
         layout = inner.layout()
-        hint = layout.sizeHint().height() if layout is not None else \
-            inner.sizeHint().height()
+        if layout is None:
+            return inner.sizeHint().height() + 2 * self.frameWidth()
+        width = self.viewport().width()
+        if layout.hasHeightForWidth() and width > 0:
+            hint = layout.heightForWidth(width)
+        else:
+            hint = layout.sizeHint().height()
         return hint + 2 * self.frameWidth()
+
+    def resizeEvent(self, event):   # noqa: N802 - Qt casing
+        """A width change changes the answer (see _content_height), so it
+        has to invalidate the hint the same way a row change does.
+
+        Without this the area keeps reporting the height it computed at
+        whatever width it happened to have when the content last changed —
+        which for a dialog that is sized FROM this hint means the first
+        measurement wins permanently, and widening the window leaves the
+        void it was supposed to close."""
+        super().resizeEvent(event)
+        if event.oldSize().width() != event.size().width():
+            self.updateGeometry()
 
     def sizeHint(self):            # noqa: N802 - Qt casing
         hint = super().sizeHint()
@@ -1342,9 +1407,22 @@ def _caption_icon_font() -> QFont | None:
 
 
 class TitleBar(QWidget):
-    """Frameless-window chrome. Left: brand block (glyph · name · version
-    · release-channel pill). Right: theme toggle + native-styled caption
-    buttons using the OS's own Segoe Fluent icon glyphs.
+    """Frameless-window chrome. Left: brand block (glyph, name, version,
+    release-channel pill). Right: the native-styled caption buttons, using
+    the OS's own Segoe Fluent icon glyphs.
+
+    v15 REMOVED THE THEME TOGGLE FROM THIS BAR, and the removal is worth
+    more than the tidier composition it buys. Every pixel of the title-bar
+    strip is answered as HTCAPTION so Windows itself drives the drag (Aero
+    Snap, drag-to-top maximize, double-click, the right-click system menu,
+    and — because it bypasses Qt's input routing — a strip that stays live
+    while a modal dialog is open). A plain Qt button sitting in that strip
+    is therefore a contradiction: it needed a hand-measured HTCLIENT hole
+    punched through the drag region to receive a click at all
+    (`PulseApp._over_theme_button`, ~15 lines of DPI-aware physical-pixel
+    mapping that had to stay in sync with the button's geometry). The
+    toggle now lives in the sidebar's status rail with the rest of the
+    session chrome (widgets.StatusRail), and the hole is gone with it.
 
     Drag guard: dragging while maximized restores the window first and
     re-anchors it under the cursor proportionally — native Windows feel.
@@ -1356,16 +1434,12 @@ class TitleBar(QWidget):
     hover visual and the click is re-injected from WM_NCLBUTTONUP.
     """
 
-    theme_toggle_requested = Signal()
-
     # (caption-font glyph, text fallback)
     _ICONS = {
         "min":     ("", "–"),
         "max":     ("", "□"),
         "restore": ("", "❐"),
         "close":   ("", "✕"),
-        "sun":     ("", "☀"),
-        "moon":    ("", "☾"),
     }
 
     def __init__(self, window: QMainWindow, t: dict,
@@ -1383,11 +1457,14 @@ class TitleBar(QWidget):
                                TH.SPACE["md"], TH.SPACE["sm"])
         lay.setSpacing(TH.SPACE["sm"])
 
-        # Same breathing-pulse component the Welcome page's hero mark uses
-        # (BreathingIcon) — the brand glyph reads identically everywhere
-        # it appears instead of animating on the home screen and sitting
-        # inert in the title bar.
-        self._glyph = BreathingIcon("✦", size=26, accent=t["accent"])
+        # The STATIC face of the shared brand mark (widgets.BrandMark).
+        # The dashboard's 58px masthead instance still breathes; a logo in
+        # the chrome does not, and — more to the point — is drawn to be
+        # read at 30px rather than scaled down from a hero. See BrandMark
+        # for the four things that changed and why each of them was
+        # costing this mark its contrast.
+        self._glyph = BrandMark("✦", size=30, accent=t["accent"],
+                                breathe=False)
         lay.addWidget(self._glyph)
         self._name = QLabel(app_name)
         lay.addWidget(self._name)
@@ -1397,10 +1474,10 @@ class TitleBar(QWidget):
         if channel:
             self._channel = QLabel(channel.upper())
             lay.addWidget(self._channel)
-        # v8: elevation state/action lives in the sidebar footer
-        # (main.PulseApp._build_ui), not the title bar — the left cluster stays
-        # a clean brand-only block. (v9.4 removed the dead admin-badge no-op
-        # scaffolding that used to sit here.)
+        # The left cluster is a brand-only block: elevation state, the
+        # theme toggle and the update check all live in the sidebar's
+        # status rail (widgets.StatusRail), which is the one place in the
+        # app that describes the session rather than the work.
         lay.addStretch()
 
         btns = QHBoxLayout()
@@ -1418,7 +1495,6 @@ class TitleBar(QWidget):
             btns.addWidget(b)
             return b
 
-        self._btn_theme = _mk("sun", "Switch theme", self.theme_toggle_requested.emit)
         self._btn_min = _mk("min", "Minimize", window.showMinimized)
         self.btn_max = _mk("max", "Maximize", self._toggle_max)
         self._btn_close = _mk("close", "Close", window.close)
@@ -1440,12 +1516,9 @@ class TitleBar(QWidget):
         self._version.setStyleSheet(TH.label_qss(t, "version"))
         if self._channel is not None:
             self._channel.setStyleSheet(TH.beta_badge_qss(t))
-        for btn in (self._btn_theme, self._btn_min, self.btn_max):
+        for btn in (self._btn_min, self.btn_max):
             btn.setStyleSheet(TH.titlebar_button_qss(t, t["titlebar_hover"]))
         self._btn_close.setStyleSheet(TH.titlebar_close_qss(t))
-        self._btn_theme.setText(self._icon("sun" if t["name"] == "dark" else "moon"))
-        self._btn_theme.setToolTip(
-            "Switch to light theme" if t["name"] == "dark" else "Switch to dark theme")
 
     # -- non-client caption support (driven by main.nativeEvent) --
     # Windows owns the mouse events for all three caption buttons while
@@ -1458,11 +1531,6 @@ class TitleBar(QWidget):
         """The NC-hit-tested caption buttons, keyed by role."""
         return {"min": self._btn_min, "max": self.btn_max,
                 "close": self._btn_close}
-
-    def theme_button(self) -> QPushButton:
-        """The theme toggle — the one title-bar button that stays a plain
-        Qt button (HTCLIENT), so the HTCAPTION strip must carve it out."""
-        return self._btn_theme
 
     def set_nc_hover(self, key: str | None):
         """Highlight exactly the caption button under the non-client
@@ -2505,7 +2573,6 @@ class GlassCard(QFrame):
         self._shadow = TH.shadow_alphas(t)
         self._sheen = TH.sheen_alphas(t)
         self._feat_base = TH.to_qcolor(t["card_hi"])
-        self._feat_sheen = TH.to_qcolor(t["card_sheen"])
         self._aur1 = QColor(t["accent"])
         self._aur2 = QColor(t["accent2"])
         self._aur3 = QColor(t["accent3"])
@@ -2769,13 +2836,16 @@ class GlassCard(QFrame):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         path = squircle_path(self.rect().adjusted(1, 1, -1, -1),
                              TH.RADIUS["panel"])
-        # frosted-glass fill: top sheen falling into the card_hi base
-        grad = QLinearGradient(self.rect().topLeft(), self.rect().bottomLeft())
-        grad.setColorAt(0.0, self._feat_sheen)
-        grad.setColorAt(0.16, self._feat_base)
-        grad.setColorAt(1.0, self._feat_base)
+        # ONE FLAT PLATE on the card_hi tier. This used to be the painted
+        # twin of card_qss's glass_fill — a white sheen falling into the
+        # base over the top 16% — and it goes for the reason every other
+        # one went (see the surface rule in theme.py, above `blend`): the
+        # hero is the largest surface on the page, so the smear it carried
+        # was the most visible instance of the effect. Its elevation comes
+        # from the aurora edge and the contact shadow below, both of which
+        # live on the perimeter.
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(grad)
+        p.setBrush(self._feat_base)
         p.drawPath(path)
         # hover wash — reuses the already-running glow intensity, no new anim
         if self._glow.intensity > 0.01:
@@ -2892,70 +2962,142 @@ class GlassCard(QFrame):
 # ============================================================
 #  BREATHING ICON — pure-paint pulsing brand glyph (no effects)
 # ============================================================
-class BreathingIcon(QWidget):
-    """The '✦' brand mark with a slow breathing pulse.
+class BrandMark(QWidget):
+    """The '✦' Pulse mark, painted — a glyph over a soft radial halo, with
+    an optional slow breath.
 
     Doctrine-compliant: NO QGraphicsOpacityEffect. One looping
     QVariantAnimation (0→1→0, InOutSine, ~2.6 s) drives painter opacity
-    plus a soft radial halo, all inside paintEvent — a repaint costs
-    microseconds. The loop suspends automatically while the widget is
-    hidden (category pages open), so idle cost off-screen is zero.
+    plus the halo, all inside paintEvent — a repaint costs microseconds.
+    The loop suspends automatically while the widget is hidden (category
+    pages open), so idle cost off-screen is zero.
+
+    TWO INSTANCES, AND v15.1 SPLITS THEM APART, because they are doing
+    different jobs and had been given one treatment:
+
+      the DASHBOARD masthead (58px, breathing) is a hero flourish. It is
+        the largest thing on the landing view, it has room, and a slow
+        pulse there reads as the app being alive.
+
+      the TITLE BAR (30px, static) is a LOGO. It sits beside the wordmark
+        as identity, at a size where the same treatment stopped working:
+        a Light-weight glyph at 58% of a 26px box is a 15px hairline
+        character, painted in the mid-tone accent, breathing down to 45%
+        opacity on a near-black shell. Every one of those choices costs
+        contrast, and together they are why it read as a faint smudge
+        rather than as a mark.
+
+    So a static mark is not merely "the same thing without the animation".
+    It is drawn to be READ at chrome scale:
+
+      * DemiBold rather than Light. At 20px a hairline weight has no mass
+        left once antialiasing has taken its share.
+      * 20px of glyph in a 30px box (GLYPH_RATIO), which is the app's own
+        ICON["plaque"] size — the mark is the same optical weight as every
+        other glyph in the chrome.
+      * full opacity, always. The breath's floor was the single largest
+        contrast loss and it bought nothing on a logo.
+      * painted in the BRAND SWEEP (accent → accent2, the indigo-to-cyan
+        pair), not a flat accent. A two-stop mark separates from a flat
+        accent-coloured UI and is the one place in the app the sweep is
+        the subject rather than a surface treatment.
+      * a firmer halo, which on obsidian is what gives a small mark an
+        edge to sit against.
     """
 
     MIN_OPACITY = 0.45   # breath floor — glyph never fully fades
     HALO_ALPHA = 0.20    # halo strength at full breath
 
+    #: A STATIC mark's halo. Heavier than the breathing one's peak,
+    #: because it is not being animated INTO existence — it has one frame
+    #: to say "this is lit", and on the obsidian shell a 0.20 halo under a
+    #: 20px glyph is invisible at arm's length.
+    STATIC_HALO_ALPHA = 0.30
+
+    #: Glyph size as a fraction of the widget box, per mode. The hero can
+    #: afford a delicate 58% because it is 58px across and the negative
+    #: space is part of the composition; a 30px chrome mark cannot — at
+    #: 58% it is 17px of Light-weight glyph in a box big enough to make it
+    #: look lost. 0.68 of 30 lands on 20, the plaque glyph size.
+    GLYPH_RATIO = 0.58
+    STATIC_GLYPH_RATIO = 0.68
+
     def __init__(self, glyph: str = "✦", size: int = 110,
-                 accent: str = "#00d4ff", parent: QWidget | None = None):
+                 accent: str = "#00d4ff", parent: QWidget | None = None,
+                 breathe: bool = True):
         super().__init__(parent)
         self._glyph = glyph
         self._accent = QColor(accent)
+        self._accent2 = QColor(accent)
+        self._breathe = breathe
         self._breath = 1.0
         self.setFixedSize(size, size)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
+        ratio = self.GLYPH_RATIO if breathe else self.STATIC_GLYPH_RATIO
         self._font = QFont("Segoe UI")
-        self._font.setPixelSize(int(size * 0.58))
-        self._font.setWeight(QFont.Weight.Light)
+        self._font.setPixelSize(int(size * ratio))
+        self._font.setWeight(QFont.Weight.Light if breathe
+                             else QFont.Weight.DemiBold)
 
-        self._anim = QVariantAnimation(self)
-        self._anim.setDuration(2600)
-        self._anim.setStartValue(1.0)
-        self._anim.setKeyValueAt(0.5, 0.0)   # exhale mid-loop
-        self._anim.setEndValue(1.0)
-        self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-        self._anim.setLoopCount(-1)
-        self._anim.valueChanged.connect(self._on_frame)
+        self._anim: QVariantAnimation | None = None
+        if breathe:
+            self._anim = QVariantAnimation(self)
+            self._anim.setDuration(2600)
+            self._anim.setStartValue(1.0)
+            self._anim.setKeyValueAt(0.5, 0.0)   # exhale mid-loop
+            self._anim.setEndValue(1.0)
+            self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+            self._anim.setLoopCount(-1)
+            self._anim.valueChanged.connect(self._on_frame)
 
     # -- theming ----------------------------------------------
     def apply_theme(self, t: dict):
         self._accent = QColor(t["accent"])
+        self._accent2 = QColor(t["accent2"])
         self.update()
 
     # -- lifecycle: animate only while visible ------------------
     def showEvent(self, e):
         super().showEvent(e)
-        self._anim.start()
+        if self._anim is not None:
+            self._anim.start()
 
     def hideEvent(self, e):
         super().hideEvent(e)
-        self._anim.stop()
+        if self._anim is not None:
+            self._anim.stop()
 
     # -- painting ----------------------------------------------
     def _on_frame(self, value: float):
         self._breath = float(value)
         self.update()
 
+    def _pen(self):
+        """The mark's ink. A static mark takes the brand sweep across its
+        own box; a breathing one stays flat, because a gradient under a
+        varying opacity reads as two effects fighting."""
+        if self._breathe:
+            return QBrush(self._accent)
+        grad = QLinearGradient(0.0, 0.0, float(self.width()),
+                               float(self.height()))
+        grad.setColorAt(0.0, self._accent)
+        grad.setColorAt(1.0, self._accent2)
+        return QBrush(grad)
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        level = self.MIN_OPACITY + (1.0 - self.MIN_OPACITY) * self._breath
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        level = (self.MIN_OPACITY + (1.0 - self.MIN_OPACITY) * self._breath
+                 if self._breathe else 1.0)
         center = QPointF(self.width() / 2.0, self.height() / 2.0)
 
-        # soft halo swelling with the breath
+        # soft halo — swelling with the breath, or steady on a static mark
         halo = QRadialGradient(center, self.width() / 2.0)
+        peak = self.HALO_ALPHA if self._breathe else self.STATIC_HALO_ALPHA
         h0 = QColor(self._accent)
-        h0.setAlphaF(self.HALO_ALPHA * level)
+        h0.setAlphaF(peak * level)
         h1 = QColor(self._accent)
         h1.setAlphaF(0.0)
         halo.setColorAt(0.0, h0)
@@ -2966,19 +3108,192 @@ class BreathingIcon(QWidget):
 
         # the glyph itself
         p.setOpacity(level)
-        p.setPen(self._accent)
+        pen = QPen(self._pen(), 1.0)
+        p.setPen(pen)
         p.setFont(self._font)
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._glyph)
         p.end()
+
+
+#: The name this class shipped under while both of its instances breathed.
+#: Kept as an alias so nothing outside this module has to care that the
+#: title-bar mark stopped animating.
+BreathingIcon = BrandMark
+
+
+# ============================================================
+#  STATUS RAIL — the sidebar's session footer (v15)
+# ============================================================
+class StatusRail(QFrame):
+    """ONE ROW AT THE BOTTOM OF THE SIDEBAR carrying everything that
+    describes the SESSION rather than the work:
+
+        ┌─────────────────────────────────────┐
+        │  ☾   PULSE v10.6.0 · BETA       ⛨   │
+        └─────────────────────────────────────┘
+           theme      version / check     elevation
+           toggle     for updates         state
+
+    It is a consolidation, not a new feature. Every one of these controls
+    already existed; they were in four places, in four visual registers:
+
+      * the THEME TOGGLE lived in the title bar, as a caption-font button
+        that Windows would otherwise have swallowed — the HTCAPTION drag
+        strip had to have a client-side hole punched through it to keep
+        the button clickable (`PulseApp._over_theme_button`, deleted along
+        with the button itself).
+      * ELEVATION was a full-width amber call-to-action, or a full-width
+        green chip in its place, each with its own stylesheet.
+      * the VERSION LINE was a third full-width ghost button under those.
+      * and the UPDATE BADGE sat above all of it (it still does — it is
+        the one surface here that appears only when it has something to
+        say, so it cannot collapse into a permanent row).
+
+    Three stacked full-width surfaces plus a title-bar button is about
+    110px of rail and four different answers to "what does chrome look
+    like". As one 36px row it costs a third of that, and the sidebar's
+    footer finally reads as a status bar instead of a stack of offers.
+
+    THE ELEVATION CONTROL IS A STATE INDICATOR FIRST. The packaged app
+    ships `requireAdministrator` (main.spec), so it is emerald and
+    disabled on essentially every real launch; it only becomes a button —
+    amber, clickable, relaunching through UAC — in the cases that survive
+    that manifest: a developer running from source at their own level, or
+    a policy-restricted account denied the token.
+    """
+
+    theme_toggle_requested = Signal()
+    elevate_requested = Signal()
+    version_clicked = Signal()
+
+    def __init__(self, t: dict, version: str, channel: str,
+                 is_admin: bool, engine_ok: bool = True,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("statusRail")
+        self.setFixedHeight(TH.CONTROL_H)
+        self._t = t
+        self._is_admin = is_admin
+        self._engine_ok = engine_ok
+
+        lay = QHBoxLayout(self)
+        # TH.RAIL_INSET, not a SPACE step: SPACE measures the gap BETWEEN
+        # things, and this is the thickness of a frame around one. It is
+        # derived from the two sizes it has to reconcile (see the note on
+        # the constant) so the rail cannot drift out of alignment with its
+        # own buttons.
+        inset = TH.RAIL_INSET
+        lay.setContentsMargins(inset, inset, inset, inset)
+        lay.setSpacing(TH.SPACE["xxs"])
+
+        self._theme_btn = QPushButton()
+        self._theme_btn.setFixedSize(TH.RAIL_BUTTON, TH.RAIL_BUTTON)
+        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Chrome, not content: the rail must never join a page's tab order
+        # or pull focus off a card grid — the same call every other piece
+        # of app chrome makes.
+        self._theme_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._theme_btn.clicked.connect(self.theme_toggle_requested.emit)
+        lay.addWidget(self._theme_btn)
+
+        self._divider = QFrame()
+        self._divider.setFixedWidth(1)
+        lay.addWidget(self._divider)
+
+        self._version = QPushButton(
+            f"PULSE  v{version}  ·  {channel.upper()}" if channel
+            else f"PULSE  v{version}")
+        self._version.setFlat(True)
+        self._version.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._version.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._version.setToolTip("Check for updates")
+        self._version.clicked.connect(self.version_clicked.emit)
+        lay.addWidget(self._version, 1)
+
+        self._state_btn = QPushButton()
+        self._state_btn.setFixedSize(TH.RAIL_BUTTON, TH.RAIL_BUTTON)
+        self._state_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._state_btn.clicked.connect(self.elevate_requested.emit)
+        lay.addWidget(self._state_btn)
+
+        self.apply_theme(t)
+
+    # -- session state -------------------------------------------------
+    def set_session(self, is_admin: bool, engine_ok: bool):
+        """Re-report the session. Both facts land on ONE control because
+        they answer one question — can this app do its job right now — and
+        two separate chips saying that is what the masthead used to do."""
+        self._is_admin, self._engine_ok = is_admin, engine_ok
+        self._sync_state()
+
+    def is_actionable(self) -> bool:
+        """True when the state button is a BUTTON rather than a readout —
+        i.e. the session is unelevated and relaunching would change it."""
+        return bool(self._engine_ok and not self._is_admin)
+
+    def _sync_state(self):
+        t = self._t
+        ok = self._is_admin and self._engine_ok
+        self._state_btn.setStyleSheet(TH.rail_state_qss(t, ok))
+        glyph, fallback = TH.glyph("shieldplain")
+        font = TH.icon_font(TH.ICON["micro"]) if glyph else None
+        if font is not None:
+            self._state_btn.setFont(font)
+        self._state_btn.setText(glyph or fallback)
+        if not self._engine_ok:
+            self._state_btn.setToolTip(
+                "The PowerShell engine is missing — Pulse can report but "
+                "cannot run operations.")
+        elif self._is_admin:
+            self._state_btn.setToolTip(
+                "Running as Administrator — every operation is available.")
+        else:
+            self._state_btn.setToolTip(
+                "Not elevated. Some system-level operations need "
+                "Administrator rights — click to relaunch (a UAC prompt "
+                "will appear).")
+        self._state_btn.setEnabled(self.is_actionable())
+        self._state_btn.setCursor(
+            Qt.CursorShape.PointingHandCursor if self.is_actionable()
+            else Qt.CursorShape.ArrowCursor)
+
+    # -- theming -------------------------------------------------------
+    def apply_theme(self, t: dict):
+        self._t = t
+        self.setStyleSheet(TH.status_rail_qss(t))
+        self._theme_btn.setStyleSheet(TH.rail_button_qss(t))
+        self._divider.setStyleSheet(TH.rail_divider_qss(t))
+        self._version.setStyleSheet(TH.sidebar_version_qss(t))
+        # The toggle shows the theme it will switch TO, which is what the
+        # title-bar button it replaces did and what every OS control does.
+        key = "moon" if t["name"] == "dark" else "sun"
+        glyph, fallback = TH.glyph(key)
+        font = TH.icon_font(TH.ICON["micro"]) if glyph else None
+        if font is not None:
+            self._theme_btn.setFont(font)
+        self._theme_btn.setText(glyph or fallback)
+        self._theme_btn.setToolTip(
+            "Switch to light theme" if t["name"] == "dark"
+            else "Switch to dark theme")
+        self._sync_state()
 
 
 # ============================================================
 #  NAV PILL — Back / Home header buttons
 # ============================================================
 class NavPill(QPushButton):
+    """The page header's Back / Home buttons.
+
+    v15 puts them on the control scale (34 -> TH.CONTROL_H). They are
+    ordinary buttons sitting two pixels under every other button in the
+    app — the exact "almost aligned" defect the scale exists to remove,
+    and the reason 34 was on the exemption list was that the page accent
+    rail happens to be 34 too, which is a coincidence rather than a
+    reason."""
+
     def __init__(self, text: str, t: dict, width: int = 92):
         super().__init__(text)
-        self.setFixedSize(width, 34)
+        self.setFixedSize(width, TH.CONTROL_H)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_theme(t)
 
@@ -3043,6 +3358,133 @@ class DepthCard(QFrame):
         p.end()
 
 
+# ============================================================
+#  HEALTH TILE — one figure in the dashboard's KPI row (v15)
+# ============================================================
+class HealthTile(DepthCard):
+    """ONE NUMBER, ITS LABEL, AND A METER — the form a single current
+    value takes when it is not a chart:
+
+        ┌────────────────────┐
+        │ 47%                │  the figure, on the text ramp
+        │ MEMORY             │  its label
+        │ ━━━━━━━━━━━─────── │  a 3px meter, severity-toned
+        └────────────────────┘
+
+    Four of these are the dashboard's health row. The composition is the
+    standard stat-tile contract — label, value, and (where the value is a
+    ratio against a limit) a meter rather than a one-bar bar chart.
+
+    TWO CHANNELS, NEVER ONE. The figure and the caption stay on the text
+    ramp in every state; only the METER carries severity (accent -> warn
+    -> err, see theme.health_tone). That split is what keeps the row
+    readable for someone who cannot separate amber from emerald: the
+    number and its label say what it is, and the meter's LENGTH says how
+    bad it is before its colour does.
+
+    A tile with no ratio to show (a count, a state) passes fraction=None
+    and simply renders no meter — an empty track under a number is a
+    promise of a scale that does not exist.
+
+    WHY IT IS A DepthCard: the tile is an elevated surface like every card
+    on the page, so it inherits the same cast shadow, hairline and lit top
+    edge rather than inventing a fifth way to look raised.
+    """
+
+    #: The meter's bar. 3px because it is a MARK, not a control: at 2 it
+    #: disappears against the tile's own hairline, and at 4 it starts to
+    #: read as a progress bar the user could drag.
+    _METER_H = 3
+
+    def __init__(self, caption: str, t: dict, parent: QWidget | None = None):
+        super().__init__(radius=TH.RADIUS["card"], parent=parent, t=t)
+        self.setObjectName("healthTile")
+        self._t = t
+        self._fraction: float | None = None
+        self._tone = QColor(TH.to_qcolor(t["accent"]))
+
+        lay = QVBoxLayout(self)
+        # PAD["surface"] horizontally — the same inset a GlassCard uses,
+        # which matters because the health row sits DIRECTLY ABOVE the
+        # quick-action grid on the same page: a tile insetting its figure
+        # by 12 while the card under it insets its title by 16 puts a 4px
+        # step in a vertical line the eye follows down the page. Vertical
+        # stays a step tighter, the same trade row_padding makes for the
+        # same reason: a tile is wider than it is tall.
+        pad = TH.PAD["surface"]
+        lay.setContentsMargins(pad, TH.SPACE["sm"], pad, TH.SPACE["sm"])
+        lay.setSpacing(0)
+        lay.addStretch()
+        self._value = QLabel("—")
+        lay.addWidget(self._value)
+        self._caption = QLabel(caption.upper())
+        lay.addWidget(self._caption)
+        lay.addStretch()
+        # room under the caption for the meter, which is painted rather
+        # than laid out (a 3px QFrame in the layout would have to fight
+        # the stretches for its own height every resize)
+        lay.addSpacing(TH.SPACE["sm"])
+
+        self.apply_theme(t)
+
+    def set_value(self, text: str, fraction: float | None = None):
+        """Report the tile. `fraction` is the ratio the meter draws, or
+        None for a tile that is a count rather than a proportion."""
+        self._value.setText(text or "—")
+        self._fraction = None if fraction is None else max(0.0, min(1.0, fraction))
+        self._tone = TH.to_qcolor(TH.health_tone(self._t, self._fraction))
+        self.update()
+
+    def set_tone(self, tone_key: str):
+        """Override the meter's tone with a named token — for tiles whose
+        severity is not a ratio (a pending-action count is 'ok' at zero
+        and 'warn' at anything else, and no threshold on the number itself
+        would say that)."""
+        self._tone = TH.to_qcolor(self._t.get(tone_key, self._t["accent"]))
+        self.update()
+
+    def apply_theme(self, t: dict):
+        self._t = t
+        self.set_theme(t)
+        self.setStyleSheet(TH.health_tile_qss(t))
+        self._value.setStyleSheet(TH.health_tile_value_qss(t))
+        self._caption.setStyleSheet(TH.health_tile_caption_qss(t))
+        self._tone = TH.to_qcolor(TH.health_tone(t, self._fraction))
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)          # plate, shadow, hairline, top sheen
+        if self._fraction is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # the meter starts where the text above it starts — it is painted
+        # rather than laid out, so nothing but this line keeps the two
+        # agreeing (see the layout's own margins)
+        inset = TH.PAD["surface"]
+        bottom = self.height() - TH.SPACE["sm"] - self._METER_H
+        width = max(0, self.width() - inset * 2)
+        radius = self._METER_H / 2.0
+        track = QColor(self._tone)
+        # The unfilled track is a lighter step of the meter's OWN ramp,
+        # not a neutral grey: state then reads across the whole bar
+        # instead of only across the filled part of it.
+        track.setAlphaF(0.16)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(inset, bottom, width, self._METER_H),
+                          radius, radius)
+        filled = width * self._fraction
+        if filled >= self._METER_H:
+            p.setBrush(self._tone)
+            p.drawRoundedRect(QRectF(inset, bottom, filled, self._METER_H),
+                              radius, radius)
+        p.end()
+
+
+# ============================================================
+#  ACTION ROW — one offered action, on one row
+# ============================================================
 class ActionRow(QFrame):
     """ONE OFFERED ACTION, on one row: icon, what it is, and the button
     that does it.
@@ -4090,7 +4532,7 @@ class ActivationStatusDialog(PulseDialog):
         the label) rather than fixed."""
         def button(text: str, style: str, slot, minimum: int) -> QPushButton:
             btn = QPushButton(text)
-            btn.setFixedHeight(36)
+            btn.setFixedHeight(TH.CONTROL_H)
             btn.setMinimumWidth(minimum)
             btn.setSizePolicy(QSizePolicy.Policy.Preferred,
                               QSizePolicy.Policy.Fixed)
@@ -4788,7 +5230,7 @@ class StorageAnalyzerDialog(InspectorDialog):
         row.addWidget(label)
 
         self._drive = QComboBox()
-        self._drive.setFixedSize(220, 32)
+        self._drive.setFixedSize(220, TH.CONTROL_H)
         self._drive.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drive.setStyleSheet(TH.filter_combo_qss(t, accent))
         self._drive.addItem(self._scan_path, self._scan_path)
@@ -5345,9 +5787,21 @@ class ElevatePromptDialog(PulseDialog):
     (see menu_structure.requires_admin). Instead of spawning PowerShell only
     to bounce back an access-denied verdict, this offers a one-click UAC
     relaunch up front. Accepted => the caller runs PulseApp._relaunch_as_admin;
-    rejected => nothing happens and no task is started. Amber `warn` accent to
-    match the sidebar's 'Run as Administrator' CTA — a standing requirement,
-    not a red failure."""
+    rejected => nothing happens and no task is started. Amber `warn` accent
+    to match the status rail's unelevated session shield (StatusRail) — a
+    standing requirement, not a red failure.
+
+    IT SURVIVES requireAdministrator ON PURPOSE. The packaged app elevates
+    before it starts (main.spec), so a packaged Pulse cannot normally reach
+    this dialog — but "cannot normally" is not "cannot": a developer runs
+    `python src/frontend/main.py` at their own level, and a policy-
+    restricted account can be denied the token outright. v15 removed the
+    three REDUNDANT elevation surfaces (a full-width sidebar CTA, a
+    full-width admin chip, and a pair of masthead pills, all reporting one
+    fact the rail now reports once). This one is not redundant: it is the
+    gate that stops an admin-gated task from being launched only to come
+    back with an access-denied verdict, and nothing else performs that
+    check."""
 
     def __init__(self, parent: QWidget, item: dict, t: dict):
         super().__init__(parent)
@@ -5938,7 +6392,7 @@ class UpdateBadge(QPushButton):
 # ============================================================
 class StatusDot(QLabel):
     """The status-bar glyph, and the app's smallest brand moment: Pulse
-    pulses. Pure-paint (BreathingIcon's technique — no QGraphicsEffect), so
+    pulses. Pure-paint (BrandMark's technique — no QGraphicsEffect), so
     the whole thing costs one small repaint per frame.
 
     TWO cadences, because a status light that is either frantic or dead
@@ -7068,41 +7522,214 @@ def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | Non
     return None
 
 
+class _PaletteList(QListWidget):
+    """A result list that reports the height its ROWS want, capped.
+
+    The same contract FitScroll carries for scroll areas, and it is needed
+    here for the same reason: a QListWidget is a viewport onto something
+    arbitrarily long, so its size hint is a fixed default that has nothing
+    to do with what is in it. The palette's panel takes its height from
+    its layout, so an unhinted list gave a four-row panel with a scrollbar
+    down the side of an eight-row result set — the surface deciding, on no
+    information, that it was too small for its own answer.
+
+    The cap is what stops that inverting: past it the hint stops growing
+    and the list goes back to being a viewport, which is the correct
+    behaviour for a query that genuinely matched everything.
+    """
+
+    def __init__(self, max_height: int, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._max_height = max_height
+
+    def _content_height(self) -> int:
+        total = sum(self.sizeHintForRow(row) for row in range(self.count()))
+        return total + 2 * self.frameWidth()
+
+    def sizeHint(self):            # noqa: N802 - Qt casing
+        hint = super().sizeHint()
+        hint.setHeight(max(0, min(self._content_height(), self._max_height)))
+        return hint
+
+    def minimumSizeHint(self):     # noqa: N802 - Qt casing
+        """Zero height, so a short window can still squeeze the palette
+        rather than being pushed past its own edge by the list."""
+        hint = super().minimumSizeHint()
+        hint.setHeight(0)
+        return hint
+
+
+class _PaletteRow(QFrame):
+    """One result: the operation's own glyph, its title, and a right-
+    aligned hint.
+
+    A WIDGET, not a formatted string, and that is the change the palette's
+    whole refinement rests on. Rows used to be one QListWidgetItem holding
+    `f"{icon}  {title}   ·   {category} · installs {matched}"` — a single
+    string, so it had a single alignment, so the CONTEXT (which module a
+    result belongs to, why a catalog card matched "spotify") ran on into
+    the title and pushed long results into an ellipsis. Splitting it lets
+    the title own the left edge and the hint own the right, which is what
+    every palette worth copying does and the only layout in which you can
+    scan a result list by title alone.
+    """
+
+    def __init__(self, glyph_key: str, fallback: str, title: str,
+                 hint: str, t: dict, parent: QWidget | None = None):
+        super().__init__(parent)
+        # WA_TranslucentBackground, not merely a transparent stylesheet:
+        # the row sits ON the list's selection pill, and any painted
+        # background of its own would mask it.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedHeight(TH.PALETTE_ROW_H)
+        self._hint_text = hint
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["md"], 0)
+        lay.setSpacing(TH.SPACE["md"])
+
+        self._glyph = QLabel()
+        self._glyph.setObjectName("paletteGlyph")
+        self._glyph.setFixedWidth(TH.ICON["plaque"])
+        self._glyph.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        char, is_fluent = TH.glyph(glyph_key) if glyph_key else ("", False)
+        if is_fluent:
+            font = TH.icon_font(TH.ICON["inline"])
+            if font is not None:
+                self._glyph.setFont(font)
+            self._glyph.setText(char)
+        else:
+            self._glyph.setText(fallback)
+        lay.addWidget(self._glyph)
+
+        self._title = QLabel(title)
+        self._title.setObjectName("paletteTitle")
+        lay.addWidget(self._title, 1)
+
+        self._hint = QLabel(hint)
+        self._hint.setObjectName("paletteHint")
+        self._hint.setVisible(bool(hint))
+        lay.addWidget(self._hint, 0, Qt.AlignmentFlag.AlignRight
+                      | Qt.AlignmentFlag.AlignVCenter)
+
+        # The RUN marker, shown only on the active row. It is the palette
+        # saying which key does the thing, on the row that key would do it
+        # to — a footer hint says Enter runs something, this says what.
+        self._enter = QLabel("↵")
+        self._enter.setObjectName("paletteEnter")
+        self._enter.setVisible(False)
+        # AlignVCenter, or the keycap's own stylesheet background stretches
+        # to the full row height and the "key" becomes a 40px slab.
+        lay.addWidget(self._enter, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.set_selected(False, t)
+
+    def set_selected(self, on: bool, t: dict):
+        self.setStyleSheet(TH.palette_row_qss(t, on))
+        self._enter.setStyleSheet(TH.palette_keycap_qss(t))
+        self._enter.setVisible(on)
+        # The hint yields the row to the RUN marker rather than sharing it:
+        # at the narrow end of the panel both together push the title into
+        # an ellipsis, and on the row you are about to run, "press Enter"
+        # outranks "this lives in Maintenance".
+        self._hint.setVisible(bool(self._hint_text) and not on)
+
+
 class CommandPalette(PulseDialog):
     """Ctrl+K quick launcher — fuzzy search over every task defined in
-    menu_structure.py. Built fresh on each open (like ConfirmDialog /
-    SoftwareCatalogDialog: transient, no live re-theme needed) and driven
-    through the same accept()/reject() + `chosen_item` pattern, so the
-    caller launches the pick through the app's normal request_task()
-    pipeline — confirmations, the app selector, and the concurrency guard
-    all apply for free, exactly as if a card had been clicked."""
+    menu_structure.py, GROUPED BY MODULE:
 
+        ┌────────────────────────────────────────────────┐
+        │ ⌕  Search apps, tweaks and tools…              │
+        │                                                │
+        │ SYSTEM & TWEAKS ───────────────────────────    │
+        │  ⚡  Ultimate Power Plan                   ↵   │
+        │  🌙  Global Dark Mode                          │
+        │ MAINTENANCE & SECURITY ────────────────────    │
+        │  🧹  Aggressive Cache Clean                    │
+        ├────────────────────────────────────────────────┤
+        │ ↑↓ navigate   ↵ run   esc close     3 results  │
+        └────────────────────────────────────────────────┘
+
+    Built fresh on each open (like ConfirmDialog / SoftwareCatalogDialog:
+    transient, no live re-theme needed) and driven through the same
+    accept()/reject() + `chosen_item` pattern, so the caller launches the
+    pick through the app's normal request_task() pipeline — confirmations,
+    the app selector, and the concurrency guard all apply for free,
+    exactly as if a card had been clicked.
+
+    GROUPING DOES NOT COST RELEVANCE, which is the trade a grouped palette
+    usually makes and the reason this one does not group naively. Groups
+    are ordered by their OWN best-scoring member, and rows inside a group
+    by score, so the top result overall is still the first row on screen —
+    it has simply acquired a heading. What that buys is the thing a flat
+    list could not do: the module name stops being repeated on every row
+    as trailing context and becomes a divider you read once.
+    """
+
+    #: Results shown, across all groups. Unchanged: the palette is a
+    #: launcher, not a browser, and a list you have to scroll has already
+    #: failed to answer the query.
     MAX_RESULTS = 8
+
+    #: Tallest the result list may grow before it scrolls. Sized for the
+    #: worst real case — MAX_RESULTS rows plus a heading before each of
+    #: the four modules — so the common case never scrolls and the
+    #: pathological one does rather than pushing the footer off the panel.
+    LIST_MAX_H = 8 * (TH.PALETTE_ROW_H + 2) + 4 * TH.PALETTE_ROW_H
+
+    #: Marks a header row's item data, so navigation can skip it and a
+    #: click on it cannot launch anything.
+    _HEADER = "__section__"
 
     def __init__(self, parent: QWidget, t: dict, entries: list[tuple[dict, str]]):
         super().__init__(parent)
+        self._t = t
         self.chosen_item: dict | None = None
         self._entries = entries  # (item dict, category title) pairs
+        self._rows: dict[int, _PaletteRow] = {}   # list row -> widget
 
         panel = _dialog_chrome(self, t, t["accent"], width=560, anchor="top")
 
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(TH.SPACE["lg"], TH.SPACE["lg"],
-                               TH.SPACE["lg"], TH.SPACE["md"])
-        lay.setSpacing(TH.SPACE["sm"])
+        pad = TH.PAD["sheet"]
+        lay.setContentsMargins(pad, pad, pad, TH.SPACE["sm"])
+        lay.setSpacing(TH.SPACE["md"])
+
+        # -- the field -------------------------------------------------
+        self._field = QFrame()
+        self._field.setObjectName("paletteField")
+        self._field.setFixedHeight(TH.PALETTE_FIELD_H)
+        field_lay = QHBoxLayout(self._field)
+        field_lay.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["md"], 0)
+        field_lay.setSpacing(TH.SPACE["md"])
+
+        mark = QLabel()
+        char, is_fluent = TH.glyph("search")
+        if is_fluent:
+            font = TH.icon_font(TH.ICON["inline"])
+            if font is not None:
+                mark.setFont(font)
+        mark.setText(char)
+        field_lay.addWidget(mark)
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search apps, tweaks and tools…")
-        self._search.setStyleSheet(TH.command_input_qss(t))
-        self._search.setFixedHeight(46)
+        self._search.setFrame(False)
         self._search.textChanged.connect(self._refilter)
         self._search.installEventFilter(self)
-        lay.addWidget(self._search)
+        field_lay.addWidget(self._search, 1)
+        lay.addWidget(self._field)
 
-        self._list = QListWidget()
-        self._list.setStyleSheet(TH.command_list_qss(t))
+        # -- results ---------------------------------------------------
+        self._list = _PaletteList(self.LIST_MAX_H)
+        self._list.setStyleSheet(TH.palette_list_qss(t))
         self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._list.setMaximumHeight(320)
+        self._list.setUniformItemSizes(False)
+        self._list.setSelectionMode(
+            QListWidget.SelectionMode.SingleSelection)
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        self._list.itemClicked.connect(self._activate)
         self._list.itemActivated.connect(self._activate)
         lay.addWidget(self._list)
 
@@ -7119,70 +7746,209 @@ class CommandPalette(PulseDialog):
         self._empty.hide()
         lay.addWidget(self._empty)
 
+        lay.addWidget(self._build_footer(t))
+
+        self._apply_field_focus(False)
         self._refilter("")
 
-    # -- filtering / selection ----------------------------------
+    # -- the hint bar --------------------------------------------------
+    def _build_footer(self, t: dict) -> QFrame:
+        foot = QFrame()
+        foot.setObjectName("paletteFooter")
+        foot.setStyleSheet(TH.palette_footer_qss(t))
+        row = QHBoxLayout(foot)
+        row.setContentsMargins(TH.SPACE["xs"], TH.SPACE["sm"],
+                               TH.SPACE["xs"], 0)
+        row.setSpacing(TH.SPACE["xs"])
+        for keys, what in (("↑↓", "navigate"), ("↵", "run"), ("esc", "close")):
+            cap = QLabel(keys)
+            cap.setStyleSheet(TH.palette_keycap_qss(t))
+            row.addWidget(cap)
+            label = QLabel(what)
+            row.addWidget(label)
+            row.addSpacing(TH.SPACE["sm"])
+        row.addStretch()
+        self._count = QLabel("")
+        row.addWidget(self._count)
+        return foot
+
+    # -- filtering / grouping ------------------------------------------
     def _refilter(self, text: str):
         self._list.clear()
+        self._rows.clear()
         query = text.strip().lower()
+
         scored = []
         for item, category in self._entries:
             hit = _match_entry(query, item, category)
-            if hit is None:
-                continue
-            scored.append((hit[0], hit[1], item, category))
+            if hit is not None:
+                scored.append((hit[0], hit[1], item, category))
         # Sort by score, then by title, so equal scores order predictably
         # instead of by whatever iteration order the catalog happened to
         # have — a result list that reshuffles between identical queries
         # reads as broken.
         scored.sort(key=lambda row: (-row[0], row[2].get("title", "")))
+        shown = scored[: self.MAX_RESULTS]
 
-        self._empty.setVisible(bool(query) and not scored)
-        self._list.setVisible(bool(scored))
+        self._empty.setVisible(bool(query) and not shown)
+        self._list.setVisible(bool(shown))
+        self._count.setText(
+            "" if not shown else
+            f"{len(shown)} result{'' if len(shown) == 1 else 's'}")
 
-        for _score, matched, item, category in scored[: self.MAX_RESULTS]:
-            # When the hit came from something the card CONTAINS, say so.
-            # "Software Catalog" appearing for "spotify" is correct but
-            # looks arbitrary without the reason attached.
-            trail = f"{category}  ·  installs {matched}" if matched else category
-            row = QListWidgetItem(f"{item['icon']}  {item['title']}   ·   {trail}")
-            row.setData(Qt.ItemDataRole.UserRole, item)
-            self._list.addItem(row)
-        if self._list.count():
-            self._list.setCurrentRow(0)
+        # GROUPS ORDERED BY THEIR BEST MEMBER, so the top hit stays the top
+        # row. Python's dicts keep insertion order and `shown` is already
+        # sorted by score, so the first time a module appears IS its best
+        # score — no second sort needed.
+        #
+        # GROUPED BY MODULE, NOT BY BREADCRUMB. iter_leaf_items() hands
+        # back "Software Management › Microsoft Edge" for an action inside
+        # a hub, and grouping on that splits one module into as many
+        # sections as it has hubs — four results could produce four
+        # headers, which is a list of headings with a row under each
+        # rather than a grouped list. The module is the group; the hub
+        # moves to the row's own right-aligned hint, which is where a
+        # detail that locates ONE result belongs.
+        groups: dict[str, list] = {}
+        for row in shown:
+            module, _sep, hub = row[3].partition(" › ")
+            groups.setdefault(module, []).append((row, hub))
+
+        for module, rows in groups.items():
+            self._add_header(module)
+            for (_score, matched, item, _cat), hub in rows:
+                self._add_result(item, matched, hub)
+        # The row count changed, so the height the list wants changed with
+        # it — and Qt caches a child's hint until something invalidates it.
+        # Without this the panel keeps whatever height the FIRST query
+        # produced, which for the empty opening query is every entry in the
+        # app and for the next one is four.
+        self._list.updateGeometry()
+        self._select_first()
+
+    def _add_header(self, title: str):
+        head = QListWidgetItem()
+        head.setFlags(Qt.ItemFlag.NoItemFlags)
+        head.setData(Qt.ItemDataRole.UserRole, self._HEADER)
+        label = QLabel(title.upper())
+        label.setStyleSheet(TH.palette_section_qss(self._t))
+        label.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["md"], 0)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignBottom)
+        label.setFixedHeight(TH.PALETTE_SECTION_H)
+        # An EXPLICIT hint, not the label's own: a QListWidget sizes an
+        # item widget from the hint the ITEM carries, and a QLabel asked
+        # for its hint before Qt has polished its stylesheet answers for
+        # the default font rather than for the 10px letterspaced caption
+        # it is about to become. The rows then overlap their headers.
+        head.setSizeHint(QSize(0, TH.PALETTE_SECTION_H))
+        self._list.addItem(head)
+        self._list.setItemWidget(head, label)
+
+    def _add_result(self, item: dict, matched: str, hub: str):
+        # THE HINT NAMES WHY THIS ROW IS HERE, when that is not obvious.
+        # Two things can make it non-obvious, and they do not co-occur
+        # often enough to need both on one row:
+        #   * the hit came from something the card CONTAINS ("Software
+        #     Catalog" for "spotify" is correct and reads as random
+        #     without the reason attached), or
+        #   * the action lives inside a HUB, so its title alone does not
+        #     say where it is — and the group header above it names only
+        #     the module, deliberately (see _refilter).
+        # The content match wins: it answers a question the user is
+        # actively asking, where the hub is background.
+        hint = f"installs {matched}" if matched else hub
+        row = _PaletteRow(item.get("glyph", ""), item.get("icon", ""),
+                          item.get("title", ""), hint, self._t)
+        cell = QListWidgetItem()
+        cell.setData(Qt.ItemDataRole.UserRole, item)
+        cell.setSizeHint(QSize(0, TH.PALETTE_ROW_H))
+        self._list.addItem(cell)
+        self._list.setItemWidget(cell, row)
+        self._rows[self._list.row(cell)] = row
+
+    # -- selection ------------------------------------------------------
+    def _is_result(self, row: int) -> bool:
+        item = self._list.item(row)
+        return (item is not None
+                and item.data(Qt.ItemDataRole.UserRole) != self._HEADER)
+
+    def _select_first(self):
+        for row in range(self._list.count()):
+            if self._is_result(row):
+                self._list.setCurrentRow(row)
+                return
+
+    def _on_row_changed(self, row: int):
+        """Repaint the run marker. Only the ACTIVE row carries it, so both
+        the row gaining it and the row losing it have to be told."""
+        for index, widget in self._rows.items():
+            widget.set_selected(index == row, self._t)
 
     def _move_selection(self, delta: int):
-        n = self._list.count()
-        if n == 0:
+        """Step to the next RESULT, skipping section headers and wrapping.
+
+        Headers are items in the same list — that is what lets the divider
+        scroll with the group it names — so navigation has to step over
+        them rather than assume every index is selectable. Wrapping is the
+        palette convention: Down on the last result returns to the first
+        rather than dead-ending, because the list is short by construction
+        and a keyboard-first surface should never have a key that does
+        nothing.
+        """
+        count = self._list.count()
+        if count == 0:
             return
         row = self._list.currentRow()
-        row = (row + delta) % n if row != -1 else (0 if delta > 0 else n - 1)
-        self._list.setCurrentRow(row)
+        if row < 0:
+            row = -1 if delta > 0 else count
+        for _ in range(count):
+            row = (row + delta) % count
+            if self._is_result(row):
+                self._list.setCurrentRow(row)
+                self._list.scrollToItem(self._list.item(row))
+                return
 
     def _activate(self, list_item: QListWidgetItem):
-        self.chosen_item = list_item.data(Qt.ItemDataRole.UserRole)
+        data = list_item.data(Qt.ItemDataRole.UserRole)
+        if data == self._HEADER or data is None:
+            return
+        self.chosen_item = data
         self.accept()
 
     # -- keyboard: the QLineEdit owns focus, so Up/Down/Enter/Escape are
     # intercepted here and forwarded to the result list -----------------
     def eventFilter(self, obj, event):
-        if obj is self._search and event.type() == QEvent.Type.KeyPress:
-            key = event.key()
-            if key == Qt.Key.Key_Down:
-                self._move_selection(1)
-                return True
-            if key == Qt.Key.Key_Up:
-                self._move_selection(-1)
-                return True
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                current = self._list.currentItem()
-                if current is not None:
-                    self._activate(current)
-                return True
-            if key == Qt.Key.Key_Escape:
-                self.reject()
-                return True
+        if obj is self._search:
+            if event.type() == QEvent.Type.FocusIn:
+                self._apply_field_focus(True)
+            elif event.type() == QEvent.Type.FocusOut:
+                self._apply_field_focus(False)
+            elif event.type() == QEvent.Type.KeyPress:
+                key = event.key()
+                if key == Qt.Key.Key_Down:
+                    self._move_selection(1)
+                    return True
+                if key == Qt.Key.Key_Up:
+                    self._move_selection(-1)
+                    return True
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    current = self._list.currentItem()
+                    if current is not None:
+                        self._activate(current)
+                    return True
+                if key == Qt.Key.Key_Escape:
+                    self.reject()
+                    return True
         return super().eventFilter(obj, event)
+
+    def _apply_field_focus(self, on: bool):
+        """The field's focus ring lives on its CONTAINER, because the
+        QLineEdit inside it is chromeless (see theme.palette_field_qss) —
+        a :focus rule on the input would light a border that is not
+        drawn."""
+        self._field.setProperty("focused", on)
+        self._field.setStyleSheet(TH.palette_field_qss(self._t))
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -8038,8 +8804,9 @@ class UpdateRow(QFrame):
         self._id_label.setStyleSheet(TH.label_qss(t, "caption"))
         if self._running_chip is not None:
             # WARN, not ERR. A running app is a heads-up the user acts on,
-            # not the failure of anything - the same distinction the hero
-            # masthead's state pills already make (see strip_status_qss).
+            # not the failure of anything — the same distinction the status
+            # rail's unelevated session shield makes (see StatusRail, and
+            # theme.rail_state_qss for the tone pair).
             self._running_chip.setStyleSheet(TH.micro_chip_qss(t, "warn"))
 
     def is_running(self) -> bool:

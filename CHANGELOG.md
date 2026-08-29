@@ -14,6 +14,135 @@ GUI version, with core changes called out explicitly.
 
 ## [Unreleased]
 
+---
+
+## [10.7.0] — 2026-08-29
+
+One accent, flat surfaces, and a shell that stops moving underneath you.
+
+### Changed — the semantic palette
+- **Seven module colours collapse to one interactive accent**, in both
+  themes. The "Spectrum" identity was solved harder than anything else in
+  the palette — a contrast floor per colour, peer parity measured
+  in-plaque, an OKLCh chroma ceiling, a pairwise ΔE floor so no two
+  modules rendered as one colour — and every one of those constraints was
+  met while the result stayed the app's loudest problem. A module colour is
+  constant INSIDE the module it names and redundant BETWEEN modules (the
+  page header, the breadcrumb and the selected nav rail have already said
+  where you are), so the hue was never distinguishing anything the user
+  was looking at. What it did do was spend the whole chromatic budget on
+  decoration, leaving emerald, amber and ruby competing with teal, pink
+  and violet for the eye.
+- **The brand sweep re-hues violet → magenta to indigo → cyan**, at FIXED
+  LUMINANCE. WCAG's ratio is a function of luminance alone, so every
+  measured relationship in the app — the beta pill, the update badge's
+  tone ordering, the nav indicator, the aurora edge — carries over
+  untouched and only the hue moves. Chroma falls 10.79 → 8.53 and
+  12.01 → 7.17 as a consequence of the hue, not as a second edit.
+- `test_no_two_modules_are_the_same_colour` **inverts** into
+  `test_every_module_resolves_to_the_one_interactive_accent`, and a new
+  ΔE floor guards the four tones that now do all the work (accent, ok,
+  warn, err) — the guarantee it was making matters more with one accent,
+  not less.
+
+### Changed — surfaces are flat
+- **No surface paints a gradient across its own face.** Every elevated
+  surface was a `glass_fill`: a white sheen running down into the base
+  over its top 13–20%. Consistent, and still the loudest thing on a
+  category page — fourteen cards is fourteen luminance ramps on the exact
+  surfaces whose job is to be a calm plate for text. Elevation is bought
+  twice over at the EDGE, where it costs the plate nothing: the 1px
+  hairline, plus the painted top sheen and multi-layer cast shadow.
+- **The dark stack is the two neutrals the design language has**: canvas
+  `#090A0B`, elevated surface `#121418`. v14 had spent the elevated value
+  on the CONTAINERS, so the sidebar and content frame sat at card
+  brightness and cards had to climb above them — three tones, with the
+  card in the wrong place.
+- **One hover weight, app-wide.** A card lifted toward indigo at 0.085
+  while a menu row lifted toward white at 0.06: same pointer, same
+  meaning, two colours at two weights depending on what it was over.
+
+### Changed — the shell
+- **The dashboard is a System Health & Quick Hub.** Four KPI tiles (CPU,
+  memory, system drive, and the count of overdue operations across every
+  module) sit above the quick actions, at ~84px against the 210px band the
+  v1.0 RC pass deleted. The pending count is computed inside
+  `_refresh_card_badges` — the one place the state probe and the run
+  history are reconciled — so it cannot drift from the ACTION DUE chips
+  the cards themselves are wearing.
+- **One status rail closes the sidebar**, replacing four surfaces: the
+  title-bar theme toggle, a full-width elevate CTA (or a full-width admin
+  chip in its place), and the version line. ~110px becomes 36.
+- **The title bar has no client holes left.** The theme toggle was an
+  ordinary Qt button inside a strip answered entirely as HTCAPTION, so it
+  needed a hand-measured HTCLIENT hole (`_over_theme_button`, DPI-aware
+  physical-pixel mapping that had to track the button's geometry) just to
+  receive a click. Both are gone;
+  `test_the_caption_strip_has_no_client_holes_left` keeps it uniform.
+- **The brand mark splits into a hero and a logo.** The title-bar
+  instance was a Light-weight glyph at 58% of a 26px box, in the mid-tone
+  accent, breathing down to 45% opacity — four choices each costing
+  contrast. The static face is DemiBold, 20px in a 30px box (the app's own
+  plaque glyph size), full opacity, painted in the brand sweep. The 58px
+  dashboard mark still breathes.
+- **The machine spec caption is gone** — `Windows 11 Professional · Build
+  26200 · 12 Cores · 31.8 GB`, four facts that never change while the app
+  is open, three of which the health row now reports live in the units
+  that matter.
+
+### Changed — the command palette
+- **Results group under module dividers.** Rows were one concatenated
+  string (icon, title, category, and the reason a catalog card matched),
+  so they had one alignment: the module name was repeated on every row and
+  long titles were pushed into an ellipsis by context nobody read twice.
+  Rows are widgets now — glyph, title, right-aligned hint — with a `↵`
+  keycap on the active row.
+- Groups are ordered by their own best-scoring member, so **grouping costs
+  no relevance**: the top hit is still the first row, it has simply
+  acquired a heading. Arrow keys step over the dividers and wrap.
+- **A hint bar states the palette's own bindings** (`↑↓ navigate · ↵ run ·
+  esc close`) with a live result count. The app's only keyboard-first
+  surface shipped with nothing saying what its keys did.
+- The search field became a bordered frame around a chromeless input so it
+  can carry a leading search mark; its focus ring moves to a dynamic
+  property, because QSS has no parent selector and a `:focus` rule on the
+  input would light a border nobody draws.
+
+### Fixed — dialogs stop reserving space for content that is not there
+- **`FitScroll` measured its content at the wrong width.**
+  `layout.sizeHint()` is measured against the layout's PREFERRED width, and
+  every wrapping label in the app prefers a narrower column than an 840px
+  selector panel gives it — so the hint described a taller, skinnier
+  version of the content than the one that got painted. The dialog sized
+  itself to that phantom, the real text wrapped onto fewer lines, and the
+  difference became dead space under the last row. Measured on the DNS
+  switcher: 45px of void on a 467px dialog, entirely from asking the wrong
+  question. Height-for-width is used where the layout has it, and a width
+  change now invalidates the hint the same way a row change does.
+
+### Changed — one spacing vocabulary
+- **`SPACE` gains `ml` (20)** — the ramp's only 8px gap, and exactly where
+  a dialog panel's padding wants to sit. **`PAD` names two of its steps**:
+  `surface` (16) for anything with a hairline that sits in the layout,
+  `sheet` (20) for a panel that floats. Dialogs drop from an unexplained
+  24/24/24/16 to a square 20.
+- **Home and a module page share one content column.** Both are swapped
+  into the same stack inside the same content frame, and five containers
+  had five padding recipes for one question: measured at 1500px wide, the
+  dashboard's column started at x=347 and a category page's at x=331, so
+  the content jumped sideways on every navigation.
+- **One card-grid gutter (16px)** across the health row, the quick actions
+  and every module page. Three grids ran at 12, 24 and 16 — and the first
+  two sit one above the other on the same screen.
+- **The quick actions are a 2×3 block at every width.** v14 allowed six
+  columns from ~1440p up; at 2560 maximised that gave a 340px card whose
+  own title wrapped, above a void. A capped-and-centred content measure was
+  tried as the alternative and removed — it re-introduced the column jump
+  at exactly the sizes this app is used at.
+- Catalog tabs, the filter field, the page's filter combo, the storage
+  drive picker and the Back/Home pills all move onto `CONTROL_H`; the
+  control-height exemption list shrinks rather than grows.
+
 ### Changed — every launch elevates
 - **The manifest now requests `requireAdministrator`** (`uac_admin=True` in
   `main.spec`), so Windows prompts for UAC before Pulse starts and the
@@ -57,6 +186,11 @@ GUI version, with core changes called out explicitly.
   yet run and migrated still opens the right thing.
 
 ### Fixed
+- `test_closing_settles_all_three_background_threads` held a Python handle
+  on a QThread across the `deleteLater()` its own drain loop delivers, and
+  raised `Internal C++ object already deleted` intermittently under load.
+  The thread going away is what the loop is waiting for, so that is now
+  the success case rather than a failure.
 - Seven user-facing messages named a Desktop folder that no longer exists
   — a message pointing at the wrong place is as broken as writing there,
   since the user goes looking, finds nothing, and concludes no backup was

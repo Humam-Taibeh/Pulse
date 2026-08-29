@@ -1243,7 +1243,9 @@ class SystemPulseSampler:
     """CPU / memory / system-drive utilisation for the dashboard's footer
     status line. Raw kernel32 reads — no psutil dependency, no WMI, no
     process spawn — so the 2 s dashboard timer costs microseconds a tick,
-    the same budget discipline as main._system_insights().
+    the same budget discipline every read on the GUI thread follows.
+    (It used to name main._system_insights() as the sibling example;
+    that function went with the machine-spec caption it fed.)
 
     CPU is a DELTA measure over GetSystemTimes (idle vs total FILETIME
     ticks since the previous sample), so the FIRST call cannot produce a
