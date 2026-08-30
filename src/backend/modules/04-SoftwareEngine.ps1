@@ -1257,7 +1257,14 @@ function Invoke-GuiLocalInstall {
     #>
     param([Parameter(Mandatory = $true)][string]$FilePath)
 
-    if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
+    # -LiteralPath, for the same reason Disable-StartupItem's Move-Item
+    # uses it: this path came from a FILE PICKER, so it is whatever the
+    # user's disk actually holds, and '[' and ']' are legal in a Windows
+    # filename. -Path reads them as a character class, so a real installer
+    # sitting right there - "setup [1].exe", which is exactly what a
+    # browser names a second download of the same file - matched nothing
+    # and was rejected as "Installer file not found" before it could run.
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
         Write-ErrorX "Installer file not found: $FilePath"
         return $false
     }

@@ -183,7 +183,29 @@ _ENTRIES = [
 
 
 @pytest.fixture
-def purge(window, qapp):
+def no_live_scan(monkeypatch):
+    """Construct the purge dialog WITHOUT letting it scan.
+
+    The fixtures below have always CLAIMED "no backend, no thread", but
+    nothing made it true: BloatwarePurgeDialog.__init__ calls _start_scan()
+    unconditionally, which puts a real PowerShellTask on a real QThread and
+    spawns powershell.exe against the empty ps1 path these tests pass. That
+    scan fails within ~10ms and _on_scan_failed switches the stack to the
+    error page — CLOBBERING the results page the test just rendered by
+    hand. Every assertion that reads a child's isVisible() then answers
+    False about a dialog that is in every respect correct.
+
+    It is the same hazard TestRunningApps.no_live_scan documents for the
+    Update Center, and it has the same fix: do not start the thread, rather
+    than race its teardown. The settle path keeps its own coverage in
+    tests/test_audit_hardening.py, where the worker IS the subject.
+    """
+    monkeypatch.setattr(BloatwarePurgeDialog, "_start_scan",
+                        lambda self: None)
+
+
+@pytest.fixture
+def purge(window, qapp, no_live_scan):
     """A rendered dialog with a fixed inventory — no backend, no thread.
 
     The scan is bypassed on purpose: what is under test here is what the
@@ -265,7 +287,8 @@ def test_absent_rows_are_folded_away_until_asked_for(purge, qapp):
         "the catalog cannot be inspected even on request")
 
 
-def test_a_clean_machine_shows_the_catalog_rather_than_an_empty_box(window, qapp):
+def test_a_clean_machine_shows_the_catalog_rather_than_an_empty_box(
+        window, qapp, no_live_scan):
     """With nothing detected there is nothing to bury, and an empty list
     under a '0 of 25 present' header reads as a dialog that failed to
     load."""

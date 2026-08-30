@@ -57,6 +57,117 @@ def test_the_build_is_onedir_not_onefile(spec):
         "EXE() is embedding the payload again — this is a onefile build")
 
 
+def test_every_runtime_resource_is_actually_bundled(spec):
+    """THE SPEC IS A SECOND LIST OF WHAT THE APP NEEDS, and nothing joined
+    it to the first.
+
+    Anything reached through resources.find_resource() / resource_dirs()
+    is resolved, in a frozen build, ONLY under _MEIPASS — bundled_roots()
+    returns the bundle and nothing else. So a path the code asks for and
+    the spec does not carry simply is not there at runtime.
+
+    That is not hypothetical. v10.9.0 — the release whose headline was
+    "in the vendors' own colours" — shipped with no `assets/appicons`
+    entry, so not one of the 37 brand marks was in the bundle. Every
+    catalog row fell through to the neutral grey glyph, on the released
+    build only, and the whole suite stayed green: appicons._manifest()
+    degrades a missing manifest to "no bundled marks" by design, and every
+    icon test reads the SOURCE tree. Nothing anywhere looked in the bundle.
+
+    This joins the two lists. It reads the resource paths out of the code
+    that asks for them, so a new one is covered the day it is written
+    rather than the day someone remembers to add a test.
+    """
+    import glob
+
+    sources = {os.path.relpath(p, _ROOT): _read(os.path.relpath(p, _ROOT))
+               for p in glob.glob(os.path.join(_ROOT, "src", "**", "*.py"),
+                                  recursive=True)}
+
+    # Module-level string constants, so an f-string placeholder resolves to
+    # the path it will actually ask for rather than being skipped — the
+    # skip is where a blind spot like the appicons one hides.
+    constants: dict[str, str] = {}
+    for text in sources.values():
+        for name, value in re.findall(
+                r"""^([A-Z][A-Z0-9_]*)\s*=\s*["']([^"']+)["']""", text, re.M):
+            constants.setdefault(name, value)
+
+    def resolve(literal: str) -> str:
+        """The path this call asks for, reduced to what can be checked.
+
+        A `{NAME}` placeholder is substituted from the constants above. One
+        holding an EXPRESSION (`{entry.get('file', '')}`) cannot be, so the
+        literal is cut back to its deepest fixed directory instead — which
+        is the right question anyway: code building
+        `assets/appicons/<whatever>` needs `assets/appicons` in the bundle
+        however the leaf is spelled.
+        """
+        literal = re.sub(r"\{(\w+)\}",
+                         lambda m: constants.get(m.group(1), m.group(0)),
+                         literal)
+        if "{" in literal:
+            literal = literal[:literal.index("{")].rstrip("/")
+        return literal
+
+    # ONE GROUP PER CALL SITE, because find_resource takes ALTERNATIVES and
+    # returns the first that exists — the core.ps1 lookup names four
+    # candidate layouts and the bundle only ever carries one of them.
+    # Requiring all four would demand files that must not exist.
+    groups: list[tuple[str, list[str]]] = []
+    for name, text in sources.items():
+        if os.path.basename(name) == "resources.py":
+            continue                      # defines the helpers, uses neither
+        for pattern in (r"find_resource\((.*?)\)\s*$",
+                        r"find_resource\(([^)]*)\)",
+                        r"resource_dirs\(([^),]*)"):
+            for args in re.findall(pattern, text, re.S | re.M):
+                alts = [resolve(lit) for lit in
+                        re.findall(r"""["']([^"']+)["']""", args)]
+                # Keep only things shaped like a path: the separator inside
+                # `entry.get('file', '')` is a string literal too.
+                alts = [a for a in alts
+                        if a and re.fullmatch(r"[\w./-]+", a)]
+                if alts:
+                    groups.append((name, alts))
+    # PLAYBOOK_DIRNAME reaches resource_dirs as a name, not a literal.
+    groups.append(("frontend/playbooks.py",
+                   [constants.get("PLAYBOOK_DIRNAME", "playbooks")]))
+
+    assert len(groups) >= 4, (
+        f"the scanner found only {groups} — it has stopped matching the "
+        "call sites and would pass for the wrong reason")
+    assert any("assets/appicons" in alts for _f, alts in groups), (
+        "the scanner no longer sees the brand-mark lookup, which is the "
+        "case this test was written for")
+
+    # What the spec's datas actually place in the bundle, as source paths.
+    # Scoped to the datas=[...] block: the version resource further down is
+    # also a list of ('name', 'value') tuples and would otherwise be read
+    # as if StringStruct fields were bundled files.
+    datas_block = re.search(r"datas\s*=\s*\[(.*?)\n\s*\],", spec, re.S)
+    assert datas_block, "main.spec has no datas=[...] block"
+    bundled = [src.replace("\\", "/")
+               for src, _dest in re.findall(
+                   r"\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)",
+                   datas_block.group(1))]
+
+    def carried(rel: str) -> bool:
+        rel = rel.rstrip("/")
+        return any(rel == b.rstrip("/")
+                   or rel.startswith(b.rstrip("/") + "/")
+                   or os.path.dirname(rel) == b.rstrip("/")
+                   for b in bundled)
+
+    missing = [(where, alts) for where, alts in groups
+               if not any(carried(a) for a in alts)]
+    assert not missing, (
+        "code resolves these through resources.find_resource()/"
+        "resource_dirs(), but main.spec bundles none of the candidates, so "
+        f"they are absent from the frozen build ONLY: {missing}\n"
+        f"spec datas: {bundled}")
+
+
 def test_the_exe_carries_a_version_resource(spec):
     """Without it the Properties tab is blank, AV heuristics have nothing
     to weigh, and the updater has no authoritative installed version."""
@@ -185,6 +296,45 @@ def test_it_can_replace_a_running_copy(iss):
     assert re.search(r"^RestartApplications=yes", iss, re.MULTILINE)
 
 
+def test_the_post_install_launch_cannot_be_blocked_by_app_control(iss):
+    """WINDOWS APP CONTROL ERROR 4551, and the two flags that avoid it.
+
+    Setup runs ELEVATED. PULSE.exe's own manifest asks for
+    requireAdministrator (see the manifest note in main.spec). So the
+    "Launch PULSE" checkbox is an elevated parent spawning an
+    elevation-requesting child — exactly the shape a machine with App
+    Control / Smart App Control enforcing refuses, and Setup surfaces the
+    refusal as 4551 on the very last screen of a successful install.
+
+      * shellexec         goes through ShellExecuteEx, so Windows performs
+                          its normal elevation handshake instead of the
+                          child inheriting the installer's token;
+      * runasoriginaluser runs it as the signed-in user rather than the
+                          elevated installer account — which is also what
+                          puts %LOCALAPPDATA%\\PULSE, the saved theme, the
+                          window geometry and the log under the profile
+                          the user will actually come back to.
+
+    Both were reasoned about at length in pulse.iss and neither was
+    asserted anywhere, so a tidy-up of the [Run] line would have silently
+    reintroduced a launch failure that only appears on machines with App
+    Control on — i.e. never on the developer's.
+    """
+    run = re.search(r"^\[Run\](.*?)(?=^\[|\Z)", iss, re.MULTILINE | re.DOTALL)
+    assert run, "pulse.iss has no [Run] section"
+    entry = "".join(
+        line for line in run.group(1).splitlines()
+        if not line.lstrip().startswith(";"))
+    assert "postinstall" in entry, "the launch-on-finish checkbox is gone"
+    for flag in ("runasoriginaluser", "shellexec"):
+        assert flag in entry, (
+            f"the post-install launch dropped '{flag}' — it will fail with "
+            "error 4551 wherever App Control is enforcing")
+    # nowait/skipifsilent keep a silent updater-driven upgrade from
+    # blocking on the app it just relaunched.
+    assert "nowait" in entry and "skipifsilent" in entry
+
+
 def test_the_output_name_is_what_the_updater_looks_for(iss):
     """pulse.iss names the artifact and updater._ASSET_RE finds it. If they
     disagree, every release silently has 'no installer' and no user is ever
@@ -246,6 +396,15 @@ def test_the_build_script_verifies_the_bundle_layout(build_script):
     assert "_internal\\VERSION" in build_script
     assert "_internal\\src\\backend\\core.ps1" in build_script
     assert "_internal\\src\\backend\\modules" in build_script
+    # The brand marks, checked at BUILD time as well as statically above.
+    # The two guards catch different mistakes: the spec test catches a
+    # datas entry nobody wrote, this catches a bundle that came out wrong
+    # anyway (an excluded path, a failed copy). v10.9.0 needed both and
+    # had neither.
+    assert "_internal\\assets\\appicons\\manifest.json" in build_script
+    assert "-Filter *.svg" in build_script, (
+        "the build no longer counts the bundled marks — a manifest with no "
+        "artwork beside it would pass")
 
 
 def test_the_build_script_survives_native_stderr(build_script):

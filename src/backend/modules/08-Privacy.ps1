@@ -447,8 +447,26 @@ function Remove-Bloatware {
         foreach ($Name in $Target.Installed) {
             if (Test-DryRun "Remove Store app '$Name' for all users") { $RemovedAny = $true; continue }
             try {
-                Get-AppxPackage -Name $Name -AllUsers -ErrorAction Stop |
-                    Remove-AppxPackage -AllUsers -ErrorAction Stop
+                # ENUMERATE, THEN REMOVE - not one pipeline. An empty
+                # pipeline is not an error in PowerShell: if the package is
+                # no longer there, Get-AppxPackage yields nothing,
+                # Remove-AppxPackage is never invoked, no exception is
+                # raised, and the straight-line code after it ran anyway.
+                # So Pulse printed "Removed News" and counted a removal for
+                # a package it had not touched - the exact false claim this
+                # function's own contract says it must not make.
+                #
+                # The window is real: the inventory is taken at the top of
+                # this function, and between then and here the user may
+                # have removed the app from Settings, or another profile's
+                # copy may have been unstaged. "Already gone" is a perfectly
+                # ordinary machine state - it just is not a removal.
+                $Present = @(Get-AppxPackage -Name $Name -AllUsers -ErrorAction Stop)
+                if ($Present.Count -eq 0) {
+                    Write-Info "$($Target.Name) was already gone by the time the purge reached it."
+                    continue
+                }
+                $Present | Remove-AppxPackage -AllUsers -ErrorAction Stop
                 Write-Success "Removed $($Target.Name)"
                 $RemovedAny = $true
             } catch {

@@ -423,12 +423,18 @@ function Invoke-GuiTask {
                 # over a console listing four dead PATH entries is the one
                 # sentence this task must never say.
                 $PathTxt = ""
-                $PathIssues = [int]$Report.DeadPathCount + [int]$Report.DuplicatePathCount
+                $PathIssues = [int]$Report.DeadPathCount + [int]$Report.DuplicatePathCount +
+                              [int]$Report.InvalidPathCount
                 if ($PathIssues -gt 0) {
                     $Parts = @()
                     if ($Report.DeadPathCount -gt 0)      { $Parts += "$($Report.DeadPathCount) dead" }
                     if ($Report.DuplicatePathCount -gt 0) { $Parts += "$($Report.DuplicatePathCount) duplicate" }
-                    $PathTxt = " PATH scan: $($Parts -join ' and ') entr" + $(if ($PathIssues -eq 1) { "y" } else { "ies" }) + " of $($Report.PathEntryCount) - listed above, none removed."
+                    if ($Report.InvalidPathCount -gt 0)   { $Parts += "$($Report.InvalidPathCount) malformed" }
+                    # "a and b and c" once a third bucket exists; the last
+                    # separator is the only one that stays "and".
+                    $PartsTxt = if ($Parts.Count -le 2) { $Parts -join ' and ' }
+                                else { ($Parts[0..($Parts.Count - 2)] -join ', ') + ' and ' + $Parts[-1] }
+                    $PathTxt = " PATH scan: $PartsTxt entr" + $(if ($PathIssues -eq 1) { "y" } else { "ies" }) + " of $($Report.PathEntryCount) - listed above, none removed."
                 }
                 $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
                 if ($Report.MissingCount -eq 0 -and $Report.RepairedCount -eq 0 -and $PathIssues -eq 0) {

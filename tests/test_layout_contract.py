@@ -1057,6 +1057,19 @@ def test_a_fit_scroll_measures_its_content_at_the_width_it_gets(window, qapp):
 
     The guard is stated against a widget whose height genuinely depends on
     its width, so it fails if the height-for-width path is dropped.
+
+    IT ASSERTS THAT THE TWO ANSWERS DIFFER, NOT WHICH ONE IS LARGER. The
+    direction is a property of the fixture's screen, not of the defect: a
+    word-wrapping QLabel's sizeHint() is measured at the width Qt thinks it
+    would PREFER, and for a 1100-character label that is a wide, short box
+    (956px here) — wider than the 840px panel, so the naive hint comes out
+    SHORTER, the opposite way round from the DNS switcher measured above.
+    That cap moves with the display (it is screen-derived, and the
+    offscreen platform's virtual screen is 800x800), so an assertion on the
+    direction is an assertion about the machine running the suite. The
+    defect itself — reporting sizeHint().height() instead of the height at
+    the viewport's width — is caught exactly by the pair below: the value
+    must not be the naive hint, and must be the height-for-width one.
     """
     from PySide6.QtWidgets import QLabel, QWidget
     from frontend import widgets as W
@@ -1072,23 +1085,33 @@ def test_a_fit_scroll_measures_its_content_at_the_width_it_gets(window, qapp):
     scroll.setWidget(host)
     scroll.setParent(window)
     scroll.resize(840, 400)
+    # show(), and it is load-bearing. setParent() HIDES a widget, and Qt
+    # defers resize events for hidden widgets until they are shown — so
+    # without this the viewport never left its default 640px and every
+    # number here described a width the area was never actually given.
+    scroll.show()
     qapp.processEvents()
 
+    viewport_w = scroll.viewport().width()
     at_width = scroll._content_height()
     naive = lay.sizeHint().height()
     try:
         assert lay.hasHeightForWidth(), (
             "the fixture no longer has a width-dependent height, so it "
             "cannot detect the defect it was written for")
-        assert at_width < naive, (
-            f"FitScroll reports {at_width}px for content that occupies "
-            f"{at_width}px at 840 wide but hints {naive}px — it is back to "
-            "measuring at the layout's preferred width")
+        assert viewport_w == pytest.approx(840, abs=20), (
+            f"the viewport is {viewport_w}px, not the 840 it was resized "
+            "to — the measurement below is against the wrong width")
+        assert at_width != naive, (
+            f"FitScroll reports {at_width}px, which is exactly what the "
+            "layout's own sizeHint() hints — it is back to measuring at "
+            "the layout's preferred width")
         assert at_width == pytest.approx(
-            lay.heightForWidth(scroll.viewport().width()), abs=4), (
+            lay.heightForWidth(viewport_w), abs=4), (
             "the reported height is not the content's height at the width "
             "the viewport actually gives it")
     finally:
+        scroll.hide()
         scroll.setParent(None)
         scroll.deleteLater()
         qapp.processEvents()

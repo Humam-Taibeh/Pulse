@@ -330,31 +330,81 @@ function Measure-DirectorySize {
     <# Recursive byte total for one directory, with the budget and the
        reparse-point guard described above. Errors are swallowed per-item,
        not per-scan: an unreadable AppData subfolder must cost that folder,
-       never the whole report. #>
+       never the whole report.
+
+       THE BUDGET HAS TO BIND THE ENUMERATION, NOT JUST THE ARITHMETIC, and
+       for one line of PowerShell it did not. This was:
+
+           $items = Get-ChildItem -LiteralPath $Path -Recurse -File
+           foreach ($item in $items) { if ((Get-Date) -gt $Deadline) { break } ... }
+
+       Assigning a pipeline to a variable RUNS IT TO COMPLETION first. So
+       the recursive walk of C:\Windows or C:\Users finished in full -
+       every directory visited, every FileInfo materialised - before the
+       deadline was consulted even once. The `break` then fired
+       immediately, correctly, and far too late: the 90-second budget was
+       being enforced against a walk that had already taken minutes, and
+       the accumulator had already grown an object per file on the volume.
+
+       Measured on this machine: a StorageScan of C:\ was still running
+       after nine minutes, against a documented budget of ninety seconds
+       and a dialog whose loading copy says "this can take a minute". The
+       real bound was the GUI's 900-second timeout, which reports a wedged
+       task rather than the truncated report the design intends.
+
+       So the walk is explicit and LAZY: DirectoryInfo.EnumerateFiles /
+       EnumerateDirectories stream their results, an explicit stack keeps
+       the recursion in hand, and the deadline is tested per directory and
+       per file. Now the break stops the walk itself.
+
+       Enumerating one directory at a time is also what preserves the
+       per-folder error contract: an UnauthorizedAccessException surfaces
+       while reading THAT directory and costs only its contents, which is
+       what -ErrorAction SilentlyContinue was doing before. #>
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][datetime]$Deadline,
-        [ref]$FileAccumulator,
-        [int]$TopFiles = 40
+        [ref]$FileAccumulator
     )
     $total = [double]0
+    $pending = New-Object System.Collections.Stack
     try {
-        $items = Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue
+        $pending.Push((New-Object System.IO.DirectoryInfo $Path))
     } catch {
         return $total
     }
-    foreach ($item in $items) {
+
+    while ($pending.Count -gt 0) {
         if ((Get-Date) -gt $Deadline) { break }
-        # A reparse point's target is counted under its real parent; following
-        # it here would double-count at best and loop at worst.
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-        $total += [double]$item.Length
-        if ($null -ne $FileAccumulator) {
-            $list = $FileAccumulator.Value
-            $list.Add([PSCustomObject]@{
-                path = $item.FullName; bytes = [double]$item.Length
-                modified = $item.LastWriteTime
-            }) | Out-Null
+        $dir = $pending.Pop()
+
+        try {
+            foreach ($item in $dir.EnumerateFiles()) {
+                if ((Get-Date) -gt $Deadline) { break }
+                # A reparse point's target is counted under its real parent;
+                # following it here would double-count at best and loop at
+                # worst.
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                $total += [double]$item.Length
+                if ($null -ne $FileAccumulator) {
+                    $list = $FileAccumulator.Value
+                    $list.Add([PSCustomObject]@{
+                        path = $item.FullName; bytes = [double]$item.Length
+                        modified = $item.LastWriteTime
+                    }) | Out-Null
+                }
+            }
+        } catch {
+            # Unreadable directory - costs this folder's files, nothing else.
+        }
+
+        try {
+            foreach ($sub in $dir.EnumerateDirectories()) {
+                if ($sub.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                $pending.Push($sub)
+            }
+        } catch {
+            # Same: an unreadable folder yields no children, not an aborted scan.
         }
     }
     return $total

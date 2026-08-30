@@ -349,15 +349,41 @@ class TestStartupRowLayout:
         }, window.theme.t)
 
     def test_a_long_name_elides_in_the_middle(self, window, qapp):
+        """HEAD AND TAIL BOTH SURVIVE — stated structurally, not as a
+        character count.
+
+        The property that matters is that the ellipsis lands in the MIDDLE:
+        an Edge auto-launch key is identified at both ends, so an ElideRight
+        caption renders "MicrosoftEdgeAutoLaunch_9F2A…" and
+        "MicrosoftEdgeAutoLaunch_1C40…" as the same string.
+
+        HOW MANY characters survive is font metrics, and asserting on it
+        makes this a test of the machine. The name column takes what the
+        row can spare after two unelided badges, so under the offscreen
+        platform's fallback face (Sans Serif 16px, where the badges measure
+        157px and 252px against Segoe UI's 110px and 148px) the caption
+        gets 149px instead of 300px and keeps four leading characters
+        instead of sixteen. Both are correct middle elisions of the same
+        string; only a literal "Micro" prefix could tell them apart, and it
+        failed headless while the widget was behaving perfectly.
+
+        Checking the head and tail against the real name is also strictly
+        stronger than the prefix it replaces: it catches a caption that
+        elides correctly but paints the WRONG string.
+        """
         row = self._row(window, self._LONG)
         row.setFixedWidth(700)
         row.show()
         qapp.processEvents()
-        painted = row._name.text()
+        painted = row._name.text().rstrip()
         assert painted != self._LONG, "the name is not eliding at all"
-        assert painted.startswith("Micro"), (
+        head, ellipsis, tail = painted.partition("…")
+        assert ellipsis, (
+            f"{painted!r} carries no ellipsis — the name is being clipped "
+            "rather than elided")
+        assert head and self._LONG.startswith(head), (
             f"the head of the identifier was dropped: {painted!r}")
-        assert painted.rstrip().endswith("E9"), (
+        assert tail and self._LONG.endswith(tail), (
             f"{painted!r} elides at the END — two Edge auto-launch keys "
             "would render as the same string")
         assert row.toolTip() or row._name.toolTip(), (
@@ -977,6 +1003,48 @@ class TestBrandMarks:
                 wrong.append(app_id)
         assert not wrong, f"flagged full-colour but drawn as silhouettes: {wrong}"
 
+    #: The catalog apps that have no authentic logo in any open,
+    #: permissively-licensed set. A CLOSED list, so the two tests below can
+    #: fail in BOTH directions rather than only the one anyone thought of.
+    NO_AUTHENTIC_MARK = frozenset({
+        "BlueStacks.BlueStacks", "CPUID.CPU-Z", "CPUID.HWMonitor",
+        "CrystalDewWorld.CrystalDiskInfo", "Microsoft.DirectX",
+        "TechPowerUp.GPU-Z",
+    })
+
+    def test_every_catalog_app_has_a_mark_or_is_a_known_exception(self):
+        """THE DIRECTION NOTHING CHECKED. The manifest was verified against
+        the files it names, and the six unmarked apps were pinned as
+        absent — but nothing ever asked whether the OTHER catalog rows had
+        marks at all.
+
+        So adding an app to SOFTWARE_CATALOG and forgetting its SVG was
+        silent: the row rendered the neutral package glyph, which is a
+        legitimate tier-3 result and therefore looks deliberate. In a
+        column of thirty-seven real logos the odd grey parcel reads as the
+        scavenged look this whole system exists to remove, and the only
+        way to notice was to scroll the list and count.
+        """
+        from frontend.menu_structure import catalog_app_ids
+        manifest = self._manifest()
+        unmarked = {app_id for app_id in catalog_app_ids()
+                    if app_id not in manifest}
+        assert unmarked == set(self.NO_AUTHENTIC_MARK), (
+            "catalog apps with no bundled mark changed.\n"
+            f"  newly unmarked (add the SVG, or document it): "
+            f"{sorted(unmarked - self.NO_AUTHENTIC_MARK)}\n"
+            f"  no longer unmarked (update NO_AUTHENTIC_MARK): "
+            f"{sorted(self.NO_AUTHENTIC_MARK - unmarked)}")
+
+    def test_no_bundled_mark_outlives_the_app_it_was_fetched_for(self):
+        """The other half: an SVG for an app the catalog has since dropped
+        is dead weight in the bundle and a logo Pulse ships for software it
+        no longer offers."""
+        from frontend.menu_structure import catalog_app_ids
+        orphans = sorted(set(self._manifest()) - set(catalog_app_ids()))
+        assert not orphans, (
+            f"bundled marks for apps not in the catalog: {orphans}")
+
     def test_nothing_was_invented_for_the_brands_with_no_mark(self):
         """The rule the fetcher is built on, still true after widening the
         search to three more collections: CPU-Z, GPU-Z, HWMonitor,
@@ -1071,6 +1139,59 @@ class TestPaletteSearch:
                         "\u0627\u0640\u062d\u0630\u0641"):           # with tatweel
             assert W.normalise_query(variant) == base, (
                 f"{variant!r} does not fold to {base!r}")
+
+    def test_every_alias_key_is_stored_already_normalised(self, qapp):
+        """A DEAD ENTRY IN THE TRANSLATION TABLE LOOKS EXACTLY LIKE A
+        MISSING ONE.
+
+        The lookup is `SEARCH_ALIASES.get(normalise_query(text))`, so a key
+        written in any form normalise_query would fold — a hamza'd alef, a
+        final ى, a ة, a stray harakat — can never be produced by that call
+        and is therefore unreachable for the life of the table. Nothing
+        raises; the query simply finds nothing, which is indistinguishable
+        from the word not being in the table at all.
+
+        SEARCH_ALIASES' own comment states the rule ("Keys are stored
+        already normalised"), and a rule stated only in a comment is one
+        the next entry gets to break. Every key is currently correct; this
+        keeps it that way.
+        """
+        from frontend import widgets as W
+        unreachable = {k: W.normalise_query(k) for k in W.SEARCH_ALIASES
+                       if W.normalise_query(k) != k}
+        assert not unreachable, (
+            "alias key(s) not stored in normalised form, so no query can "
+            f"ever reach them: {unreachable}")
+
+    def test_escape_closes_the_palette_without_choosing(self, window, qapp):
+        """Esc is the one binding the palette's own footer advertises that
+        had no test. It has to REJECT — closing with a selection still
+        armed would run whatever happened to be highlighted."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QKeyEvent
+        from frontend import menu_structure as MS
+        from frontend import widgets as W
+        from conftest import show_dialog
+
+        palette = W.CommandPalette(window, window.theme.t,
+                                   list(MS.iter_leaf_items()))
+        show_dialog(qapp, palette)
+        try:
+            palette._search.setText("remove")
+            qapp.processEvents()
+            assert palette._list.currentRow() >= 0, "nothing was selected"
+            qapp.sendEvent(palette._search, QKeyEvent(
+                QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                Qt.KeyboardModifier.NoModifier))
+            qapp.processEvents()
+            assert not palette.isVisible(), "Esc did not close the palette"
+            assert palette.chosen_item is None, (
+                "Esc closed the palette WITH a chosen item — it dismissed "
+                "and launched at the same time")
+        finally:
+            palette.reject()
+            palette.deleteLater()
+            qapp.processEvents()
 
     def test_arabic_queries_reach_the_right_operations(self, qapp):
         cases = {

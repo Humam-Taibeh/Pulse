@@ -62,10 +62,22 @@ field and the tab pills above it. Three sources, tried in order:
 
   2. THE INSTALLED APP'S OWN ICON — for software with no bundled mark
      that is already on this machine. Full colour, drawn by the vendor,
-     read out of the app's own binary. Every CATALOG app now has a bundled
-     mark, so this tier no longer fires for them; it still covers the
-     Update Center, which lists whatever winget reports as upgradable and
-     is therefore not limited to the catalog.
+     read out of the app's own binary.
+
+     THIS TIER IS LOAD-BEARING, and an earlier draft of this docstring
+     said the opposite ("every catalog app now has a bundled mark, so this
+     tier no longer fires for them") four paragraphs after correctly
+     listing the six that do not. It is the only thing standing between
+     those six and the neutral glyph, so reading that sentence as licence
+     to delete it would have quietly downgraded CPU-Z, GPU-Z, HWMonitor,
+     CrystalDiskInfo, BlueStacks and DirectX to grey parcels.
+
+     It also covers the Update Center, which lists whatever winget reports
+     as upgradable and is therefore not limited to the catalog at all.
+
+     The count is pinned by
+     TestBrandMarks.test_every_catalog_app_has_a_mark_or_is_a_known_exception,
+     so this paragraph cannot drift from the tree again.
 
   ALL THREE TIERS ARE PRESENTED IDENTICALLY: a 20px mark centred in a
   36px well with an 8px radius (see _MARK_RATIO and _paint_well). Brand

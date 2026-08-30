@@ -5,14 +5,92 @@ All notable changes to **Pulse** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Versioning note: the GUI application and the PowerShell core are versioned
-independently (GUI `APP_VERSION` in `src/frontend/main.py`, core
-`$Script:ScriptVersion` in `src/backend/core.ps1`). Releases below track the
-GUI version, with core changes called out explicitly.
+Versioning note: the GUI and the PowerShell core share ONE version, read
+from the `VERSION` file at the repo root. `APP_VERSION` in
+`src/frontend/main.py` is `version.VERSION` (which reads that file), and
+`$Script:ScriptVersion` in `src/backend/core.ps1` is a fallback literal the
+same file overrides at startup; the installer and the PyInstaller spec quote
+it too. They were genuinely independent once, and this note still said so
+long after `VERSION` had become the single source.
 
 ---
 
 ## [Unreleased]
+
+---
+
+## [10.9.1] — 2026-08-30
+
+The build that actually contains what 10.9.0 announced.
+
+Five defects, and what they have in common is that every one of them was
+invisible from a green test run: a spec omission that only changed the
+frozen build, a time budget enforced against a walk that had already
+finished, a scan that crashed on the input it existed to diagnose, a path
+test that answered about the wrong file, and a success line printed for
+work that never happened.
+
+### Fixed — the release build was missing its brand marks
+- **No vendor logo shipped in any built copy of v10.9.0.** `main.spec` had
+  no `assets/appicons` entry, so none of the 37 marks or their manifest
+  reached the bundle: every catalog row fell through to the neutral grey
+  glyph, in the released build only. Both halves of the silence were by
+  design — `appicons._manifest()` degrades a missing manifest to "no
+  bundled marks" so decoration can never stop the installer UI opening, and
+  every icon test reads the source tree — so nothing anywhere looked inside
+  the bundle. Verified against a real rebuild: 0 marks before, 37 after.
+  `tools/build_release.ps1` now fails the build if the marks are absent,
+  and a new packaging test derives the required resources from the
+  `find_resource()` / `resource_dirs()` call sites so the next one is
+  covered the day it is written.
+
+### Fixed — the Storage Analyzer ignored its own time budget
+- **A 90-second budget that could run for minutes.** `Measure-DirectorySize`
+  assigned a recursive `Get-ChildItem` to a variable, which runs the
+  pipeline to completion — so the entire tree was walked before the
+  deadline was consulted once, and the accumulator grew an object per file
+  on the volume. Measured: a scan of `C:\` was still going after nine
+  minutes; the only real bound was the GUI's 900-second timeout, which
+  surfaces as a wedged task rather than the partial report intended. The
+  walk is now an explicit lazy enumeration with the deadline tested per
+  directory and per file. Same scan: 119 seconds, reported as partial.
+
+### Fixed — the PATH Doctor crashed on the entry it existed to find
+- **One malformed PATH entry aborted the whole scan.** `Test-Path` does not
+  return `$false` for a path containing `|`, `<` or `>` — it throws, and
+  `$ErrorActionPreference = "Stop"` turned that into the task's verdict
+  (`##PULSE##ERROR|Illegal characters in path.`) with no report at all. The
+  probe is guarded, and an unparseable entry is now its own `[INVALID]`
+  finding, kept distinct from `[DEAD]` because "the folder does not exist"
+  is the wrong advice for a string that could never have named one.
+
+### Fixed — a file the user picked could be reported as missing
+- **`[` and `]` are legal in Windows filenames, and `-Path` reads them as a
+  character class.** `Invoke-GuiLocalInstall` and the Office ODT flow
+  probed picker-supplied paths with `-Path`, so a real `setup [1].exe` —
+  what a browser names a second download of the same installer — was
+  rejected as "Installer file not found", as was any deployment folder with
+  a bracket in its name. Both now use `-LiteralPath`, the idiom
+  `Disable-StartupItem` already carried for `Game [2].lnk`.
+
+### Fixed — the purge could claim a removal it had not performed
+- **"Removed News" for a package that was already gone.** An empty pipeline
+  is not an error in PowerShell: when `Get-AppxPackage` matched nothing,
+  `Remove-AppxPackage` was never invoked, no exception was raised, and the
+  success line after it ran anyway — counting a removal that never
+  happened. The package is now enumerated first, and "already gone by the
+  time the purge reached it" is reported as what it is.
+
+### Added — guards for invariants that were only ever comments
+- The installer's post-install launch flags (`runasoriginaluser`,
+  `shellexec`), which are what keep Windows App Control from refusing the
+  "Launch PULSE" checkbox with error 4551.
+- Catalog-to-icon coverage in both directions: an app added without a mark
+  now fails, and so does a mark left behind for an app the catalog dropped.
+- `SEARCH_ALIASES` keys must be stored already normalised — an alias
+  written with a hamza'd alef is unreachable for the life of the table, and
+  looks exactly like a word nobody added.
+- `Esc` closes the Command Palette without launching the highlighted row.
 
 ---
 

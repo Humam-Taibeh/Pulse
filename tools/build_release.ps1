@@ -213,11 +213,27 @@ foreach ($Rel in @('_internal',
                    '_internal\src\backend\core.ps1',
                    '_internal\src\backend\modules',
                    '_internal\playbooks',
-                   '_internal\assets\pulse.ico')) {
+                   '_internal\assets\pulse.ico',
+                   # The brand marks and their manifest. THIS LINE WAS NOT
+                   # HERE, and this list is the last thing standing between
+                   # a spec omission and a shipped build: v10.9.0 went out
+                   # with no 'assets/appicons' entry in main.spec, so every
+                   # catalog row fell back to the neutral grey glyph in the
+                   # released build only. The check above passed because it
+                   # only ever asked about pulse.ico.
+                   '_internal\assets\appicons\manifest.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $BundleDir $Rel))) {
         throw "The bundle is missing '$Rel' — check the spec's datas."
     }
 }
+# The manifest is only an index; a bundle carrying it with no artwork
+# beside it would pass the check above and still paint nothing.
+$MarkCount = @(Get-ChildItem -LiteralPath (Join-Path $BundleDir '_internal\assets\appicons') `
+    -Filter *.svg -File -ErrorAction SilentlyContinue).Count
+if ($MarkCount -lt 1) {
+    throw 'The bundle carries no brand marks — check the spec''s datas.'
+}
+Write-Detail "brand marks     $MarkCount bundled"
 # The engine's one relative path, resolved exactly as core.ps1 resolves it.
 $EngineVersionPath = Join-Path $BundleDir '_internal\src\backend\..\..\VERSION'
 if (-not (Test-Path -LiteralPath $EngineVersionPath)) {

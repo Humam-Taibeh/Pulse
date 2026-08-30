@@ -38,7 +38,7 @@ function Find-OfficeDeploymentFolder {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
         Select-Object -Unique |
         Where-Object {
-            try { Test-Path -Path $_ -PathType Container -ErrorAction Stop } catch { $false }
+            try { Test-Path -LiteralPath $_ -PathType Container -ErrorAction Stop } catch { $false }
         }
 
     foreach ($Base in $Desktops) {
@@ -57,24 +57,28 @@ function Find-OfficeDeploymentFolder {
 function Find-OfficeSetupFile {
     param([string]$Folder)
     if ([string]::IsNullOrWhiteSpace($Folder)) { return $null }
-    if (-not (Test-Path -Path $Folder -PathType Container -ErrorAction SilentlyContinue)) { return $null }
+    if (-not (Test-Path -LiteralPath $Folder -PathType Container -ErrorAction SilentlyContinue)) { return $null }
 
     $ExactNames = @("setup.exe", "setup.exe.exe", "Setup.exe", "Setup.exe.exe")
     foreach ($Name in $ExactNames) {
         try {
             $f = Join-Path -Path $Folder -ChildPath $Name
-            if (Test-Path -Path $f -PathType Leaf -ErrorAction SilentlyContinue) { return $f }
+            if (Test-Path -LiteralPath $f -PathType Leaf -ErrorAction SilentlyContinue) { return $f }
         } catch {}
     }
 
     try {
-        $Pattern = Join-Path -Path $Folder -ChildPath "officedeploymenttool*.exe"
-        $Found = Get-ChildItem -Path $Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        # -LiteralPath + -Filter, not a joined glob: the folder is a real
+        # path that may contain '[' or ']', while only the FILENAME is
+        # meant to be a pattern. Joining them made the folder part of the
+        # glob too, so a bracketed folder matched nothing.
+        $Found = Get-ChildItem -LiteralPath $Folder -Filter "officedeploymenttool*.exe" `
+            -File -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($Found) { return $Found.FullName }
     } catch {}
 
     try {
-        $AnyExe = Get-ChildItem -Path $Folder -Filter *.exe -ErrorAction SilentlyContinue
+        $AnyExe = Get-ChildItem -LiteralPath $Folder -Filter *.exe -ErrorAction SilentlyContinue
         foreach ($exe in $AnyExe) {
             if ((Test-ValidOfficeSetup -FilePath $exe.FullName) -or (Test-IsSelfExtractor -FilePath $exe.FullName)) {
                 return $exe.FullName
@@ -88,7 +92,7 @@ function Find-OfficeSetupFile {
 function Find-OfficeConfigFile {
     param([string]$Folder)
     if ([string]::IsNullOrWhiteSpace($Folder)) { return $null }
-    if (-not (Test-Path -Path $Folder -PathType Container -ErrorAction SilentlyContinue)) { return $null }
+    if (-not (Test-Path -LiteralPath $Folder -PathType Container -ErrorAction SilentlyContinue)) { return $null }
 
     # Known names in preference order: bare "configuration.xml" first, then
     # the filenames the Office Customization Tool itself exports (e.g.
@@ -102,12 +106,12 @@ function Find-OfficeConfigFile {
     foreach ($Name in $ExactNames) {
         try {
             $f = Join-Path -Path $Folder -ChildPath $Name
-            if (Test-Path -Path $f -PathType Leaf -ErrorAction SilentlyContinue) { return $f }
+            if (Test-Path -LiteralPath $f -PathType Leaf -ErrorAction SilentlyContinue) { return $f }
         } catch {}
     }
 
     try {
-        $AnyXml = Get-ChildItem -Path $Folder -Filter *.xml -ErrorAction SilentlyContinue | Select-Object -First 1
+        $AnyXml = Get-ChildItem -LiteralPath $Folder -Filter *.xml -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($AnyXml) { return $AnyXml.FullName }
     } catch {}
 
@@ -118,7 +122,7 @@ function Test-OfficeFolderValid {
     param([string]$Folder)
     if ([string]::IsNullOrWhiteSpace($Folder)) { return $false }
     try {
-        if (-not (Test-Path -Path $Folder -PathType Container -ErrorAction Stop)) { return $false }
+        if (-not (Test-Path -LiteralPath $Folder -PathType Container -ErrorAction Stop)) { return $false }
     } catch { return $false }
     $Setup = Find-OfficeSetupFile -Folder $Folder
     $Config = Find-OfficeConfigFile -Folder $Folder
@@ -394,14 +398,14 @@ function Invoke-GuiOfficeAutoDownload {
         return @{ Success = $false }
     }
 
-    if (-not (Test-Path -Path $SetupPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $SetupPath -PathType Leaf)) {
         Write-ErrorX "Download appears to have failed - setup.exe was not created."
         return @{ Success = $false }
     }
     Write-Success "Office Click-to-Run client downloaded to '$SetupPath'."
 
     $ConfigPath = Join-Path $DestinationFolder "configuration.xml"
-    if (Test-Path -Path $ConfigPath -PathType Leaf) {
+    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
         Write-Info "An existing configuration.xml was found in the folder - keeping it instead of overwriting."
     } else {
         Get-OfficeDefaultConfigXml | Set-Content -Path $ConfigPath -Encoding UTF8
@@ -434,11 +438,18 @@ function Invoke-GuiOfficeODTInstall {
         [Parameter(Mandatory = $true)][string]$ConfigPath
     )
 
-    if (-not (Test-Path -Path $SetupPath -PathType Leaf)) {
+    # -LiteralPath on both: these two paths came from the wizard's FILE
+    # PICKER, so they are whatever the user's disk holds, and '[' and ']'
+    # are legal in a Windows filename. -Path reads them as a character
+    # class, so a real "setup [1].exe" - what a browser names a second
+    # download of the same file - matched nothing and was rejected as
+    # missing before the deployment could start. Same reasoning as
+    # Disable-StartupItem's Move-Item and Invoke-GuiLocalInstall.
+    if (-not (Test-Path -LiteralPath $SetupPath -PathType Leaf)) {
         Write-ErrorX "Setup file not found: $SetupPath"
         return $false
     }
-    if (-not (Test-Path -Path $ConfigPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
         Write-ErrorX "configuration.xml not found: $ConfigPath"
         return $false
     }

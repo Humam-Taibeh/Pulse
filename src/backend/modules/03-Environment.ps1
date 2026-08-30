@@ -338,13 +338,30 @@ function Get-PathEntryReport {
         scopes are what gets reported.
 
         Returns one object per entry: Scope, Raw (as written, variables
-        unexpanded), Path (expanded), Exists, Duplicate.
+        unexpanded), Path (expanded), Exists, Valid, Duplicate.
 
         Duplicates are judged on the EXPANDED, trailing-slash-normalised
         path, so "%ProgramFiles%\Git\cmd" and "C:\Program Files\Git\cmd\"
         are correctly seen as the same directory - which is the form the
         duplicate almost always takes, since one of the two was written by
         an installer and the other by a person.
+
+        A PATH ENTRY IS NOT A VALIDATED PATH. It is a string some installer
+        or some person wrote into a semicolon-separated list, and nothing
+        in Windows ever checks it: an entry containing '|', '<' or '>'
+        sits there quite happily. Test-Path does check, and on one of those
+        it does not return $false - it THROWS ArgumentException("Illegal
+        characters in path"). With $ErrorActionPreference = "Stop" set in
+        core.ps1 that terminated the whole scan, so the dispatcher's safety
+        net reported "Illegal characters in path." as the task's verdict
+        and the user got no report at all.
+
+        That is the worst possible failure for this function: a malformed
+        PATH entry is EXACTLY what the doctor exists to find, and finding
+        one made it crash instead of print the line. So the probe is
+        guarded and an entry that cannot even be tested becomes its own
+        finding (Valid = $false), which is strictly more useful than the
+        dead/duplicate verdict it used to abort before reaching.
     #>
     $Report = New-Object System.Collections.ArrayList
     $Seen   = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -357,11 +374,22 @@ function Get-PathEntryReport {
             if ([string]::IsNullOrWhiteSpace($Trimmed)) { continue }
             $Expanded = [Environment]::ExpandEnvironmentVariables($Trimmed)
             $Key = $Expanded.TrimEnd('\', '/')
+            # See the note above: Test-Path THROWS on an entry Windows was
+            # perfectly willing to store, so the probe is guarded and the
+            # unparseable entry is reported rather than fatal.
+            $Exists = $false
+            $Valid  = $true
+            try {
+                $Exists = Test-Path -LiteralPath $Expanded -PathType Container
+            } catch {
+                $Valid = $false
+            }
             [void]$Report.Add([PSCustomObject]@{
                 Scope     = $Scope
                 Raw       = $Trimmed
                 Path      = $Expanded
-                Exists    = (Test-Path -LiteralPath $Expanded -PathType Container)
+                Exists    = $Exists
+                Valid     = $Valid
                 Duplicate = (-not $Seen.Add($Key))
             })
         }
@@ -373,19 +401,28 @@ function Write-PathScanReport {
     <#
     .SYNOPSIS
         The universal half of the doctor: the PATH itself, scanned and
-        reported. Returns @{Total; Dead; Duplicate; Length}.
+        reported. Returns @{Total; Dead; Duplicate; Invalid; Length}.
     #>
     $Entries = @(Get-PathEntryReport)
     if ($Entries.Count -eq 0) {
         Write-TaggedLine -Tag "WARN" -Text "System PATH is empty or unreadable."
-        return @{ Total = 0; Dead = 0; Duplicate = 0; Length = 0 }
+        return @{ Total = 0; Dead = 0; Duplicate = 0; Invalid = 0; Length = 0 }
     }
 
     $Machine = @($Entries | Where-Object { $_.Scope -eq "Machine" }).Count
     $User    = @($Entries | Where-Object { $_.Scope -eq "User" }).Count
     Write-TaggedLine -Tag "SCAN" -Text "PATH -> $($Entries.Count) entries ($Machine machine, $User user)"
 
-    $Dead = @($Entries | Where-Object { -not $_.Exists })
+    # Malformed entries first, and NOT folded into [DEAD]: "the folder does
+    # not exist" invites the user to go and look for it, which is the wrong
+    # advice for a string that could never name a folder in the first place.
+    $Invalid = @($Entries | Where-Object { -not $_.Valid })
+    foreach ($Entry in $Invalid) {
+        Write-TaggedLine -Tag "INVALID" -Text "$($Entry.Scope) PATH -> $($Entry.Raw)  (not a usable path - illegal characters; Windows skips this entry)"
+    }
+    # A malformed entry is already reported above; listing it a second time
+    # as dead would be true but useless.
+    $Dead = @($Entries | Where-Object { $_.Valid -and -not $_.Exists })
     foreach ($Entry in $Dead) {
         Write-TaggedLine -Tag "DEAD" -Text "$($Entry.Scope) PATH -> $($Entry.Raw)  (folder does not exist)"
     }
@@ -399,7 +436,7 @@ function Write-PathScanReport {
         Write-TaggedLine -Tag "WARN" -Text "PATH is $Length characters - close to the point where Windows truncates it silently."
     }
 
-    if ($Dead.Count -eq 0 -and $Dupes.Count -eq 0) {
+    if ($Dead.Count -eq 0 -and $Dupes.Count -eq 0 -and $Invalid.Count -eq 0) {
         Write-TaggedLine -Tag "OK" -Text "PATH -> every entry resolves, no duplicates"
     } else {
         # See $Script:PathScanIsReadOnly - found, reported, not touched.
@@ -409,6 +446,7 @@ function Write-PathScanReport {
         Total     = $Entries.Count
         Dead      = $Dead.Count
         Duplicate = $Dupes.Count
+        Invalid   = $Invalid.Count
         Length    = $Length
     }
 }
@@ -528,7 +566,12 @@ function Verify-Environment {
     $PathScan = Write-PathScanReport
 
     Write-Host ""
-    Write-TaggedLine -Tag "DONE" -Text ("$Ok ready" + " | " + "$Repaired fixed" + " | " + "$($Missing.Count) not installed" + " | " + "$($PathScan.Dead) dead PATH entries" + " | " + "$($PathScan.Duplicate) duplicates")
+    $DoneParts = @("$Ok ready", "$Repaired fixed", "$($Missing.Count) not installed",
+                   "$($PathScan.Dead) dead PATH entries", "$($PathScan.Duplicate) duplicates")
+    # Only when there ARE any: a permanent "0 malformed" column would add a
+    # number to every run to describe a case almost no machine has.
+    if ([int]$PathScan.Invalid -gt 0) { $DoneParts += "$($PathScan.Invalid) malformed" }
+    Write-TaggedLine -Tag "DONE" -Text ($DoneParts -join " | ")
     if ($Repaired -gt 0 -and -not $Script:DryRun) {
         Write-TaggedLine -Tag "INFO" -Text "New PATH entries reach NEW terminals only - anything already open keeps the PATH it started with."
     }
@@ -541,5 +584,6 @@ function Verify-Environment {
         PathEntryCount = $PathScan.Total
         DeadPathCount  = $PathScan.Dead
         DuplicatePathCount = $PathScan.Duplicate
+        InvalidPathCount   = $PathScan.Invalid
     }
 }

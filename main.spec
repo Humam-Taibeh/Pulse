@@ -59,6 +59,21 @@ a = Analysis(
         ('src/backend/modules', 'src/backend/modules'),
         # window/taskbar icon, loaded at runtime via _locate_icon()
         ('assets/pulse.ico', 'assets'),
+        # The 37 vendor brand marks and their manifest, resolved at runtime
+        # by utils/appicons.py through resources.find_resource().
+        #
+        # THIS ENTRY WAS MISSING AND THE BUILD STAYED GREEN, which is worth
+        # stating plainly because both halves are by design. appicons.
+        # _manifest() degrades a missing manifest to "no bundled marks"
+        # rather than raising — correct, since decoration must never stop
+        # the installer UI opening — and every icon test reads the SOURCE
+        # tree, so nothing anywhere looked inside the bundle.
+        #
+        # The result: v10.9.0 shipped "in the vendors' own colours" with
+        # not one vendor colour in it. Every catalog row fell through to
+        # the installed app's own icon and then to the neutral grey glyph,
+        # silently, on the released build only.
+        ('assets/appicons', 'assets/appicons'),
         # Shipped playbooks (v10.3). Resolved at runtime by
         # frontend.playbooks.playbook_dirs(), which checks _MEIPASS first;
         # without this the Automation module loads an empty list in the
