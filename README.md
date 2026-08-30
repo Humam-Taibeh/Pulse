@@ -76,18 +76,18 @@ The execution engine is built for **observability and control**, not fire-and-fo
 ## ✨ Key Features
 
 ### 📦 Software Management
-- **Curated `winget` catalogs** across four tabs — Browsers & Media, Development & Tools, Gaming Launchers, System Runtimes & Utilities — with a per-app checkbox selector, live search and **authentic vendor icons** (bundled SVG marks, falling back to the app's own installed binary artwork)
+- **Curated `winget` catalogs** across four tabs — Browsers & Media, Development & Tools, Gaming Launchers, System Runtimes & Utilities — with a per-app checkbox selector, live search and **authentic full-colour vendor logos** — the real artwork, gradients and all, each centred at 20px in a uniform 36px well. 36 of the 37 bundled marks are full colour (Cursor's own brand cube is monochrome); six catalog apps have no authentic logo in any open licensed set and fall back to the app's own installed binary artwork, then to a neutral "no logo available" glyph. Nothing is ever invented
 - **Update Center** — live audit of installed apps with per-app version deltas; update exactly what you tick
 - **Microsoft Office Suite** deployment through the official ODT, driven by an in-app wizard
 - **Startup Manager** — boot-impact audit with instant per-entry enable/disable
-- **PATH Doctor** (`VerifyEnvironment`) — audits Git, Python, Java, Node, VS Code, GCC and Ollama, repairs missing user-PATH entries from known install roots, and sets `JAVA_HOME` when resolvable
+- **PATH Doctor** (`VerifyEnvironment`) — resolves Git, Python, Java, Node, VS Code, GCC and Ollama, repairs missing user-PATH entries from known install roots, and sets `JAVA_HOME` when resolvable — then **scans the whole system PATH** (both scopes, read from the registry) for dead and duplicate entries. Every finding is one scannable `[TAG] name -> path` line; the PATH scan reports and never removes, because a folder that is merely offline looks exactly like a dead one
 
 ### ⚡ System & Tweaks
 - **Data-driven tweak engine** — every tweak (Dark Mode, Mouse Acceleration, Minimalist Taskbar, Classic Context Menu, Game Mode) is a *declarative catalog entry* processed by one generic function, not bespoke code
 - **Pulse Power Plan** — unlocks the hidden Ultimate Performance scheme
 - **Network & Ping Optimizer** plus **DNS Profiles** — per-adapter switching to Cloudflare / Quad9 / AdGuard, each with a real way back
 - **Right-Click Menu Manager** — prune shell context-menu extensions through Windows' own official block list
-- **Edge & OneDrive removal** with automatic pre-removal backups and one-click reinstall/restore
+- **Edge & OneDrive removal** with automatic pre-removal backups and one-click reinstall/restore. Edge's purge resolves its own versioned `setup.exe`, disables both EdgeUpdate services and unregisters its scheduled tasks before removing the payload — and when a build **refuses** (`setup.exe` exit 93, winget 1603) it escalates rather than retrying: Microsoft's own `AllowUninstall` EdgeUpdate policy, then the DMA-compliant EEA path, then forceful Appx de-registration *and* de-provisioning so it cannot return for the next user. Both the policy and the region are restored in a `finally`. OneDrive's evacuates **every** local sync root — the personal folder, each `OneDrive - <Organisation>` tenant folder, and any root redirected off the profile — into `%LOCALAPPDATA%\PULSE\Backups\OneDrive` before the uninstaller runs, treats "already not installed" as success, and clears the leftover `HKCU\Software\Microsoft\OneDrive` hive plus any folders left **empty** (never one that still holds a file). Each hub offers a third row that opens what was saved
 
 ### 🔧 Maintenance & Security
 - **SFC + DISM automation** with in-place retry logic and live scan progress
@@ -97,11 +97,11 @@ The execution engine is built for **observability and control**, not fire-and-fo
 - **Restore Point Browser** — every System Restore checkpoint on the machine, listed
 
 ### 🛡️ Privacy
-- Bloatware removal, telemetry shutdown, Advertising ID and Activity History disablement
-- **One-click "Apply ALL Privacy Settings"** composite action
+- Bloatware removal, telemetry shutdown, Advertising ID and Activity History disablement — three granular, individually probeable actions. The old composite "Apply ALL Privacy Settings" card is gone: bundling is the job of the **Playbooks** below, which compose named steps a user can see, reorder and drop
 
 ### 📊 Reporting & Automation
 - **Health & Drift Report** — read-only snapshot of applied-tweak drift, drives, restore-point status, startup load and system facts, exportable as a **self-contained HTML deliverable** (inline styles, no scripts, opens offline years later) or as diffable JSON
+- **Ctrl+K command palette** — fuzzy search over every operation, with typo tolerance (a bounded Damerau-Levenshtein pass, so `cahce` finds Aggressive Cache Clean), **Arabic query support** (`تحديث`, `تنظيف`, `تسريع` reach the operations they name, with the alef/yeh/ta-marbuta forms and harakat normalised away), and English verb matching (`uninstall` finds Remove Bloatware)
 - **Playbooks** — declarative machine baselines as JSON (*Gamer Rig Setup*, *Privacy Hardening*, *Post-Install Clean*), validated against the live catalog at load time, previewable under `-WhatIf`, and run one step at a time through the ordinary dispatcher
 - **Activation Status** — read-only Windows & Office licence report (state, channel, expiry) in plain English; it reports only, and hands activation itself off to Windows' own settings page
 - **Battery & Power Health** — wear level, cycle count, active power plan
@@ -481,11 +481,11 @@ An unknown task name is answered with `##PULSE##ERROR|Unknown task: <name>`. A t
 | **Software** | `InstallCatalogApps` · `InstallOfficeODT` · `UpdateSelectedApps` · `StartupReport` · `VerifyEnvironment` · `RemoveBloatware` · `RemoveEdge` · `RestoreEdge` · `RemoveOneDrive` · `RestoreOneDrive` |
 | **Tweaks & UI** | `DarkMode` · `MinimalistTaskbar` · `ClassicContextMenu` · `GameMode` · `DisableMouseAccel` · `UltimatePowerPlan` · `ContextMenuScan` |
 | **Network** | `NetworkOptimization` · `NetworkProfiles` |
-| **Privacy** | `DisableTelemetry` · `DisableAdvertisingID` · `DisableActivityHistory` · `ApplyAllPrivacy` |
+| **Privacy** | `DisableTelemetry` · `DisableAdvertisingID` · `DisableActivityHistory` |
 | **Maintenance** | `RunSFC` · `CleanCache` · `OptimizeDrives` · `RemoveWindowsOld` · `DisableHibernation` · `EnableHibernation` · `DriverBackup` · `DriverScan` |
 | **Storage & info** | `DriveSpaceReport` · `StorageScan` · `SystemInfo` |
 | **Recovery** | `CreateRestorePoint` · `ResetTweaks` · `RestoreServices` |
-| **Local (`@`)** | `@playbooks` · `@health_report` · `@activation` · `@power_health` · `@restore_points` · `@open_log` · `@open_onedrive_backup` |
+| **Local (`@`)** | `@playbooks` · `@health_report` · `@activation` · `@power_health` · `@restore_points` · `@open_log` · `@open_onedrive_backup` · `@open_edge_backup` |
 
 Local `@` actions open a Pulse surface instead of spawning a task through the main pipeline; the dialogs that need engine data (`HealthReport`, `ActivationStatus`, the inspectors) run their own `PowerShellTask`. `tests/test_contract.py` fails if any GUI task lacks a dispatcher case, or if any dispatcher case becomes unreachable without being allow-listed.
 

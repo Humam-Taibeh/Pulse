@@ -231,13 +231,13 @@ function Show-SoftwareManagementMenu {
             "Core API Runtimes: DirectX, VC++, .NET, Java (bulk or individual)",
             "Startup Program Manager: control which programs launch at boot",
             "Microsoft Office Deployment: auto-install or manual guide",
-            "Verify Dev Environment: PATH doctor for Git, Python, Java, GCC..."
+            "PATH Doctor: resolves Git, Python, Java, GCC... then scans the whole system PATH for dead and duplicate entries"
         )
         Write-Host "   [1]  App Deployment Hub" -ForegroundColor White
         Write-Host "   [2]  Core API Runtimes" -ForegroundColor White
         Write-Host "   [3]  Startup Program Manager" -ForegroundColor White
         Write-Host "   [4]  Microsoft Office Deployment" -ForegroundColor White
-        Write-Host "   [5]  Verify Dev Environment (PATH doctor)" -ForegroundColor White
+        Write-Host "   [5]  PATH Doctor (dev tools + system PATH scan)" -ForegroundColor White
         Write-Host "   [X]  Back to Main Menu" -ForegroundColor DarkGray
         Write-Divider
         $Choice = Read-Choice -Prompt "   Select option (1-5, X)" -Valid @('1','2','3','4','5','x')
@@ -246,7 +246,7 @@ function Show-SoftwareManagementMenu {
             '2' { Write-Banner "CORE API RUNTIMES"; Write-ModulePreview -Items @("DirectX, VC++, .NET, Java"); Show-RuntimesModule; Read-Host "   Press Enter to continue" }
             '3' { Show-StartupProgramManager }
             '4' { Show-OfficeDeployment }
-            '5' { Write-Banner "VERIFY DEV ENVIRONMENT"; Verify-Environment | Out-Null; Read-Host "   Press Enter to continue" }
+            '5' { Write-Banner "PATH DOCTOR"; Verify-Environment | Out-Null; Read-Host "   Press Enter to continue" }
             'X' { return }
         }
     } while ($true)

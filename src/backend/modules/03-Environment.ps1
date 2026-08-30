@@ -274,19 +274,162 @@ function Open-UrlSafe {
 }
 
 # ============================================================
-#  ROADMAP v4.0: VERIFY-ENVIRONMENT (developer PATH doctor)
+#  VERIFY-ENVIRONMENT - the PATH doctor
 #  NOTE: 'Verify' is not an approved PowerShell verb; the name is kept
 #  because it is the roadmap's contract name (task: VerifyEnvironment).
+#
+#  IT IS A SCANNER, AND ITS OUTPUT IS THE DELIVERABLE. That is the whole
+#  design constraint, and it is what the previous version got wrong in two
+#  separate ways.
+#
+#  1. IT OPENED WITH SIX LINES OF PROSE explaining what PATH is. Those
+#     lines were written once, printed on every run, and were the first
+#     thing a returning user had to scroll past to reach the findings -
+#     on a surface (the live console) whose visible height is about
+#     fifteen lines. An explanation that cannot be dismissed is a
+#     paragraph the user reads once and then fights forever; the card's
+#     own description already says what the tool does, and the findings
+#     below say it again in the only form that stays useful on the tenth
+#     run.
+#
+#  2. EVERY FINDING WAS A SENTENCE. "Git: 'git' is ready to use - so any
+#     terminal or IDE can run git for you" is friendly and unscannable:
+#     thirty of them are a wall, and the two that matter are somewhere in
+#     the middle of it. Findings are now [TAG] lines in a fixed column
+#     (Write-TaggedLine, 00-Foundation.ps1), so the eye reads the left
+#     edge and stops at the first thing that is not [OK].
+#
+#  AND IT SCANS THE WHOLE PATH, not only the seven catalogued tools. The
+#  catalogue answers "can I type `git`?"; the PATH scan answers "is this
+#  machine's PATH sane?" - dead folders left by uninstalled software,
+#  duplicate entries, and the total length against the limit that
+#  silently truncates it. Both questions are asked from the same card
+#  because they have the same answer surface and the same audience.
 # ============================================================
+
+#: Reporting only, never repair. A dead or duplicated PATH entry is
+#: REPORTED and left exactly where it is, and that asymmetry with the
+#: tool pass (which does repair, by APPENDING) is deliberate: adding a
+#: directory cannot break a machine, and removing one can. A stale-looking
+#: entry may belong to software that is merely offline (a network share, an
+#: unmounted volume, a tool installed per-user under another profile), and
+#: an automatic prune has no way to tell those from real rubbish. So the
+#: doctor tells the user what it found and leaves the edit to them.
+$Script:PathScanIsReadOnly = $true
+
+#: Where Windows silently truncates a PATH. The registry value type is
+#: REG_EXPAND_SZ and the classic limit is 2047 characters for the expanded
+#: string; past it, entries at the tail simply stop resolving with nothing
+#: anywhere to say why. Worth one line of output on a machine that is
+#: close to it, and worth a warning on one that is over.
+$Script:PathLengthWarn = 1800
+
+function Get-PathEntryReport {
+    <#
+    .SYNOPSIS
+        Every entry in the machine and user PATH, with what is wrong with it.
+
+    .DESCRIPTION
+        Reads BOTH scopes from the registry rather than splitting
+        $env:Path, because the process copy is a flattened snapshot taken
+        at launch: it cannot tell machine from user, it carries anything a
+        parent shell injected, and it does not show a change Pulse itself
+        just made. The scopes are what the user can actually edit, so the
+        scopes are what gets reported.
+
+        Returns one object per entry: Scope, Raw (as written, variables
+        unexpanded), Path (expanded), Exists, Duplicate.
+
+        Duplicates are judged on the EXPANDED, trailing-slash-normalised
+        path, so "%ProgramFiles%\Git\cmd" and "C:\Program Files\Git\cmd\"
+        are correctly seen as the same directory - which is the form the
+        duplicate almost always takes, since one of the two was written by
+        an installer and the other by a person.
+    #>
+    $Report = New-Object System.Collections.ArrayList
+    $Seen   = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($Scope in @("Machine", "User")) {
+        $Value = [Environment]::GetEnvironmentVariable("Path", $Scope)
+        if ([string]::IsNullOrWhiteSpace($Value)) { continue }
+        foreach ($Raw in ($Value -split ";")) {
+            $Trimmed = $Raw.Trim()
+            if ([string]::IsNullOrWhiteSpace($Trimmed)) { continue }
+            $Expanded = [Environment]::ExpandEnvironmentVariables($Trimmed)
+            $Key = $Expanded.TrimEnd('\', '/')
+            [void]$Report.Add([PSCustomObject]@{
+                Scope     = $Scope
+                Raw       = $Trimmed
+                Path      = $Expanded
+                Exists    = (Test-Path -LiteralPath $Expanded -PathType Container)
+                Duplicate = (-not $Seen.Add($Key))
+            })
+        }
+    }
+    return @($Report)
+}
+
+function Write-PathScanReport {
+    <#
+    .SYNOPSIS
+        The universal half of the doctor: the PATH itself, scanned and
+        reported. Returns @{Total; Dead; Duplicate; Length}.
+    #>
+    $Entries = @(Get-PathEntryReport)
+    if ($Entries.Count -eq 0) {
+        Write-TaggedLine -Tag "WARN" -Text "System PATH is empty or unreadable."
+        return @{ Total = 0; Dead = 0; Duplicate = 0; Length = 0 }
+    }
+
+    $Machine = @($Entries | Where-Object { $_.Scope -eq "Machine" }).Count
+    $User    = @($Entries | Where-Object { $_.Scope -eq "User" }).Count
+    Write-TaggedLine -Tag "SCAN" -Text "PATH -> $($Entries.Count) entries ($Machine machine, $User user)"
+
+    $Dead = @($Entries | Where-Object { -not $_.Exists })
+    foreach ($Entry in $Dead) {
+        Write-TaggedLine -Tag "DEAD" -Text "$($Entry.Scope) PATH -> $($Entry.Raw)  (folder does not exist)"
+    }
+    $Dupes = @($Entries | Where-Object { $_.Duplicate })
+    foreach ($Entry in $Dupes) {
+        Write-TaggedLine -Tag "DUPE" -Text "$($Entry.Scope) PATH -> $($Entry.Raw)  (already listed earlier)"
+    }
+
+    $Length = ($Entries | ForEach-Object { $_.Raw.Length + 1 } | Measure-Object -Sum).Sum
+    if ($Length -ge $Script:PathLengthWarn) {
+        Write-TaggedLine -Tag "WARN" -Text "PATH is $Length characters - close to the point where Windows truncates it silently."
+    }
+
+    if ($Dead.Count -eq 0 -and $Dupes.Count -eq 0) {
+        Write-TaggedLine -Tag "OK" -Text "PATH -> every entry resolves, no duplicates"
+    } else {
+        # See $Script:PathScanIsReadOnly - found, reported, not touched.
+        Write-TaggedLine -Tag "INFO" -Text "PATH entries above are reported only - Pulse never removes one, because a folder that is merely offline looks exactly like a dead one."
+    }
+    return @{
+        Total     = $Entries.Count
+        Dead      = $Dead.Count
+        Duplicate = $Dupes.Count
+        Length    = $Length
+    }
+}
+
+function Get-CommandDirectory {
+    <# The FOLDER a command resolves to on this PATH, or $null.
+
+       The folder, not the file: PATH holds directories, so the directory
+       is the thing the report has to name if the line is going to help
+       anyone. #>
+    param([Parameter(Mandatory = $true)][string]$Command)
+    $Resolved = Get-Command $Command -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $Resolved) { return $null }
+    $Source = [string]$Resolved.Source
+    if ([string]::IsNullOrWhiteSpace($Source)) { return $null }
+    return (Split-Path $Source -Parent)
+}
+
 function Verify-Environment {
-    Write-SectionHeader "PATH Doctor - Developer Environment Check"
-    Write-Info "In plain English: Windows can only run a program by typing its name"
-    Write-Info "(like 'python' or 'git') if that program's folder is registered in a"
-    Write-Info "system list called PATH. This check confirms your dev tools are"
-    Write-Info "registered correctly, and quietly fixes it when one is installed but"
-    Write-Info "Windows just doesn't know where to find it yet - nothing scary, no"
-    Write-Info "elevation needed, and nothing changes for tools that are already fine."
-    Write-Host ""
+    Write-SectionHeader "PATH Doctor"
 
     $Ok       = 0
     $Repaired = 0
@@ -318,21 +461,23 @@ function Verify-Environment {
         }
 
         if ($OnPath) {
-            $WhyText = if ($Tool.Why) { " - $($Tool.Why)" } else { "" }
-            Write-AlreadyOK "$($Tool.Name): '$($Tool.Command)' is ready to use$WhyText"
+            # The DIRECTORY, which is the thing PATH actually holds and the
+            # thing the user would have to add by hand. "'git' is ready to
+            # use" told them the outcome and withheld the one fact that
+            # makes the line verifiable.
+            $Dir = Get-CommandDirectory -Command $Tool.Command
+            if (-not $Dir) { $Dir = "(resolved on PATH)" }
+            Write-TaggedLine -Tag "OK" -Text "$($Tool.Name) -> $Dir"
             $Ok++
         } elseif ($ResolvedDir) {
-            Write-Warn "$($Tool.Name) is installed at '$ResolvedDir', Windows just didn't know to look there yet - fixing that now."
             if (Add-ToUserPath -Directory $ResolvedDir) {
-                Write-Success "$($Tool.Name) is now on PATH -> $ResolvedDir"
+                Write-TaggedLine -Tag "FIXED" -Text "$($Tool.Name) -> $ResolvedDir  (added to user PATH)"
                 $Repaired++
             } else {
-                Write-ErrorX "Could not add '$ResolvedDir' to the user PATH for $($Tool.Name)."
+                Write-TaggedLine -Tag "FAIL" -Text "$($Tool.Name) -> $ResolvedDir  (could not be added to user PATH)"
             }
         } else {
-            $WhyText = if ($Tool.Why) { " Once it's installed, PATH doctor will wire it up automatically ($($Tool.Why))" } else { "" }
-            Write-Warn "$($Tool.Name) isn't installed yet ('$($Tool.Command)' not found). Get it via winget id '$($Tool.WingetId)'.$WhyText"
-            Write-Log "VERIFY-ENV MISSING: $($Tool.Name) - winget install --id $($Tool.WingetId)"
+            Write-TaggedLine -Tag "MISSING" -Text "$($Tool.Name) -> not installed  (winget install --id $($Tool.WingetId))"
             [void]$Missing.Add($Tool.Name)
         }
 
@@ -341,7 +486,7 @@ function Verify-Environment {
             $ExistingVar = [Environment]::GetEnvironmentVariable($Tool.EnvVarName, "User")
             if (-not $ExistingVar) { $ExistingVar = [Environment]::GetEnvironmentVariable($Tool.EnvVarName, "Machine") }
             if ($ExistingVar) {
-                Write-AlreadyOK "$($Tool.EnvVarName) is already set."
+                Write-TaggedLine -Tag "OK" -Text "$($Tool.EnvVarName) -> $ExistingVar"
             } else {
                 # Home dir = parent of the bin directory the command lives in.
                 $HomeDir = $null
@@ -365,10 +510,10 @@ function Verify-Environment {
                         try {
                             [Environment]::SetEnvironmentVariable($Tool.EnvVarName, $HomeDir, "User")
                             Set-Item -Path "env:$($Tool.EnvVarName)" -Value $HomeDir
-                            Write-Success "$($Tool.EnvVarName) set to '$HomeDir' (user scope)."
+                            Write-TaggedLine -Tag "SET" -Text "$($Tool.EnvVarName) -> $HomeDir  (user scope)"
                             $Repaired++
                         } catch {
-                            Write-ErrorX "Could not set $($Tool.EnvVarName): $($_.Exception.Message)"
+                            Write-TaggedLine -Tag "FAIL" -Text "$($Tool.EnvVarName) -> could not be set: $($_.Exception.Message)"
                         }
                     }
                 }
@@ -376,20 +521,25 @@ function Verify-Environment {
         }
     }
 
+    # The universal pass. AFTER the tools, deliberately: a repair above
+    # changes the user PATH, and a scan that ran first would report the
+    # PATH as it was rather than as the user is about to find it.
     Write-Host ""
-    if ($Missing.Count -eq 0 -and $Repaired -eq 0) {
-        Write-Success "Everything's wired up correctly - all $Ok dev tool(s) are ready to use from any terminal. Nothing to fix!"
-    } else {
-        Write-Info "Summary: $Ok already working, $Repaired fixed automatically, $($Missing.Count) not installed yet."
-    }
+    $PathScan = Write-PathScanReport
+
+    Write-Host ""
+    Write-TaggedLine -Tag "DONE" -Text ("$Ok ready" + " | " + "$Repaired fixed" + " | " + "$($Missing.Count) not installed" + " | " + "$($PathScan.Dead) dead PATH entries" + " | " + "$($PathScan.Duplicate) duplicates")
     if ($Repaired -gt 0 -and -not $Script:DryRun) {
-        Write-Info "Heads up: new PATH entries only apply to NEW terminals/apps you open from now on - anything already open keeps its old PATH until you restart it."
+        Write-TaggedLine -Tag "INFO" -Text "New PATH entries reach NEW terminals only - anything already open keeps the PATH it started with."
     }
 
     return [PSCustomObject]@{
-        OkCount       = $Ok
-        RepairedCount = $Repaired
-        MissingCount  = $Missing.Count
-        MissingNames  = @($Missing)
+        OkCount        = $Ok
+        RepairedCount  = $Repaired
+        MissingCount   = $Missing.Count
+        MissingNames   = @($Missing)
+        PathEntryCount = $PathScan.Total
+        DeadPathCount  = $PathScan.Dead
+        DuplicatePathCount = $PathScan.Duplicate
     }
 }

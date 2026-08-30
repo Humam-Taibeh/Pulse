@@ -391,16 +391,63 @@ function Test-OneDriveInstalled {
     return $false
 }
 
+function Get-OneDriveUserSetupPath {
+    <# The uninstaller OneDrive ships INTO THE USER PROFILE, newest first,
+       or $null.
+
+       %LOCALAPPDATA%\Microsoft\OneDrive\<version>\OneDriveSetup.exe. It is
+       split out of Get-OneDriveSetupPath rather than inlined there because
+       the two halves answer different questions - "what did Windows ship?"
+       and "what did the client install for itself?" - and because this half
+       reads exactly one environment variable, which makes it the half that
+       can actually be tested. Faking %SystemRoot% to reach it through the
+       composed function is not possible: PowerShell resolves the CLR
+       through that variable and refuses to start without a real one.
+
+       Version folders are compared as [version], not as text, so
+       "24.201.1005.0004" beats "9.9.9.9" - the same trap
+       Get-EdgeUninstallerPath documents. A stray OneDriveSetup.exe sitting
+       directly in the install root (some builds leave one there) is taken
+       last, after every versioned payload. #>
+    if (-not $env:LOCALAPPDATA) { return $null }
+    $UserRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive'
+    if (-not (Test-Path -LiteralPath $UserRoot)) { return $null }
+
+    $Versioned = @(Get-ChildItem -LiteralPath $UserRoot -Directory -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $Parsed = [version]"0.0.0.0"
+            [void][version]::TryParse($_.Name, [ref]$Parsed)
+            [PSCustomObject]@{ Dir = $_; Version = $Parsed }
+        } | Sort-Object Version -Descending)
+    foreach ($Entry in $Versioned) {
+        $Path = Join-Path $Entry.Dir.FullName 'OneDriveSetup.exe'
+        if (Test-Path -LiteralPath $Path -PathType Leaf) { return $Path }
+    }
+    $RootStub = Join-Path $UserRoot 'OneDriveSetup.exe'
+    if (Test-Path -LiteralPath $RootStub -PathType Leaf) { return $RootStub }
+    return $null
+}
+
 function Get-OneDriveSetupPath {
     <# OneDriveSetup.exe, wherever this machine keeps it.
 
-       BOTH locations, in order. The 32-bit stub lives in SysWOW64 on a
-       64-bit Windows, but a 64-bit OneDrive install (now the default on
+       THREE homes, in order of how authoritative each one is.
+
+       The two SYSTEM stubs come first. The 32-bit one lives in SysWOW64 on
+       a 64-bit Windows, but a 64-bit OneDrive install (now the default on
        current builds) and every 32-bit Windows put it in System32 instead
        - and this used to look ONLY in SysWOW64, so on those machines the
        purge fell straight through to "OneDrive standalone installer
        payload not found" and reported Failed without ever attempting the
-       uninstall. #>
+       uninstall.
+
+       The PER-USER copy is the third (Get-OneDriveUserSetupPath), and it
+       is the one that matters on a machine where OneDrive updated itself
+       past the inbox stub: on a Windows build that never carried a system
+       stub at all - or one where a previous partial removal deleted it -
+       that copy is the ONLY uninstaller present. Without it the purge
+       reported Failed on exactly the machines whose OneDrive was most
+       current. #>
     $Candidates = @(
         (Join-Path $env:SystemRoot 'SysWOW64\OneDriveSetup.exe'),
         (Join-Path $env:SystemRoot 'System32\OneDriveSetup.exe')
@@ -408,7 +455,8 @@ function Get-OneDriveSetupPath {
     foreach ($Path in $Candidates) {
         if (Test-Path -LiteralPath $Path -PathType Leaf) { return $Path }
     }
-    return $null
+
+    return (Get-OneDriveUserSetupPath)
 }
 
 function Stop-OneDriveProcesses {
@@ -463,6 +511,109 @@ function Clear-OneDriveStartupEntries {
     }
 }
 
+#: OneDriveSetup.exe exit codes that mean "there was nothing here to
+#: uninstall", not "the uninstall failed".
+#:
+#: 0x8004069B (-2147219813) is the one this table exists for. It is what
+#: the setup stub returns when it is asked to uninstall a build that is
+#: not registered for this user - a machine where OneDrive was removed by
+#: hand, removed by a previous Pulse run, or never provisioned past the
+#: inbox stub in the first place. The stub itself is still sitting in
+#: System32 (Windows ships it there regardless), so the purge found an
+#: uninstaller, ran it, got a non-zero code and reported a hard failure
+#: for a machine that was already in the state the user asked for.
+#:
+#: That is the worst kind of wrong answer: the operation SUCCEEDED by any
+#: definition the user cares about, and Pulse said it failed.
+$Script:OneDriveAlreadyGoneCodes = @(
+    -2147219813,   # 0x8004069B - not installed for this user
+    -2147219814,   # 0x8004069A - no such product registration
+    1605           # ERROR_UNKNOWN_PRODUCT, the MSI spelling of the same
+)
+
+function Clear-OneDriveRegistryStubs {
+    <# The per-user keys OneDrive leaves behind, which its own uninstaller
+       does not take with it.
+
+       HKCU\Software\Microsoft\OneDrive is the account/telemetry hive: sync
+       endpoints, the tenant id, the last-signed-in account, the update
+       ring. A machine that has "removed OneDrive" and still carries it is
+       one Windows feature update away from being re-onboarded from its own
+       leftovers, and in the meantime the data is simply still there.
+
+       The two Explorer namespace keys are what put the OneDrive entry in
+       the navigation pane. They are the visible half: a sidebar still
+       offering a cloud folder that no longer syncs is the thing users
+       report as "it did not actually uninstall".
+
+       Best-effort and individually guarded - a policy-locked key must not
+       abort a removal that has already succeeded. #>
+    $Keys = @(
+        "HKCU:\Software\Microsoft\OneDrive",
+        "HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
+        "HKCU:\Software\Classes\WOW6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
+    )
+    foreach ($Key in $Keys) {
+        if (-not (Test-Path -LiteralPath $Key)) { continue }
+        if (Test-DryRun "Remove leftover registry key '$Key'") { continue }
+        try {
+            Remove-Item -LiteralPath $Key -Recurse -Force -ErrorAction Stop
+            Write-Info "Removed leftover registry key '$Key'."
+        } catch {
+            Write-Warn "Could not remove '$Key': $($_.Exception.Message)"
+        }
+    }
+}
+
+function Remove-EmptyOneDriveFolders {
+    <# Deletes the OneDrive install and sync folders ONLY WHEN THEY ARE
+       EMPTY.
+
+       THE EMPTINESS TEST IS THE WHOLE SAFETY PROPERTY, and it is why this
+       is a separate function with its own name rather than three lines
+       inside the purge. A sync root can hold files that exist NOWHERE ELSE
+       - anything the user created locally and that never finished
+       uploading, plus every file in a folder that was never selected for
+       sync on another device. Deleting a non-empty one to tidy up an
+       uninstall would be the most destructive thing this application
+       could do, and it would look like housekeeping in the diff.
+
+       So: recurse, count anything at all, and stop at the first file
+       found. An empty tree is the leftover scaffolding of a client that
+       has already handed its contents back (Windows relocates them to the
+       profile on unlink); a non-empty one is the user's data and is left
+       exactly where it is, with a line in the log saying so. #>
+    $Candidates = New-Object System.Collections.ArrayList
+    [void]$Candidates.Add((Join-Path $env:LOCALAPPDATA 'Microsoft\OneDrive'))
+    foreach ($Root in @(Get-OneDriveSyncRoots)) { [void]$Candidates.Add($Root) }
+
+    foreach ($Path in $Candidates) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) { continue }
+        $Contents = @(Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue)
+        if ($Contents.Count -gt 0) {
+            Write-Info "Left '$Path' in place - it still contains $($Contents.Count) file(s)."
+            continue
+        }
+        if (Test-DryRun "Remove the now-empty folder '$Path'") { continue }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            Write-Info "Removed the empty folder '$Path'."
+        } catch {
+            Write-Warn "Could not remove '$Path': $($_.Exception.Message)"
+        }
+    }
+}
+
+function Complete-OneDriveRemoval {
+    <# The cleanup every successful path shares: startup entries, registry
+       stubs, and empty folders. Factored out because "already gone" and
+       "just uninstalled" need exactly the same tidy-up, and running it in
+       one branch only is how a machine ends up half-cleaned. #>
+    Clear-OneDriveStartupEntries
+    Clear-OneDriveRegistryStubs
+    Remove-EmptyOneDriveFolders
+}
+
 function Remove-OneDrivePackage {
     <#
     .SYNOPSIS
@@ -471,12 +622,33 @@ function Remove-OneDrivePackage {
         AlreadyRemoved / DryRun / Success / Failed) so the GUI dispatcher
         can show the right verdict instead of a generic "removed" message
         even when nothing needed doing.
+
+    .DESCRIPTION
+        THE MISSING-UNINSTALLER AND ALREADY-GONE CASES ARE SUCCESS STATES,
+        not failures, and treating them as failures was the defect this
+        function was rewritten around. Both were reported as hard errors:
+
+          * no OneDriveSetup.exe anywhere -> "Failed: payload not found",
+            on a machine whose OneDrive had already been removed;
+          * the stub present but the product not registered -> the
+            uninstaller returns 0x8004069B (-2147219813) and Pulse
+            reported the raw exit code, again on a machine already in the
+            state the user asked for.
+
+        In both cases the user's goal - no OneDrive - is already met, and
+        there is still real work to do: the registry stubs and the empty
+        folders outlive the client and are what make a "removed" OneDrive
+        look half-removed. So both now run the same cleanup as a live
+        uninstall and report AlreadyRemoved.
     #>
     Write-SectionHeader "Purge Microsoft OneDrive"
 
     if (-not (Test-OneDriveInstalled)) {
         Write-AlreadyOK "OneDrive is already removed from this system."
-        return @{ Status = 'AlreadyRemoved'; Message = 'OneDrive is already removed from this system.' }
+        # NOT a bare return: a machine can pass Test-OneDriveInstalled and
+        # still be carrying the account hive and a dead Explorer entry.
+        Complete-OneDriveRemoval
+        return @{ Status = 'AlreadyRemoved'; Message = 'OneDrive was already removed; leftover registry entries and empty folders were cleaned up.' }
     }
 
     New-SystemRestorePoint
@@ -489,30 +661,44 @@ function Remove-OneDrivePackage {
     try {
         Stop-OneDriveProcesses
         Stop-OneDriveServices
-        if ($ODSetup) {
-            if (Test-DryRun "Run OneDriveSetup.exe /uninstall") {
-                return @{ Status = 'DryRun'; Message = '[DRY-RUN] OneDrive removal simulated (backup + uninstall were reported, not executed).' }
+
+        if (-not $ODSetup) {
+            # No uninstaller ANYWHERE - including the per-user copy. There
+            # is nothing left to run, which means there is nothing left to
+            # uninstall; the remaining traces are ours to clear.
+            if (Test-DryRun "Clean up OneDrive registry stubs and empty folders (no uninstaller present)") {
+                return @{ Status = 'DryRun'; Message = '[DRY-RUN] OneDrive cleanup simulated (no uninstaller is present on this machine).' }
             }
-            # -PassThru + exit-code check: without it, Write-Success fired
-            # unconditionally regardless of whether the uninstaller actually
-            # succeeded (Start-Process doesn't throw on a non-zero exit code).
-            $Proc = Start-Process $ODSetup -ArgumentList "/uninstall" -Wait -NoNewWindow -PassThru
-            if ($Proc.ExitCode -eq 0) {
-                # AFTER the uninstaller, not before: it rewrites its own Run
-                # entry as part of shutting down, so clearing these first
-                # just means clearing them twice and missing the one that
-                # matters.
-                Clear-OneDriveStartupEntries
-                Write-Success "OneDrive uninstall sequence executed."
-                return @{ Status = 'Success'; Message = "OneDrive removed. Local files were backed up to $Script:OneDriveBackupFolder first." }
-            } else {
-                Write-ErrorX "OneDrive's uninstaller exited with code $($Proc.ExitCode)."
-                return @{ Status = 'Failed'; Message = "OneDrive's uninstaller exited with code $($Proc.ExitCode)." }
-            }
-        } else {
-            Write-Warn "Skipped: OneDriveSetup.exe was not found in System32 or SysWOW64."
-            return @{ Status = 'Failed'; Message = 'OneDriveSetup.exe was not found in System32 or SysWOW64 - OneDrive may already be partially removed.' }
+            Write-AlreadyOK "No OneDrive uninstaller is present - the client is already gone."
+            Complete-OneDriveRemoval
+            return @{ Status = 'AlreadyRemoved'; Message = 'OneDrive''s uninstaller was not present, so the client was already gone; leftover registry entries and empty folders were cleaned up.' }
         }
+
+        if (Test-DryRun "Run OneDriveSetup.exe /uninstall, then clear its registry stubs and empty folders") {
+            return @{ Status = 'DryRun'; Message = '[DRY-RUN] OneDrive removal simulated (backup + uninstall were reported, not executed).' }
+        }
+        # -PassThru + exit-code check: without it, Write-Success fired
+        # unconditionally regardless of whether the uninstaller actually
+        # succeeded (Start-Process doesn't throw on a non-zero exit code).
+        $Proc = Start-Process $ODSetup -ArgumentList "/uninstall" -Wait -NoNewWindow -PassThru
+        $Code = $Proc.ExitCode
+
+        if ($Code -eq 0) {
+            # AFTER the uninstaller, not before: it rewrites its own Run
+            # entry as part of shutting down, so clearing these first
+            # just means clearing them twice and missing the one that
+            # matters.
+            Complete-OneDriveRemoval
+            Write-Success "OneDrive uninstall sequence executed."
+            return @{ Status = 'Success'; Message = "OneDrive removed. Local files were backed up to $Script:OneDriveBackupFolder first." }
+        }
+        if ($Script:OneDriveAlreadyGoneCodes -contains $Code) {
+            Write-AlreadyOK "OneDrive's uninstaller reported it was not installed for this user (code $Code) - nothing to remove."
+            Complete-OneDriveRemoval
+            return @{ Status = 'AlreadyRemoved'; Message = "OneDrive was not registered for this user, so there was nothing to uninstall; leftover registry entries and empty folders were cleaned up." }
+        }
+        Write-ErrorX "OneDrive's uninstaller exited with code $Code."
+        return @{ Status = 'Failed'; Message = "OneDrive's uninstaller exited with code $Code." }
     } catch {
         Write-ErrorX "OneDrive removal failed: $($_.Exception.Message)"
         return @{ Status = 'Failed'; Message = "OneDrive removal failed: $($_.Exception.Message)" }
@@ -622,13 +808,52 @@ function Disable-EdgeDefaultBrowserPrompt {
     }
 }
 
+function Stop-EdgeUpdateServices {
+    <# EdgeUpdate ships TWO services - 'edgeupdate' (the on-demand core)
+       and 'edgeupdatem' (the per-machine maintenance sibling) - and either
+       one left running and set to Automatic is enough to pull the browser
+       back down the next time it wakes. Killing MicrosoftEdgeUpdate.exe
+       only closes the CURRENT process; the SCM restarts it on the service's
+       own trigger, which is why a purge that stopped at the process kill
+       could reverse itself hours later with nothing in the log to explain
+       it.
+
+       Stopped AND disabled, for the same reason Clear-EdgeNoRemoveFlags
+       clears NoRemove up front: a stopped-but-Automatic service is one
+       reboot away from being a running service again.
+
+       Best-effort throughout. A machine with neither service present is
+       the ordinary outcome once the payload is gone, not a failure, and a
+       policy-locked SCM refusing the change must never abort the purge
+       that is already under way. #>
+    foreach ($Name in @("edgeupdate", "edgeupdatem")) {
+        $Service = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if (-not $Service) { continue }
+        Invoke-Mutation -Description "Stop and disable the '$Name' service" -Action {
+            try {
+                Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
+                Set-Service -Name $Name -StartupType Disabled -ErrorAction Stop
+                Write-Info "Stopped and disabled the '$Name' service."
+            } catch {
+                Write-Warn "Could not disable the '$Name' service: $($_.Exception.Message)"
+            }
+        } | Out-Null
+    }
+}
+
 function Remove-EdgeScheduledTasks {
     <# Last-mile cleanup: the Edge/EdgeUpdate scheduled tasks keep
        reinstalling or re-registering Edge components in the background
        even after the browser payload itself is gone. Best-effort - a
-       machine with none of these left is the success case, not a failure. #>
+       machine with none of these left is the success case, not a failure.
+
+       BOTH task families, not just one. "MicrosoftEdgeUpdate*" catches the
+       updater's own Core/UA pair; "MicrosoftEdge*" catches the browser
+       stubs Windows registers beside them (the update-broker and
+       PWA-refresh entries), which survived every earlier pass and are the
+       stub tasks that put Edge back. #>
     try {
-        $Tasks = Get-ScheduledTask -TaskName "MicrosoftEdgeUpdate*" -ErrorAction SilentlyContinue
+        $Tasks = @(Get-ScheduledTask -TaskName "MicrosoftEdge*" -ErrorAction SilentlyContinue)
         foreach ($Task in $Tasks) {
             try {
                 Unregister-ScheduledTask -TaskName $Task.TaskName -TaskPath $Task.TaskPath -Confirm:$false -ErrorAction Stop
@@ -643,14 +868,269 @@ function Remove-EdgeScheduledTasks {
     }
 }
 
+function Get-EdgeUninstallerPath {
+    <#
+    .SYNOPSIS
+        Edge's own setup.exe, newest version first, or $null.
+
+    .DESCRIPTION
+        setup.exe's location is DYNAMIC: it lives under a per-version folder
+        ("...\Edge\Application\<VERSION>\Installer\setup.exe") whose name
+        changes with every Edge update, so a hard-coded path is stale the
+        moment Edge patches itself - the original cause of setup.exe never
+        being invoked, or of a stale copy exiting with code 93. It is
+        resolved at run time instead, under BOTH Program Files roots:
+        64-bit Edge normally lands in Program Files, but the Installer
+        payload some builds ship still sits under Program Files (x86), which
+        is the layout the brief names.
+
+        ORDERED BY VERSION, NOT BY PATH STRING, and that distinction is the
+        whole reason this is a function rather than a Sort-Object in-line.
+        Edge version folders are dotted quads ("141.0.3537.85"), and sorting
+        those as TEXT descending puts "99.0.4844.51" above "141.0.3537.85" -
+        so a machine that had ever run a 9x build kept a leftover folder
+        that won the sort, and the purge drove a years-old uninstaller
+        against a current install. Parsing each folder name as [version]
+        makes the newest payload win by construction. A folder whose name is
+        not a version (Edge does ship non-version siblings next to them)
+        sorts last rather than throwing.
+
+        Returns the FileInfo, so the caller keeps .FullName for logging.
+    #>
+    $EdgeAppRoots = @(
+        "$env:ProgramFiles\Microsoft\Edge\Application"
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application"
+    )
+    $Candidates = New-Object System.Collections.ArrayList
+    foreach ($Root in $EdgeAppRoots) {
+        if (-not (Test-Path -LiteralPath $Root)) { continue }
+        foreach ($Found in @(Get-ChildItem -Path $Root -Filter "setup.exe" -Recurse -File -ErrorAction SilentlyContinue)) {
+            # ...\Application\<VERSION>\Installer\setup.exe - the version is
+            # the grandparent of the file, i.e. the parent of "Installer".
+            $VersionDir = Split-Path (Split-Path $Found.FullName -Parent) -Leaf
+            $Parsed = [version]"0.0.0.0"
+            [void][version]::TryParse($VersionDir, [ref]$Parsed)
+            [void]$Candidates.Add([PSCustomObject]@{ File = $Found; Version = $Parsed })
+        }
+    }
+    if ($Candidates.Count -eq 0) { return $null }
+    return ($Candidates | Sort-Object Version -Descending | Select-Object -First 1).File
+}
+
+#: setup.exe exit codes that mean "Windows refused", not "it broke".
+#:
+#: 93 is the one that made the force-purge look like it did nothing. Edge's
+#: installer returns it for UNINSTALL_NOT_ALLOWED: the payload is fine, the
+#: command line is fine, and the product simply declines to remove itself
+#: because this build treats Edge as a non-removable system component.
+#: Retrying it - which is what Invoke-WithRetry did - reproduces it exactly,
+#: forever.
+#:
+#: 1603 is winget's spelling of the same wall (ERROR_INSTALL_FAILURE from
+#: the MSI layer, which is what winget reports when the Edge bundle refuses
+#: the uninstall). Both are BLOCKS, and a block is escalated rather than
+#: retried.
+$Script:EdgeUninstallBlockedCodes = @(93, 1603)
+
+#: The EEA/DMA member-state GeoID used while asking Edge to uninstall.
+#: 68 is Ireland. Any EEA nation works; the number itself carries no
+#: meaning beyond membership.
+$Script:EdgeDmaGeoId = 68
+
+function Set-EdgeUninstallPolicy {
+    <# EdgeUpdate's own documented switch for "the Uninstall button is
+       allowed to exist".
+
+       Microsoft publishes this as an EdgeUpdate policy, and on a machine
+       where Edge was installed by a channel that sets it to 0 the
+       uninstaller refuses before it starts. Writing it is therefore not a
+       trick - it is the supported way to ask for what this task exists to
+       do - and it is the first thing to try when setup.exe answers 93.
+
+       Returns a restore token: the previous values, so the caller can put
+       the machine back exactly as it found it. Best-effort; a locked key
+       yields $null for that path and the caller carries on. #>
+    $Paths = @(
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate",
+        "HKLM:\SOFTWARE\Microsoft\EdgeUpdate"
+    )
+    $Previous = @{}
+    foreach ($Path in $Paths) {
+        $Previous[$Path] = Get-RegValue -Path $Path -Name "AllowUninstall"
+        try {
+            Set-RegValue -Path $Path -Name "AllowUninstall" -Value 1 -Type DWord
+        } catch {
+            Write-Warn "Could not set AllowUninstall on '$Path': $($_.Exception.Message)"
+        }
+    }
+    return $Previous
+}
+
+function Restore-EdgeUninstallPolicy {
+    <# Puts AllowUninstall back to whatever it was, including removing it
+       again where it did not exist. The purge is allowed to change this
+       machine's Edge policy for the duration of the purge; it is not
+       allowed to leave it changed. #>
+    param([hashtable]$Previous)
+    if (-not $Previous) { return }
+    foreach ($Path in $Previous.Keys) {
+        $Value = $Previous[$Path]
+        try {
+            if ($null -eq $Value) {
+                Remove-RegValue -Path $Path -Name "AllowUninstall"
+            } else {
+                Set-RegValue -Path $Path -Name "AllowUninstall" -Value ([int]$Value) -Type DWord
+            }
+        } catch {
+            Write-Warn "Could not restore AllowUninstall on '$Path': $($_.Exception.Message)"
+        }
+    }
+}
+
+function Invoke-EdgeSetupUninstall {
+    <# One attempt at Edge's own uninstaller. Returns the exit code, or
+       $null when the process could not be started at all.
+
+       Deliberately NOT wrapped in Invoke-WithRetry. That helper exists for
+       operations that can succeed on a second try - a locked file, a busy
+       service - and Edge's refusal is not one of them: a build that
+       answers 93 answers 93 every time, so retrying it just spends the
+       user's time reproducing the same block. The caller escalates
+       instead. #>
+    param([Parameter(Mandatory = $true)][string]$SetupPath)
+    try {
+        $Proc = Start-Process -FilePath $SetupPath `
+            -ArgumentList "--uninstall --system-level --verbose-logging --force-uninstall" `
+            -Wait -NoNewWindow -PassThru -ErrorAction Stop
+        return $Proc.ExitCode
+    } catch {
+        Write-Warn "Edge's uninstaller could not be started: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Invoke-EdgeUninstallUnderDmaRegion {
+    <# Re-runs Edge's uninstaller with the machine reporting an EEA region,
+       then puts the region back.
+
+       WHY THIS EXISTS. Under the Digital Markets Act, Microsoft ships a
+       build of Edge that CAN be uninstalled - and gates that behaviour on
+       the user's reported region. Outside the EEA the same binary answers
+       93 and stops. So on a blocked machine the difference between "Edge
+       cannot be removed" and "Edge removes cleanly" is one integer in
+       HKCU\Control Panel\International\Geo\Nation.
+
+       THE REGION IS RESTORED IN A `finally`, unconditionally. GeoID is not
+       ours: it feeds regional defaults well outside this app, and a
+       utility that quietly moved a user to Ireland to win an argument with
+       a browser would be doing something the user could never trace back.
+       It is changed for the seconds the uninstaller runs, it is announced
+       in the log, and it goes back even if the uninstaller throws.
+
+       Returns the exit code, or $null if the region could not be read or
+       set - in which case nothing was changed and the caller falls through
+       to the next tier. #>
+    param([Parameter(Mandatory = $true)][string]$SetupPath)
+
+    $GeoPath = "HKCU:\Control Panel\International\Geo"
+    $Original = Get-RegValue -Path $GeoPath -Name "Nation"
+    if ($null -eq $Original) {
+        Write-Info "Could not read this machine's region - skipping the DMA uninstall path."
+        return $null
+    }
+
+    Write-Info "Edge refused the uninstall on this build. Retrying under an EEA region (the DMA-compliant path), then restoring region '$Original'."
+    try {
+        Set-RegValue -Path $GeoPath -Name "Nation" -Value ([string]$Script:EdgeDmaGeoId) -Type String
+    } catch {
+        Write-Warn "Could not set the region for the DMA uninstall path: $($_.Exception.Message)"
+        return $null
+    }
+    try {
+        return (Invoke-EdgeSetupUninstall -SetupPath $SetupPath)
+    } finally {
+        try {
+            Set-RegValue -Path $GeoPath -Name "Nation" -Value ([string]$Original) -Type String
+            Write-Info "Region restored to '$Original'."
+        } catch {
+            Write-ErrorX "COULD NOT RESTORE THE REGION to '$Original'. Set Settings > Time & language > Region > Country or region back by hand."
+        }
+    }
+}
+
+function Remove-EdgeAppxRegistrations {
+    <# Forceful package deregistration: the installed Appx packages AND the
+       provisioned ones.
+
+       Two different things, and removing only the first is why Edge came
+       back. Remove-AppxPackage unregisters it for the users who have it;
+       Remove-AppxProvisionedPackage takes it out of the IMAGE, which is
+       what stops Windows re-installing it for the next user to sign in and
+       after the next feature update.
+
+       Microsoft.MicrosoftEdgeDevToolsClient is deliberately EXCLUDED: on
+       Windows 11 it is a hard-protected OS component and Remove-AppxPackage
+       always fails it with 0x80070032 (ERROR_NOT_SUPPORTED). Left in the
+       pipeline it throws mid-loop, aborting the removal of the stubs that
+       ARE removable and turning a real success into a false failure - so we
+       filter it out up front rather than fighting a block Windows will
+       never lift.
+
+       Returns $true if anything was actually removed. Finding nothing is
+       the ordinary outcome on a clean machine and is NOT a failure. #>
+    $Cleared = $false
+    try {
+        $Packages = @(Get-AppxPackage -AllUsers -Name "*MicrosoftEdge*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike "*MicrosoftEdgeDevToolsClient*" })
+        foreach ($Package in $Packages) {
+            # Per-package, so one OS-protected stub cannot abort the
+            # removal of the others.
+            try {
+                Remove-AppxPackage -Package $Package.PackageFullName -AllUsers -ErrorAction Stop
+                Write-Info "Unregistered Edge Appx package '$($Package.Name)'."
+                $Cleared = $true
+            } catch {
+                Write-Warn "Could not unregister '$($Package.Name)': $($_.Exception.Message)"
+            }
+        }
+        if ($Packages.Count -eq 0) {
+            Write-Info "No removable Edge Appx registration present (DevToolsClient is OS-protected and skipped)."
+        }
+    } catch {
+        Write-Warn "Edge Appx cleanup could not run: $($_.Exception.Message)"
+    }
+
+    # The provisioned copy - the one that reinstalls itself for a new user.
+    try {
+        $Provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like "*MicrosoftEdge*" -and
+                           $_.DisplayName -notlike "*DevToolsClient*" })
+        foreach ($Entry in $Provisioned) {
+            try {
+                Remove-AppxProvisionedPackage -Online -PackageName $Entry.PackageName -ErrorAction Stop | Out-Null
+                Write-Info "Deprovisioned '$($Entry.DisplayName)' so it cannot return for a new user."
+                $Cleared = $true
+            } catch {
+                Write-Warn "Could not deprovision '$($Entry.DisplayName)': $($_.Exception.Message)"
+            }
+        }
+    } catch {
+        # Get-AppxProvisionedPackage needs elevation and a serviceable
+        # image; neither is worth failing an otherwise clean purge over.
+        Write-Warn "Edge deprovisioning could not run: $($_.Exception.Message)"
+    }
+    return $Cleared
+}
+
 function Remove-MicrosoftEdge {
     <#
     .SYNOPSIS
         Explicit pre-flight state check, then an aggressive multi-tier
-        force-purge: kill every locking/identity process, forcefully clear
-        the NoRemove registry protection flag, run Edge's own setup.exe
-        with --force-uninstall, fall back to a winget uninstall, then a
-        final Appx + scheduled-task cleanup pass - each tier only runs if
+        force-purge: kill every locking/identity process, stop and disable
+        the two EdgeUpdate services, forcefully clear the NoRemove registry
+        protection flag, run Edge's own setup.exe with --force-uninstall,
+        fall back to a winget uninstall, then a final Appx + EdgeUpdate
+        scheduled-task cleanup pass - each tier only runs if
         the one before it wasn't available or failed, and each is a real
         removal attempt in its own right rather than a last-resort no-op.
         Returns a hashtable @{Status; Message} (Status is one of
@@ -668,7 +1148,7 @@ function Remove-MicrosoftEdge {
     New-SystemRestorePoint
     Backup-EdgeState
 
-    if (Test-DryRun "Force-purge Microsoft Edge (kill processes, clear NoRemove flags, setup.exe --uninstall --system-level --verbose-logging --force-uninstall, falling back to winget/Appx/scheduled-task cleanup if needed)") {
+    if (Test-DryRun "Force-purge Microsoft Edge (kill processes, stop and disable the edgeupdate/edgeupdatem services, clear NoRemove flags, setup.exe --uninstall --system-level --verbose-logging --force-uninstall, falling back to winget/Appx/scheduled-task cleanup if needed)") {
         return @{ Status = 'DryRun'; Message = '[DRY-RUN] Edge removal simulated (backup + uninstall were reported, not executed).' }
     }
 
@@ -681,103 +1161,92 @@ function Remove-MicrosoftEdge {
     Get-Process -Name "msedge", "msedgewebview2", "identity_helper", "MicrosoftEdgeUpdate" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
 
+    # BEFORE the removal tiers, not after: the process kill above closes
+    # only the running updater, and the SCM restarts it on its own trigger
+    # while setup.exe is still working. Disabling the two services first is
+    # what stops the purge racing the thing that undoes it.
+    Stop-EdgeUpdateServices
+
     Clear-EdgeNoRemoveFlags
     Disable-EdgeDefaultBrowserPrompt | Out-Null
 
     $Removed = $false
 
-    # setup.exe's real location is DYNAMIC: it lives under a per-version
-    # folder ("...\Edge\Application\<VERSION>\Installer\setup.exe") whose
-    # name changes with every Edge update, so a hard-coded path is stale the
-    # moment Edge patches itself - the previous cause of setup.exe never
-    # being invoked (or a stale copy exiting with code 93). Resolve it at
-    # run time by recursively hunting "setup.exe" under the Application root
-    # in BOTH Program Files locations (64-bit Edge normally lands in Program
-    # Files, but the Installer payload some builds ship still sits under
-    # Program Files (x86)). Sort descending so the NEWEST version folder's
-    # uninstaller wins when an old version was left behind alongside it.
-    $EdgeAppRoots = @(
-        "$env:ProgramFiles\Microsoft\Edge\Application"
-        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application"
-    )
-    $UninstallPath = $null
-    foreach ($Root in $EdgeAppRoots) {
-        if (-not (Test-Path -LiteralPath $Root)) { continue }
-        $Found = Get-ChildItem -Path $Root -Filter "setup.exe" -Recurse -ErrorAction SilentlyContinue |
-            Sort-Object FullName -Descending | Select-Object -First 1
-        if ($Found) { $UninstallPath = $Found; break }
-    }
+    $UninstallPath = Get-EdgeUninstallerPath
 
+    # TIER 1: Edge's own uninstaller, escalating rather than retrying.
+    #
+    # Three attempts at most, and each one changes something material
+    # rather than hoping for a different answer to the same question:
+    #   plain          -> the normal case, and the only one most machines
+    #                     ever reach;
+    #   + AllowUninstall -> Microsoft's own EdgeUpdate policy for "the
+    #                     uninstall is permitted", for a channel that set
+    #                     it to 0;
+    #   + EEA region   -> the DMA-compliant build's own removable path.
+    # See $Script:EdgeUninstallBlockedCodes for why a 93 is escalated and
+    # never retried.
     if ($UninstallPath) {
         Write-Info "Located Edge uninstaller at: $($UninstallPath.FullName)"
-        $Removed = Invoke-WithRetry -OperationName "Remove Microsoft Edge (setup.exe)" -Action {
-            # Start-Process doesn't throw on a non-zero exit code, so without
-            # this check a failed uninstall (e.g. blocked by policy) would
-            # still report success - throwing here is what lets Invoke-WithRetry
-            # actually see the failure and offer a retry.
-            $Proc = Start-Process -FilePath $UninstallPath.FullName -ArgumentList "--uninstall --system-level --verbose-logging --force-uninstall" -Wait -NoNewWindow -PassThru -ErrorAction Stop
-            if ($Proc.ExitCode -ne 0) { throw "Edge's uninstaller exited with code $($Proc.ExitCode)." }
+        $SetupPath = $UninstallPath.FullName
+        $Code = Invoke-EdgeSetupUninstall -SetupPath $SetupPath
+
+        if ($null -ne $Code -and $Code -ne 0 -and
+            ($Script:EdgeUninstallBlockedCodes -contains $Code)) {
+            Write-Warn "Edge's uninstaller refused with code $Code - this build treats Edge as non-removable. Escalating."
+            $PolicyToken = Set-EdgeUninstallPolicy
+            try {
+                $Code = Invoke-EdgeSetupUninstall -SetupPath $SetupPath
+                if ($null -ne $Code -and $Code -ne 0 -and
+                    ($Script:EdgeUninstallBlockedCodes -contains $Code)) {
+                    $DmaCode = Invoke-EdgeUninstallUnderDmaRegion -SetupPath $SetupPath
+                    if ($null -ne $DmaCode) { $Code = $DmaCode }
+                }
+            } finally {
+                Restore-EdgeUninstallPolicy -Previous $PolicyToken
+            }
+        }
+
+        if ($Code -eq 0) {
+            $Removed = $true
+            Write-Success "Edge's own uninstaller completed."
+        } elseif ($null -ne $Code) {
+            Write-Warn "Edge's uninstaller exited with code $Code - falling back to winget/Appx removal."
         }
     } else {
         Write-Info "Edge's own setup.exe was not found under either Program Files Application root - falling back to winget/Appx cleanup."
     }
 
-    # setup.exe is absent entirely on builds that register Edge as a
-    # protected inbox component with no standalone Installer folder -
-    # winget still knows how to remove the Win32 package cleanly on those,
-    # so this is a real second line of defense, not a last resort.
+    # TIER 2: winget. setup.exe is absent entirely on builds that register
+    # Edge as a protected inbox component with no standalone Installer
+    # folder - winget still knows how to remove the Win32 package cleanly
+    # on those, so this is a real second line of defense, not a last
+    # resort.
+    #
+    # A 1603 here is the SAME BLOCK tier 1 hit, arriving through the MSI
+    # layer, so it is reported once and passed over rather than retried.
     if (-not $Removed) {
         Ensure-Winget | Out-Null
         if ($global:WingetAvailable) {
-            $Removed = Invoke-WithRetry -OperationName "Remove Microsoft Edge (winget)" -Action {
-                $Code = Invoke-Winget -ArgList @("uninstall", "--id", "Microsoft.Edge", "--exact", "--silent", "--force", "--accept-source-agreements", "--disable-interactivity")
-                if ($Code -ne 0) { throw "winget uninstall exited with code $Code." }
+            $Code = Invoke-Winget -ArgList @("uninstall", "--id", "Microsoft.Edge", "--exact", "--silent", "--force", "--accept-source-agreements", "--disable-interactivity")
+            if ($Code -eq 0) {
+                $Removed = $true
+                Write-Success "winget removed the Microsoft Edge package."
+            } elseif ($Script:EdgeUninstallBlockedCodes -contains $Code) {
+                Write-Warn "winget was blocked from uninstalling Edge (code $Code) - Windows is protecting the package. Falling through to package deregistration."
+            } else {
+                Write-Warn "winget's Edge uninstall exited with code $Code."
             }
         }
     }
 
-    # Last resort: strip any Appx-registered Edge stub (WebView2 shell,
-    # PWA host, etc.) either path above can leave behind - these aren't
-    # the browser itself, but they're what makes Windows keep reporting
-    # Edge as "installed" once the Win32 payload is already gone.
-    #
-    # Microsoft.MicrosoftEdgeDevToolsClient is deliberately EXCLUDED: on
-    # Windows 11 it is a hard-protected OS component and Remove-AppxPackage
-    # always fails it with 0x80070032 (ERROR_NOT_SUPPORTED). Left in the
-    # pipeline it throws mid-loop, aborting the removal of the stubs that
-    # ARE removable and turning a real success into a false failure - so we
-    # filter it out up front rather than fighting a block Windows will never
-    # lift.
-    # ALWAYS, not only when the tiers above failed. These stubs are what
-    # makes Windows keep reporting Edge as installed after the Win32 payload
-    # is gone, so leaving them behind on the SUCCESS path was how a purge
-    # that "worked" still showed Edge present. Finding none is the ordinary
-    # outcome on a clean machine and is NOT a failure - it must not touch
-    # $Removed downward, and it must not log an error, or every successful
-    # setup.exe removal would report one.
-    $AppxCleared = $false
-    try {
-        $Packages = @(Get-AppxPackage -AllUsers -Name "*MicrosoftEdge*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notlike "*MicrosoftEdgeDevToolsClient*" })
-        if ($Packages.Count -gt 0) {
-            foreach ($Package in $Packages) {
-                # Per-package, so one OS-protected stub cannot abort the
-                # removal of the others (the reason DevToolsClient is
-                # filtered out above - it always fails with 0x80070032).
-                try {
-                    Remove-AppxPackage -Package $Package.PackageFullName -AllUsers -ErrorAction Stop
-                    Write-Info "Unregistered Edge Appx package '$($Package.Name)'."
-                    $AppxCleared = $true
-                } catch {
-                    Write-Warn "Could not unregister '$($Package.Name)': $($_.Exception.Message)"
-                }
-            }
-        } else {
-            Write-Info "No removable Edge Appx registration present (DevToolsClient is OS-protected and skipped)."
-        }
-    } catch {
-        Write-Warn "Edge Appx cleanup could not run: $($_.Exception.Message)"
-    }
+    # TIER 3: forceful package deregistration, ALWAYS - not only when the
+    # tiers above failed. These registrations are what makes Windows keep
+    # reporting Edge as installed after the Win32 payload is gone, so
+    # leaving them behind on the SUCCESS path was how a purge that "worked"
+    # still showed Edge present. See Remove-EdgeAppxRegistrations, which
+    # also takes the PROVISIONED copy so it cannot return for a new user.
+    $AppxCleared = Remove-EdgeAppxRegistrations
     if (-not $Removed) { $Removed = $AppxCleared }
 
     Remove-EdgeScheduledTasks

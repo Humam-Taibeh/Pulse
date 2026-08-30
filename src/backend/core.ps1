@@ -17,7 +17,7 @@
       02-Safety.ps1         restore points, tweak/service snapshots,
                             Edge/OneDrive backups, rollback, reset-all
       03-Environment.ps1    winget bootstrap, PATH management,
-                            Verify-Environment (dev PATH doctor)
+                            Verify-Environment (dev tools + system PATH scan)
       04-SoftwareEngine.ps1 Smart-Deploy, winget/choco engine, versions,
                             hardware matching, category processor
       05-Startup.ps1        startup program discovery + manager
@@ -57,6 +57,10 @@
       - NEW Verify-Environment (task: VerifyEnvironment): audits Git, Python,
         Java, VS Code, GCC, Node and Ollama; auto-repairs missing user-PATH
         entries from known install roots and sets JAVA_HOME when resolvable.
+        It also SCANS THE WHOLE SYSTEM PATH (both scopes, read from the
+        registry) and reports dead and duplicate entries as [TAG] findings -
+        reported only, never removed. See the header block in
+        03-Environment.ps1 for why the two halves share one card.
       - NEW -WhatIf dry-run mode across every module: registry writes,
         service changes, deletions, installs and external tools are reported
         as "[WHATIF] ..." lines instead of executing; cache clean measures
@@ -170,7 +174,7 @@ $ErrorActionPreference = "Stop"
 # two lines above, so an unreadable file here would abort the engine before
 # a single module loaded — over a string used in a banner. Being
 # approximately right about a version beats refusing to run.
-$Script:ScriptVersion = "10.8.0"
+$Script:ScriptVersion = "10.9.0"
 try {
     $VersionFile = Join-Path $PSScriptRoot "..\..\VERSION"
     if (Test-Path -LiteralPath $VersionFile) {

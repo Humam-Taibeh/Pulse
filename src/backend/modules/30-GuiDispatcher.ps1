@@ -417,11 +417,24 @@ function Invoke-GuiTask {
                 if ($Report.MissingCount -gt 0) {
                     $MissingTxt = " Not installed yet: $($Report.MissingNames -join ', ') (winget ids are in the log)."
                 }
+                # The PATH scan's findings belong in the VERDICT, not only in
+                # the console. The toast is all a user sees of a task they ran
+                # and looked away from, and "everything's wired up correctly"
+                # over a console listing four dead PATH entries is the one
+                # sentence this task must never say.
+                $PathTxt = ""
+                $PathIssues = [int]$Report.DeadPathCount + [int]$Report.DuplicatePathCount
+                if ($PathIssues -gt 0) {
+                    $Parts = @()
+                    if ($Report.DeadPathCount -gt 0)      { $Parts += "$($Report.DeadPathCount) dead" }
+                    if ($Report.DuplicatePathCount -gt 0) { $Parts += "$($Report.DuplicatePathCount) duplicate" }
+                    $PathTxt = " PATH scan: $($Parts -join ' and ') entr" + $(if ($PathIssues -eq 1) { "y" } else { "ies" }) + " of $($Report.PathEntryCount) - listed above, none removed."
+                }
                 $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
-                if ($Report.MissingCount -eq 0 -and $Report.RepairedCount -eq 0) {
-                    Write-Output "##PULSE##SUCCESS|${Prefix}Everything's wired up correctly - all $($Report.OkCount) dev tool(s) are ready to use from any terminal."
+                if ($Report.MissingCount -eq 0 -and $Report.RepairedCount -eq 0 -and $PathIssues -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Everything's wired up correctly - all $($Report.OkCount) dev tool(s) are ready to use from any terminal, and all $($Report.PathEntryCount) PATH entries resolve."
                 } else {
-                    Write-Output "##PULSE##SUCCESS|${Prefix}PATH doctor: $($Report.OkCount) already working, $($Report.RepairedCount) fixed automatically.$MissingTxt"
+                    Write-Output "##PULSE##SUCCESS|${Prefix}PATH doctor: $($Report.OkCount) already working, $($Report.RepairedCount) fixed automatically.$MissingTxt$PathTxt"
                 }
                 break
             }
@@ -691,18 +704,6 @@ function Invoke-GuiTask {
                     -FailureMessage "Activity History settings could not be fully reverted."
                 break
             }
-            "ApplyAllPrivacy" {
-                Complete-GuiTask -Action {
-                    Remove-Bloatware
-                    Disable-Telemetry
-                    Disable-AdvertisingID
-                    Disable-ActivityHistory
-                } `
-                    -SuccessMessage "Full privacy pass applied: bloatware, telemetry, advertising ID and activity history." `
-                    -FailureMessage "The privacy pass finished with some failures."
-                break
-            }
-
             # ============ 5. INFORMATION & UTILITIES ============
             "SystemInfo" {
                 $Info = Get-SystemInfoSnapshot

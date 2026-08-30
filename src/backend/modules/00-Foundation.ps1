@@ -629,6 +629,71 @@ function Write-ErrorX  { param($Text) Write-Host "   $Script:Cross  $Text" -Fore
 # the session summary can distinguish "did work" from "nothing to do".
 function Write-AlreadyOK { param($Text) Write-Host "   $Script:Check  $Text" -ForegroundColor Green; Write-Log "ALREADY-OK: $Text"; $Script:SessionSkipCount++ }
 
+function Write-TaggedLine {
+    <#
+    .SYNOPSIS
+        One [TAG] line for a SCANNER's output, aligned into a tag column.
+
+    .DESCRIPTION
+        The Write-Info / Write-Success / Write-Warn family writes PROSE:
+        a check glyph, then a sentence explaining what happened. That is
+        right for a task that does a handful of things and needs to say
+        what each of them was.
+
+        It is wrong for a REPORT, which is what PATH Doctor produces - a
+        list of thirty-odd findings the user reads by scanning down the
+        left edge for the ones that are not [OK]. Sentences make that
+        impossible: every line starts with the same glyph and diverges only
+        somewhere in the middle, so there is no column to scan.
+
+        So a tag, padded to a fixed width, and the finding after it. The
+        tag is the ONLY thing in the left column, which is what makes a
+        run of [OK] lines something the eye can skip over and a [MISSING]
+        something it lands on.
+
+        Colour is chosen by tag rather than passed in, so the same finding
+        can never be green in one caller and yellow in another.
+
+        Every line still reaches the log verbatim - a scannable console
+        must not cost a searchable transcript.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+    $Color = switch ($Tag) {
+        "OK"      { "Green" }
+        "FIXED"   { "Green" }
+        "SET"     { "Green" }
+        "MISSING" { "Yellow" }
+        "WARN"    { "Yellow" }
+        "DEAD"    { "Yellow" }
+        "DUPE"    { "Yellow" }
+        "FAIL"    { "Red" }
+        default   { "DarkGray" }
+    }
+    # 9 = "[MISSING]", the longest tag - so every finding starts at the
+    # same column whatever its verdict.
+    $Label = "[$Tag]".PadRight(9)
+    Write-Host "   $Label $Text" -ForegroundColor $Color
+    Write-Log "$Tag $Text"
+
+    # The SESSION COUNTERS the prose helpers maintain, kept in step - they
+    # are what Write-GuiMeta reports, and a scanner that emitted forty
+    # findings and a 0/0/0 meta line would be lying about what it did.
+    # The mapping mirrors the prose family exactly: [OK] means "already
+    # correct, nothing done", which is Write-AlreadyOK's SKIP, not a
+    # success. Purely informational tags (SCAN, DEAD, DUPE, MISSING, WARN,
+    # INFO, DONE) count as nothing at all, because a finding is not an
+    # action.
+    switch ($Tag) {
+        "OK"    { $Script:SessionSkipCount++ }
+        "FIXED" { $Script:SessionSuccessCount++ }
+        "SET"   { $Script:SessionSuccessCount++ }
+        "FAIL"  { $Script:SessionFailCount++ }
+    }
+}
+
 # ============================================================
 #  GUI STRUCTURED DATA CHANNEL (v6.3)
 #  Companion to the ##PULSE##SUCCESS|/ERROR| verdict contract: a task that

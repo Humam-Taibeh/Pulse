@@ -16,6 +16,135 @@ GUI version, with core changes called out explicitly.
 
 ---
 
+## [10.9.0] — 2026-08-30
+
+Silent, resilient, and drawn in the vendors' own colours.
+
+### Fixed — nothing flashes a console any more
+- **Two backend launches allocated a console window and threw it over the
+  UI.** The bloatware codec uninstaller (`08-Privacy.ps1`) and the
+  local-file installer (`04-SoftwareEngine.ps1`) called `Start-Process`
+  without `-NoNewWindow`, so a *silent* uninstall showed a black box for as
+  long as it ran. Both now share the engine's console, which — because the
+  engine is spawned with `CREATE_NO_WINDOW` — is no console at all. The
+  Python side was already correct; both halves are now pinned by tests that
+  read every launch site individually, because one call carrying the flag
+  has never made its neighbour safe.
+
+### Fixed — uninstalls that report the truth
+- **OneDrive: "already gone" is a success state.** Exit code
+  `-2147219813` (`0x8004069B`) means the product is not registered for this
+  user — and since Windows leaves the setup stub in System32 regardless,
+  the purge found an uninstaller, ran it, and reported a hard failure for a
+  machine already in the state the user asked for. That code, and a missing
+  `OneDriveSetup.exe` entirely, now report `AlreadyRemoved` and run the same
+  cleanup a live uninstall does.
+- **The leftovers are cleared on every path.** `HKCU\Software\Microsoft\
+  OneDrive` (the account, tenant and sync-endpoint hive) and the two
+  Explorer namespace CLSIDs outlive the client, which is why a "removed"
+  OneDrive kept a dead cloud folder in the sidebar. Folders are deleted
+  **only when empty** — a sync root can hold the only copy of a file that
+  never finished uploading, so the emptiness test recurses and stops at the
+  first file found.
+- **Edge: exit 93 is a refusal, not a fault.** `setup.exe` returns it for
+  `UNINSTALL_NOT_ALLOWED`, and winget's `1603` is the same wall through the
+  MSI layer. Retrying reproduces it forever, which is exactly what the
+  previous implementation did. Both codes now ESCALATE: Microsoft's own
+  `AllowUninstall` EdgeUpdate policy, then the DMA-compliant EEA region
+  path, then forceful package deregistration. The policy and the region are
+  each restored in a `finally` — GeoID feeds regional defaults well outside
+  this app, and a utility that quietly moved a user to another country to
+  win an argument with a browser would be doing something they could never
+  trace back.
+- **Edge is deprovisioned as well as unregistered.** `Remove-AppxPackage`
+  unregisters it for the users who have it; only
+  `Remove-AppxProvisionedPackage` takes it out of the image, which is what
+  stops it returning for the next user to sign in.
+
+### Changed — authentic full-colour brand marks
+- **The catalog was 34 recoloured silhouettes to 2 real logos.** Simple
+  Icons is a monochrome set, so Chrome was a flat blue disc and Steam a
+  flat black one — authentic in shape, and missing the exact thing that
+  makes those marks recognisable at 20px. The fetcher now prefers the CC0
+  `logos` collection and the MIT `thesvg-color` / `devicon` sets: **36 of
+  37 marks are full colour**, including Chrome, Steam, Epic Games,
+  Rockstar, Java, .NET and MSI Afterburner. Cursor stays monochrome because
+  its own brand cube is.
+- **One presentation for every icon**: a 20px mark centred in a 36px well
+  at an 8px radius. Brand SVGs disagree about their own internal padding,
+  so "as large as fits" produced a column at visibly different optical
+  sizes. The well's GEOMETRY is fixed and only its TONE is measured — black
+  artwork gets the near-white plate an app store would give it, everything
+  else keeps a quiet neutral, and the two fallback tiers sit on the same
+  plate so one unknown app never looks broken.
+- **Six apps still have no bundled mark, and nothing was invented for
+  them.** BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor and CrystalDiskInfo
+  have no authentic logo in any open licensed set — re-measured across the
+  full Simple Icons index, the `logos` collection, both MIT sets and
+  Iconify's federated search. The near-misses are traps the search returns
+  readily: `campaignmonitor` for HWMonitor, `crystal` (the programming
+  language) for CrystalDiskInfo, `unrealengine` for Epic. A wrong logo is
+  worse than no logo.
+
+### Fixed — the hover border stopped changing the card's shape
+- **Measured before it was touched: a hovered card painted 116 pixels of
+  accent ink OUTSIDE its own rounded corners** (alpha up to 58, against 8
+  pixels at alpha 13 at rest). The QSS was already geometry-stable in every
+  state; the cause was the glow's 5px pen, centred on a path 1px inside the
+  boundary, putting 1.5px of itself past the card at the corners. A
+  silhouette that changes between two states reads as the box having moved.
+  The edge painters now clip to the surface's own path and the halo is
+  inset by half its pen width, so the light stops exactly where the card
+  does. Inside the boundary nothing changed.
+
+### Added — search that speaks the user's language
+- **Arabic queries reach the operations they name.** `تحديث` → Check for
+  Updates, `تنظيف` → Aggressive Cache Clean, `تسريع` → Optimize Drives,
+  `برامج` → Software Catalog. The query is normalised first: harakat are
+  optional, tatweel is decoration, and the alef, yeh and ta-marbuta forms
+  depend on the keyboard — so the same word typed four ways folds to one
+  string before anything compares it. The query is translated into the
+  words the interface already uses; the results stay in the language the
+  rest of the app is written in.
+- **Typo tolerance**, as a bounded Damerau-Levenshtein pass over title
+  WORDS: `cahce` finds Aggressive Cache Clean, `powr` finds the power plan,
+  `startap` finds the Startup Manager. Bounded at one edit for short
+  queries and two for long ones, and scored below every deliberate match —
+  at distance 5 every short word is near every other short word.
+- **English verbs**, for the same reason: a user types `uninstall` far more
+  often than the noun a card happens to be titled with.
+- **Group headings belong to their own rows again** — 12px of air above,
+  tight below, and a hairline closing the group before. Bottom-aligned in a
+  short box, a heading sat nearly equidistant between two groups and the
+  list read as one undifferentiated column.
+
+### Changed — chrome
+- **The version appears once.** `v10.8.0` and a `BETA` pill sat immediately
+  right of the title-bar wordmark, duplicating the sidebar status rail's
+  `PULSE v10.9.0 · BETA` — which is also a button that checks for updates.
+  One home, and it is the one that does something.
+- **The title-bar brand lockup hides on the dashboard**, which carries its
+  own masthead at six times the size forty pixels below it, and returns on
+  every other view where it is the only thing naming the app.
+
+### Fixed — packaging
+- **Inno Setup's "launch when Setup finishes" no longer trips Windows App
+  Control error 4551.** Setup runs elevated, so a direct `CreateProcess` of
+  an exe whose own manifest asks for `requireAdministrator` is the shape
+  App Control blocks. `shellexec` routes it through `ShellExecuteEx` for a
+  normal elevation handshake, and `runasoriginaluser` starts it as the
+  signed-in user — which is also what makes the first launch write its
+  theme, geometry and log under the profile the user will actually look in.
+
+### Fixed — tests
+- **A once-in-ten-runs failure was a race, not a flaky widget.** Two
+  bloatware assertions read `isVisible()` after a fixed 60ms settle, and
+  showing a top-level window is asynchronous — inside the full suite it
+  occasionally took longer. `conftest.wait_until` waits on the condition
+  instead, which removes the race rather than re-tuning the sleep.
+
+---
+
 ## [10.8.0] — 2026-08-30
 
 Bloatware that stays removed.

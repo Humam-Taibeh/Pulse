@@ -160,6 +160,45 @@ class GlowController(QObject):
         return False
 
 
+def clip_to_surface(painter: QPainter, rect, radius: int) -> None:
+    """Confine everything painted after this to the surface's OWN rounded
+    shape. Call inside a painter.save()/restore() pair.
+
+    THIS IS THE FIX FOR "THE BORDER OVERFLOWS ON HOVER", and the defect it
+    removes is a change of SILHOUETTE, not of geometry — which is why it
+    survived every check that looked at widget rects.
+
+    A card's four corner wedges (the area between the rounded boundary and
+    the square widget rect) are transparent, and every perimeter stroke in
+    this module is drawn on a rounded rect INSET from that boundary. An
+    inset rounded rect is not concentric with its parent unless the radius
+    is shrunk to match — the arcs are, now (see paint_accent_hairline) —
+    but the PEN still has width, and half of it lands outside whatever path
+    it is centred on. The glow's outer halo is a 5px pen: 2.5px of it sits
+    beyond its own path, which at the corners is beyond the card.
+
+    Measured on a 320x156 card at radius 12, hovered at full intensity:
+    paint_glow_frame put 88 pixels of accent ink at up to alpha 57 into the
+    corner wedges, and paint_accent_hairline another 28 at alpha 58. At
+    rest the same corners carry 8 pixels at alpha 13. So hovering did not
+    merely light the card's edge — it grew ink outside the card's shape,
+    and the eye reads a silhouette that changes between two states as the
+    box having moved.
+
+    Clipping is the right instrument rather than insetting each stroke
+    further: an inset changes where the light sits (and a glow that stops
+    3px short of the edge is no longer an edge glow), while a clip changes
+    only whether ink may leave the shape. Inside the boundary every stroke
+    lands exactly where it did before, so the treatment is unchanged.
+
+    NOT APPLIED TO THE CAST SHADOW. paint_drop_shadow's whole job is to
+    paint outside the surface; clipping it would delete it.
+    """
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(rect), float(radius), float(radius))
+    painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
+
+
 def paint_glow_frame(painter: QPainter, rect, radius: int,
                      color: QColor, intensity: float,
                      cursor: QPointF | None = None,
@@ -180,10 +219,26 @@ def paint_glow_frame(painter: QPainter, rect, radius: int,
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setBrush(Qt.BrushStyle.NoBrush)
+    # Pass 1 below is a FIVE PIXEL pen on a path 1px inside the boundary,
+    # so 1.5px of it falls outside the card entirely. See clip_to_surface.
+    clip_to_surface(painter, rect, radius)
 
     center = cursor if cursor is not None else QPointF(rect.center())
     reach = max(rect.width(), rect.height()) * 0.95
     inner = rect.adjusted(1, 1, -1, -1)
+    # THE HALO GETS ITS OWN PATH, inset by half its own pen width so the
+    # OUTER edge of a 5px stroke lands on the surface boundary rather than
+    # 1.5px beyond it. The clip above already stops the ink escaping; this
+    # is what stops it being clipped in the first place, which matters
+    # because a 5px gradient pen sheared off by a clip edge reads as a hard
+    # line where the design wants a fade. Inside the boundary the light is
+    # unchanged — the band simply runs [0, +5] from the edge instead of
+    # [-1.5, +3.5].
+    halo_pen = 5.0
+    halo_inset = halo_pen / 2.0
+    halo_rect = QRectF(rect).adjusted(halo_inset, halo_inset,
+                                      -halo_inset, -halo_inset)
+    halo_radius = max(0.0, radius - halo_inset)
     # Shrunk with the inset, for the reason spelled out in
     # paint_accent_hairline: an inset rounded rect at an unchanged radius is
     # not concentric with its boundary. It matters less here (both passes are
@@ -200,8 +255,8 @@ def paint_glow_frame(painter: QPainter, rect, radius: int,
     c2 = QColor(color)
     c2.setAlphaF(0.0)
     halo.setColorAt(1.0, c2)
-    painter.setPen(QPen(QBrush(halo), 5.0))
-    painter.drawRoundedRect(inner, inner_radius, inner_radius)
+    painter.setPen(QPen(QBrush(halo), halo_pen))
+    painter.drawRoundedRect(halo_rect, halo_radius, halo_radius)
 
     # pass 2: crisp inner edge
     edge = QRadialGradient(center, reach * 0.8)
@@ -256,6 +311,9 @@ def paint_accent_hairline(painter: QPainter, rect, radius: int,
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setBrush(Qt.BrushStyle.NoBrush)
+    # Concentric arcs (below) put the stroke's CENTRE where it belongs;
+    # the outer half of the pen still crosses the boundary at the corners.
+    clip_to_surface(painter, rect, radius)
     edge = QColor(color)
     edge.setAlphaF(max(0.0, min(1.0, alpha * intensity)))
     painter.setPen(QPen(edge, width))
@@ -653,14 +711,16 @@ def paint_ripple_frame(painter: QPainter, rect, radius: int, color: QColor,
 
     Clipped to the widget's own rounded rect so it never bleeds onto
     neighboring cards; one radial-gradient fill, no offscreen buffer.
+
+    This was the FIRST painter here to clip itself, and for years the only
+    one — see clip_to_surface, which generalised it once the hover glow
+    turned out to need the same guarantee for the same reason.
     """
     if progress <= 0.0 or progress >= 1.0:
         return
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(rect), radius, radius)
-    painter.setClipPath(path)
+    clip_to_surface(painter, rect, radius)
 
     max_r = float(rect.width() + rect.height())  # generous — always covers
     r = max(max_r * progress, 1.0)

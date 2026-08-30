@@ -29,7 +29,7 @@ import re
 
 import pytest
 
-from conftest import settle
+from conftest import settle, show_dialog, wait_until
 from frontend import menu_structure as MS
 from frontend import theme as TH
 from frontend.widgets import BloatRow, BloatwarePurgeDialog
@@ -192,8 +192,11 @@ def purge(window, qapp):
     happen to be installed on the machine running the suite.
     """
     dialog = BloatwarePurgeDialog(window, "", window.theme.t)
-    dialog.show()
-    settle(qapp, 60)
+    # show_dialog, not show()+settle(60): every assertion below reads
+    # isVisible() on a child, and showing a top-level window is
+    # asynchronous — see conftest.wait_until for the once-in-ten-runs
+    # failure the fixed wait produced inside the full suite.
+    show_dialog(qapp, dialog)
     dialog._render(list(_ENTRIES))
     settle(qapp, 60)
     yield dialog
@@ -247,12 +250,15 @@ def test_a_desktop_leftover_is_selectable_without_an_appx_identity(purge):
     assert row.is_selected(), "the recommended pre-tick skipped a desktop entry"
 
 
-def test_absent_rows_are_folded_away_until_asked_for(purge):
+def test_absent_rows_are_folded_away_until_asked_for(purge, qapp):
     """48 entries and a clean machine has one of them. The first build
     rendered every row and buried the single result under forty-seven
     'NOT PRESENT' ones."""
     assert not purge._show_absent.isChecked()
-    assert purge._rows["BingNews"].isVisible()
+    # wait_until, not a bare read: the row's visibility is settled by the
+    # dialog's own layout pass, which the fixture has started but Qt may
+    # not have delivered yet on a loaded machine.
+    assert wait_until(qapp, purge._rows["BingNews"].isVisible)
     assert not purge._rows["TikTok"].isVisible()
     purge._show_absent.setChecked(True)
     assert purge._rows["TikTok"].isVisible(), (
@@ -264,8 +270,7 @@ def test_a_clean_machine_shows_the_catalog_rather_than_an_empty_box(window, qapp
     under a '0 of 25 present' header reads as a dialog that failed to
     load."""
     dialog = BloatwarePurgeDialog(window, "", window.theme.t)
-    dialog.show()
-    settle(qapp, 60)
+    show_dialog(qapp, dialog)          # see the note in the purge fixture
     try:
         dialog._render([{**e, "Detected": False, "Installed": [],
                          "Provisioned": [], "Desktop": []} for e in _ENTRIES])
@@ -273,7 +278,7 @@ def test_a_clean_machine_shows_the_catalog_rather_than_an_empty_box(window, qapp
         assert dialog._show_absent.isChecked()
         assert not dialog._show_absent.isEnabled(), (
             "the toggle can be switched off to reveal an empty list")
-        assert dialog._empty.isVisible()
+        assert wait_until(qapp, dialog._empty.isVisible)
         assert not dialog._purge_btn.isEnabled()
     finally:
         dialog.reject()

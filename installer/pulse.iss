@@ -132,9 +132,30 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 ; nowait + skipifsilent: a silent upgrade driven by the updater must not
 ; block waiting for the app it just relaunched.
+;
+; shellexec + runasoriginaluser are the fix for Windows App Control error
+; 4551 on the "launch when Setup finishes" checkbox. Setup runs ELEVATED,
+; so without these it starts PULSE.exe as a direct CreateProcess child of
+; an elevated installer - and PULSE.exe's own manifest already asks for
+; requireAdministrator (see the manifest note in main.spec). On a machine
+; with App Control / Smart App Control enforcing, an elevated parent
+; spawning an elevation-requesting child is exactly the shape that gets
+; blocked, and Setup surfaces it as 4551.
+;
+;   shellexec          launches through ShellExecuteEx rather than
+;                      CreateProcess, so Windows performs its normal
+;                      elevation handshake instead of inheriting one.
+;   runasoriginaluser  runs it as the user who started Setup rather than
+;                      as the elevated installer account. That is also
+;                      what makes the app come up owning the right
+;                      profile - %LOCALAPPDATA%\PULSE, the saved theme,
+;                      the window geometry and the log all live under the
+;                      SIGNED-IN user, and a first launch under the
+;                      installer's account would write them somewhere the
+;                      user never sees again.
 Filename: "{app}\{#MyAppExeName}"; \
     Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: runasoriginaluser shellexec postinstall nowait skipifsilent
 
 [UninstallDelete]
 ; PyInstaller writes nothing here at runtime, but a user dropping extra

@@ -216,3 +216,60 @@ def settle(qapp, ms: int = 120):
     qapp.processEvents()
     QTest.qWait(ms)
     qapp.processEvents()
+
+
+def wait_until(qapp, predicate, timeout_ms: int = 3000, step_ms: int = 20):
+    """Pump the loop until `predicate()` is true, or `timeout_ms` elapses.
+    Returns its final value, so a caller can assert on it and get a real
+    failure rather than a timeout.
+
+    USE THIS INSTEAD OF A FIXED settle() WHENEVER THE ASSERTION IS ABOUT A
+    WIDGET BEING VISIBLE. Showing a top-level window is asynchronous: Qt
+    asks the platform for a native window and marks the widget visible when
+    the platform answers. On an idle machine that is a couple of
+    milliseconds and any settle() covers it; inside the full suite, with a
+    session-scoped PulseApp and a hundred other widgets alive, it
+    occasionally took longer than the 60ms the bloatware tests waited — so
+    `dialog._empty.isVisible()` was False, once in roughly ten runs, on a
+    dialog that was in every respect correct.
+
+    That is a bad failure to own: it is invisible in isolation (which is
+    where anyone investigating runs it), it points at the widget rather
+    than at the wait, and the obvious "fix" is to raise the sleep, which
+    only moves the threshold. A condition wait removes the race instead of
+    re-tuning it, and costs nothing when the condition is already true.
+    """
+    from PySide6.QtTest import QTest
+    waited = 0
+    qapp.processEvents()
+    while not predicate() and waited < timeout_ms:
+        QTest.qWait(step_ms)
+        waited += step_ms
+    qapp.processEvents()
+    return predicate()
+
+
+def show_dialog(qapp, dialog, timeout_ms: int = 3000, settle_ms: int = 60):
+    """show() a dialog, wait until Qt reports it visible, THEN settle.
+
+    Both halves are load-bearing, and dropping either one produces a
+    different flaky failure:
+
+      * the WAIT covers native window creation, which is asynchronous and
+        occasionally slower than any fixed pause inside the full suite —
+        the original defect (see wait_until);
+
+      * the SETTLE covers what PulseDialog.showEvent starts once the window
+        exists: refit_dialog gives the panel its real geometry and
+        _present_dialog runs the entrance. Returning the instant
+        isVisible() flips means the dialog is on screen with its stack
+        pages not yet laid out, so a child asked about its own visibility
+        immediately afterwards answers False. Waiting on the window and
+        then not settling at all simply moved the race.
+    """
+    dialog.show()
+    assert wait_until(qapp, dialog.isVisible, timeout_ms), (
+        f"{type(dialog).__name__} was never reported visible within "
+        f"{timeout_ms}ms of show()")
+    settle(qapp, settle_ms)
+    return dialog

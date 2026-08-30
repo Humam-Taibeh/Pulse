@@ -62,6 +62,11 @@ ICON_URL = "https://cdn.jsdelivr.net/npm/simple-icons@13/icons/{slug}.svg"
 #: Drop an <AppId>.svg into assets/appicons/ by hand to cover any of these
 #: — the loader prefers a file on disk over everything except a locally
 #: installed app's own icon.
+#:
+#: NOTE: nearly every entry here is now OVERRIDDEN by LOGO_MAP below,
+#: which pulls the same brand's full-colour artwork. This map remains the
+#: fallback for anything with no colour source, and the record of which
+#: Simple Icons slug was verified for each app.
 ICON_MAP: dict[str, str | None] = {
     # -- browsers, chat, media, productivity ------------------------
     "Google.Chrome": "googlechrome",
@@ -135,16 +140,34 @@ ICON_MAP: dict[str, str | None] = {
 #: colours rather than as a recoloured silhouette (see `color: true` in
 #: the manifest and _brand_pixmap in src/utils/appicons.py).
 #:
+#: THREE COLLECTIONS, all permissively licensed, tried in this order by
+#: hand rather than by search:
+#:
+#:   logos          CC0-1.0, 1880 marks (Gil Barbara's SVG Logos)
+#:   thesvg-color   MIT, 4847 marks (thesvg.org)
+#:   devicon        MIT, 1036 marks
+#:
+#: The map below is what MOVED THE CATALOG from 2 real logos and 34
+#: recoloured silhouettes to 36 real logos and 1 silhouette. A silhouette
+#: is authentic in shape and wrong in everything else — Chrome as a flat
+#: blue disc is not the mark anyone recognises — so a colour source is
+#: preferred wherever one genuinely exists.
+#:
 #: WHAT IS STILL MISSING, and why nothing is invented to cover it:
-#: BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo and Open
-#: WebUI have NO authentic mark in any open, licensed icon set. That was
-#: not assumed — it was measured against the full Simple Icons index
-#: (~3300 marks), the whole `logos` collection (1861 marks) and Iconify's
-#: federated search across every collection it aggregates. Those seven
-#: fall through to the runtime's next tier: the app's OWN icon, read from
-#: its own installed binary, which is the vendor's genuine artwork and
-#: needs no redistribution at all. When the app is not installed they
+#: BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor and CrystalDiskInfo have
+#: NO authentic mark in any open, licensed icon set. That was not assumed
+#: — it was measured against the full Simple Icons index (~3300 marks),
+#: the whole `logos` collection (1880), the two MIT sets above, and
+#: Iconify's federated search across every collection it aggregates. Those
+#: six fall through to the runtime's next tier: the app's OWN icon, read
+#: from its own installed binary, which is the vendor's genuine artwork
+#: and needs no redistribution at all. When the app is not installed they
 #: reach the neutral glyph, which says "no logo available" honestly.
+#:
+#: THE TRAPS ARE CLOSE AND THE SEARCH FINDS THEM: "hwmonitor" returns
+#: `campaignmonitor`, "crystaldiskinfo" returns `crystal` (the programming
+#: language) and "epic games" returns `unrealengine` — a different Epic
+#: product. Every pairing below was checked by eye for that reason.
 #:
 #: THE RULE THIS FILE IS BUILT ON, restated because it was tested: a WRONG
 #: logo is worse than no logo, and an INVENTED one is worse than both.
@@ -152,10 +175,60 @@ ICON_MAP: dict[str, str | None] = {
 #: seven, drop a genuine `<AppId>.svg` into assets/appicons/ and add it
 #: here — the loader already prefers a file on disk.
 LOGO_MAP: dict[str, str] = {
-    "Microsoft.VisualStudioCode": "logos:visual-studio-code",
+    # -- browsers, chat, media, productivity ------------------------
+    "Google.Chrome": "logos:chrome",
+    "Brave.Brave": "logos:brave",
+    "Mozilla.Firefox": "logos:firefox",
     "Microsoft.Edge": "logos:microsoft-edge",
+    "Telegram.TelegramDesktop": "logos:telegram",
+    "Spotify.Spotify": "logos:spotify-icon",
+    "Discord.Discord": "logos:discord-icon",
+    "9NKSQCEZVDDB": "logos:whatsapp-icon",
+    "9PKTQ5699M62": "thesvg-color:icloud",
+    "Apple.iTunes": "thesvg-color:itunes",
+    "7zip.7zip": "thesvg-color:7zip",
+    "VideoLAN.VLC": "thesvg-color:vlc-media-player",
+    "TheDocumentFoundation.LibreOffice": "thesvg-color:libreoffice",
+    "Notion.Notion": "logos:notion-icon",
+    # -- runtimes ---------------------------------------------------
+    # the C++ language mark, not a Microsoft one — accurate for a C++
+    # redistributable and unencumbered
+    "Microsoft.VCRedist.2015+.x64": "logos:c-plusplus",
+    "Microsoft.DotNet.DesktopRuntime.8": "logos:dotnet",
+    # Oracle's own mark: this entry is Oracle's JRE, NOT OpenJDK
+    "Oracle.JavaRuntimeEnvironment": "logos:java",
+    # -- gaming -----------------------------------------------------
+    "Valve.Steam": "logos:steam",
+    # "-light" is the DARK-INK variant (the one drawn for light
+    # backgrounds), which is the better of the two here: on the light
+    # theme it needs no help at all, and on obsidian the runtime's
+    # measured contrast guard gives it the same white tile an app store
+    # would (see _backing_plaque in src/utils/appicons.py).
+    "EpicGames.EpicGamesLauncher": "thesvg-color:epic-games-light",
+    "RockstarGames.Launcher": "thesvg-color:rockstar-games",
+    # -- diagnostics ------------------------------------------------
+    # MSI Afterburner is MSI's product, so MSI's mark identifies it
+    "Guru3D.Afterburner": "thesvg-color:msi",
+    # -- dev hub ----------------------------------------------------
+    "Python.Python.3.12": "logos:python",
+    "EclipseAdoptium.Temurin.21.JDK": "logos:eclipse-icon",
+    "OpenJS.NodeJS.LTS": "logos:nodejs-icon",
+    "Git.Git": "logos:git-icon",
+    "MSYS2.MSYS2": "logos:gnu",           # GCC/MinGW toolchain = the GNU mark
+    "Microsoft.VisualStudioCode": "logos:visual-studio-code",
+    "JetBrains.PyCharm.Community": "logos:pycharm",
+    "JetBrains.IntelliJIDEA.Community": "logos:intellij-idea",
+    "Apache.NetBeans": "logos:netbeans",
+    "Ollama.Ollama": "devicon:ollama",
+    "OpenWebUI.OpenWebUI": "thesvg-color:openwebui",
+    "DBeaver.DBeaver.Community": "devicon:dbeaver",
+    "Postman.Postman": "logos:postman-icon",
+    "Bruno.Bruno": "devicon:bruno",
+    "Docker.DockerDesktop": "logos:docker-icon",
     # BoxIcons Logos' rendition of Cursor's cube mark — a curated
-    # brand-logo set, not a lookalike picked by keyword.
+    # brand-logo set, not a lookalike picked by keyword. STILL THE
+    # MONOCHROME ONE: Cursor's mark has no full-colour version in any
+    # permissive set, and its own brand cube is monochrome anyway.
     "Anysphere.Cursor": "bxl:cursor-ai",
 }
 
@@ -289,8 +362,14 @@ def main() -> int:
         manifest[app_id] = record
         unmapped = [a for a in unmapped if a != app_id]
 
-    with open(MANIFEST, "w", encoding="utf-8") as handle:
+    # newline="
+": .gitattributes pins *.json to LF, and text mode on
+    # Windows would write CRLF for every line of a file the repo tracks.
+    with open(MANIFEST, "w", encoding="utf-8", newline="
+") as handle:
         json.dump(manifest, handle, indent=1, sort_keys=True)
+        handle.write("
+")
 
     colour = sum(1 for entry in manifest.values() if entry.get("color"))
     print(f"\nfetched {fetched}, already present {skipped}")

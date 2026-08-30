@@ -612,7 +612,7 @@ $Script:AdminRequiredTasks = @(
     "RunSFC","CleanCache","RemoveBloatware","OptimizeDrives","RemoveWindowsOld",
     "DisableHibernation","EnableHibernation","DisableTelemetry","DisableActivityHistory",
     "NetworkOptimization","UltimatePowerPlan","RemoveOneDrive","RemoveEdge",
-    "CreateRestorePoint","DriverBackup","RestoreServices","RestoreEdge","RestoreOneDrive","ApplyAllPrivacy",
+    "CreateRestorePoint","DriverBackup","RestoreServices","RestoreEdge","RestoreOneDrive",
     "ResetTweaks","InstallOfficeODT","InstallOfficeODTAuto",
     "StartupDisableItem","StartupEnableItem",
     # v1.0 two-way toggles. Only the two that write HKLM POLICY keys are

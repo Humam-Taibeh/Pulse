@@ -44,7 +44,6 @@ TWEAK_LABELS = {
     "RemoveOneDrive": "OneDrive removed",
     "RemoveWindowsOld": "Windows.old removed",
     "RemoveBloatware": "Bloatware removed",
-    "ApplyAllPrivacy": "Full privacy pass applied",
 }
 
 #: Free-space percentage under which a drive is called out.

@@ -272,30 +272,16 @@ function Get-PulseTweakState {
         $state["RemoveBloatware"] = $null
     }
 
-    # -- Full privacy pass: a COMPOSITE of its four constituent tasks ----
-    # ApplyAllPrivacy runs Remove-Bloatware, Disable-Telemetry,
-    # Disable-AdvertisingID and Disable-ActivityHistory (see
-    # 30-GuiDispatcher.ps1), so it has no state of its own to read; it is
-    # applied exactly when all four are. Verdict composition preserves the
-    # three-state honesty and adds the mixed case: any part at default
-    # while another is applied means the pass is PARTIALLY in effect —
-    # "mixed" — whereas an unreadable component still means UNKNOWN; never
-    # let a $null quietly count as "default" and show the pass as
-    # un-applied when the truth is that we could not tell.
-    $privacyParts = @(
-        $state["RemoveBloatware"], $state["DisableTelemetry"],
-        $state["DisableAdvertisingID"], $state["DisableActivityHistory"]
-    )
-    $partNull    = @($privacyParts | Where-Object { $null -eq $_ })
-    $partApplied = @($privacyParts | Where-Object { $_ -eq "applied" })
-    $partOff     = @($privacyParts | Where-Object { $_ -eq "default" -or $_ -eq "mixed" })
-    if ($partOff.Count -gt 0) {
-        $state["ApplyAllPrivacy"] = if ($partApplied.Count -gt 0 -or ($privacyParts -contains "mixed")) { "mixed" } else { "default" }
-    } elseif ($partNull.Count -gt 0) {
-        $state["ApplyAllPrivacy"] = $null
-    } else {
-        $state["ApplyAllPrivacy"] = "applied"
-    }
+    # -- NOT PROBED: the old ApplyAllPrivacy composite -------------------
+    # It used to be derived here from RemoveBloatware + DisableTelemetry
+    # + DisableAdvertisingID + DisableActivityHistory, because the card
+    # that ran all four had no state of its own to read. That card is
+    # gone (see the PRIVACY band in menu_structure.py), and with it the
+    # only COMPOSITE verdict this probe ever produced — the one that
+    # needed a "mixed" state to describe a half-applied pass honestly.
+    # Every key this function returns is now a direct reading of one
+    # tweak's own registry values, which is the property
+    # tests/test_contract.py::TestStateProbe exists to keep true.
 
     # -- NOT PROBED: NetworkOptimization ---------------------------------
     # Deliberately absent, and it must stay absent. The task runs

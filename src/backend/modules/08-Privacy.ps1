@@ -359,10 +359,17 @@ function Uninstall-DesktopBloat {
                 $Exe = $Matches[1]
                 $Switches = (($Matches[2] + " " + $Silent).Trim())
             }
+            # -NoNewWindow: these are SILENT uninstallers (the switches
+            # above are the vendor's own /S, /qn, /VERYSILENT), and a
+            # silent uninstall that throws a black console box over the UI
+            # for a second is the one thing it must not do. Pulse's own
+            # PowerShell child is created with CREATE_NO_WINDOW
+            # (utils/helpers.PowerShellTask), so sharing its console means
+            # inheriting no console at all.
             $Proc = if ($Switches) {
-                Start-Process -FilePath $Exe -ArgumentList $Switches -Wait -PassThru -ErrorAction Stop
+                Start-Process -FilePath $Exe -ArgumentList $Switches -Wait -NoNewWindow -PassThru -ErrorAction Stop
             } else {
-                Start-Process -FilePath $Exe -Wait -PassThru -ErrorAction Stop
+                Start-Process -FilePath $Exe -Wait -NoNewWindow -PassThru -ErrorAction Stop
             }
             if ($Proc.ExitCode -eq 0) {
                 Write-Success "Removed $Label."

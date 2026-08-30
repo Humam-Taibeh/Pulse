@@ -1,18 +1,21 @@
 {
  "7zip.7zip": {
+  "color": true,
   "file": "7zip.7zip.svg",
-  "hex": "#000000",
+  "source": "thesvg-color:7zip",
   "title": "7Zip"
  },
  "9NKSQCEZVDDB": {
+  "color": true,
   "file": "9NKSQCEZVDDB.svg",
-  "hex": "#25D366",
-  "title": "WhatsApp"
+  "source": "logos:whatsapp-icon",
+  "title": "Whatsapp Icon"
  },
  "9PKTQ5699M62": {
+  "color": true,
   "file": "9PKTQ5699M62.svg",
-  "hex": "#3693F3",
-  "title": "iCloud"
+  "source": "thesvg-color:icloud",
+  "title": "Icloud"
  },
  "Anysphere.Cursor": {
   "file": "Anysphere.Cursor.svg",
@@ -21,84 +24,100 @@
   "title": "Cursor Ai"
  },
  "Apache.NetBeans": {
+  "color": true,
   "file": "Apache.NetBeans.svg",
-  "hex": "#1B6AC6",
-  "title": "Apache NetBeans IDE"
+  "source": "logos:netbeans",
+  "title": "Netbeans"
  },
  "Apple.iTunes": {
+  "color": true,
   "file": "Apple.iTunes.svg",
-  "hex": "#FB5BC5",
-  "title": "iTunes"
+  "source": "thesvg-color:itunes",
+  "title": "Itunes"
  },
  "Brave.Brave": {
+  "color": true,
   "file": "Brave.Brave.svg",
-  "hex": "#FB542B",
+  "source": "logos:brave",
   "title": "Brave"
  },
  "Bruno.Bruno": {
+  "color": true,
   "file": "Bruno.Bruno.svg",
-  "hex": "#F4AA41",
+  "source": "devicon:bruno",
   "title": "Bruno"
  },
  "DBeaver.DBeaver.Community": {
+  "color": true,
   "file": "DBeaver.DBeaver.Community.svg",
-  "hex": "#382923",
-  "title": "DBeaver"
+  "source": "devicon:dbeaver",
+  "title": "Dbeaver"
  },
  "Discord.Discord": {
+  "color": true,
   "file": "Discord.Discord.svg",
-  "hex": "#5865F2",
-  "title": "Discord"
+  "source": "logos:discord-icon",
+  "title": "Discord Icon"
  },
  "Docker.DockerDesktop": {
+  "color": true,
   "file": "Docker.DockerDesktop.svg",
-  "hex": "#2496ED",
-  "title": "Docker"
+  "source": "logos:docker-icon",
+  "title": "Docker Icon"
  },
  "EclipseAdoptium.Temurin.21.JDK": {
+  "color": true,
   "file": "EclipseAdoptium.Temurin.21.JDK.svg",
-  "hex": "#FF1464",
-  "title": "Eclipse Adoptium"
+  "source": "logos:eclipse-icon",
+  "title": "Eclipse Icon"
  },
  "EpicGames.EpicGamesLauncher": {
+  "color": true,
   "file": "EpicGames.EpicGamesLauncher.svg",
-  "hex": "#313131",
-  "title": "Epic Games"
+  "source": "thesvg-color:epic-games-light",
+  "title": "Epic Games Light"
  },
  "Git.Git": {
+  "color": true,
   "file": "Git.Git.svg",
-  "hex": "#F05032",
-  "title": "Git"
+  "source": "logos:git-icon",
+  "title": "Git Icon"
  },
  "Google.Chrome": {
+  "color": true,
   "file": "Google.Chrome.svg",
-  "hex": "#4285F4",
-  "title": "Google Chrome"
+  "source": "logos:chrome",
+  "title": "Chrome"
  },
  "Guru3D.Afterburner": {
+  "color": true,
   "file": "Guru3D.Afterburner.svg",
-  "hex": "#FF0000",
-  "title": "MSI"
+  "source": "thesvg-color:msi",
+  "title": "Msi"
  },
  "JetBrains.IntelliJIDEA.Community": {
+  "color": true,
   "file": "JetBrains.IntelliJIDEA.Community.svg",
-  "hex": "#000000",
-  "title": "IntelliJ IDEA"
+  "source": "logos:intellij-idea",
+  "title": "Intellij Idea"
  },
  "JetBrains.PyCharm.Community": {
+  "color": true,
   "file": "JetBrains.PyCharm.Community.svg",
-  "hex": "#000000",
-  "title": "PyCharm"
+  "source": "logos:pycharm",
+  "title": "Pycharm"
  },
  "MSYS2.MSYS2": {
+  "color": true,
   "file": "MSYS2.MSYS2.svg",
-  "hex": "#A42E2B",
-  "title": "GNU"
+  "source": "logos:gnu",
+  "title": "Gnu"
  },
  "Microsoft.DotNet.DesktopRuntime.8": {
+  "color": true,
   "file": "Microsoft.DotNet.DesktopRuntime.8.svg",
-  "hex": "#512BD4",
-  "title": ".NET"
+  "source": "logos:dotnet",
+  "title": "Dotnet"
  },
  "Microsoft.Edge": {
   "color": true,
@@ -107,9 +126,10 @@
   "title": "Microsoft Edge"
  },
  "Microsoft.VCRedist.2015+.x64": {
+  "color": true,
   "file": "Microsoft.VCRedist.2015+.x64.svg",
-  "hex": "#00599C",
-  "title": "C++"
+  "source": "logos:c-plusplus",
+  "title": "C Plusplus"
  },
  "Microsoft.VisualStudioCode": {
   "color": true,
@@ -118,68 +138,87 @@
   "title": "Visual Studio Code"
  },
  "Mozilla.Firefox": {
+  "color": true,
   "file": "Mozilla.Firefox.svg",
-  "hex": "#FF7139",
-  "title": "Firefox Browser"
+  "source": "logos:firefox",
+  "title": "Firefox"
  },
  "Notion.Notion": {
+  "color": true,
   "file": "Notion.Notion.svg",
-  "hex": "#000000",
-  "title": "Notion"
+  "source": "logos:notion-icon",
+  "title": "Notion Icon"
  },
  "Ollama.Ollama": {
+  "color": true,
   "file": "Ollama.Ollama.svg",
-  "hex": "#000000",
+  "source": "devicon:ollama",
   "title": "Ollama"
  },
  "OpenJS.NodeJS.LTS": {
+  "color": true,
   "file": "OpenJS.NodeJS.LTS.svg",
-  "hex": "#5FA04E",
-  "title": "Node.js"
+  "source": "logos:nodejs-icon",
+  "title": "Nodejs Icon"
+ },
+ "OpenWebUI.OpenWebUI": {
+  "color": true,
+  "file": "OpenWebUI.OpenWebUI.svg",
+  "source": "thesvg-color:openwebui",
+  "title": "Openwebui"
  },
  "Oracle.JavaRuntimeEnvironment": {
+  "color": true,
   "file": "Oracle.JavaRuntimeEnvironment.svg",
-  "hex": "#F80000",
-  "title": "Oracle"
+  "source": "logos:java",
+  "title": "Java"
  },
  "Postman.Postman": {
+  "color": true,
   "file": "Postman.Postman.svg",
-  "hex": "#FF6C37",
-  "title": "Postman"
+  "source": "logos:postman-icon",
+  "title": "Postman Icon"
  },
  "Python.Python.3.12": {
+  "color": true,
   "file": "Python.Python.3.12.svg",
-  "hex": "#3776AB",
+  "source": "logos:python",
   "title": "Python"
  },
  "RockstarGames.Launcher": {
+  "color": true,
   "file": "RockstarGames.Launcher.svg",
-  "hex": "#FCAF17",
+  "source": "thesvg-color:rockstar-games",
   "title": "Rockstar Games"
  },
  "Spotify.Spotify": {
+  "color": true,
   "file": "Spotify.Spotify.svg",
-  "hex": "#1ED760",
-  "title": "Spotify"
+  "source": "logos:spotify-icon",
+  "title": "Spotify Icon"
  },
  "Telegram.TelegramDesktop": {
+  "color": true,
   "file": "Telegram.TelegramDesktop.svg",
-  "hex": "#26A5E4",
+  "source": "logos:telegram",
   "title": "Telegram"
  },
  "TheDocumentFoundation.LibreOffice": {
+  "color": true,
   "file": "TheDocumentFoundation.LibreOffice.svg",
-  "hex": "#18A303",
-  "title": "LibreOffice"
+  "source": "thesvg-color:libreoffice",
+  "title": "Libreoffice"
  },
  "Valve.Steam": {
+  "color": true,
   "file": "Valve.Steam.svg",
-  "hex": "#000000",
+  "source": "logos:steam",
   "title": "Steam"
  },
  "VideoLAN.VLC": {
+  "color": true,
   "file": "VideoLAN.VLC.svg",
-  "hex": "#FF8800",
-  "title": "VLC media player"
+  "source": "thesvg-color:vlc-media-player",
+  "title": "Vlc Media Player"
  }
 }

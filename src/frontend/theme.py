@@ -829,7 +829,11 @@ GLYPHS: dict[str, tuple[str, str]] = {
     'shieldplain':   ("\uEA18", "\U0001f6e1\ufe0f"),  # Disable Telemetry (shield)
     'target':        ("\uF272", "\U0001f3af"),    # Disable Advertising ID
     'history':       ("\uE81C", "\U0001f553"),    # Disable Activity History
-    'defender':      ("\uE83D", "\U0001f512"),    # Apply ALL Privacy (full shield)
+    # 'defender' (E83D, the full shield) went with the "Apply ALL Privacy
+    # Settings" card that was its only caller. Left in, it would be the one
+    # entry in this map with no card behind it — and the map is checked
+    # against the menu precisely so a glyph and a card cannot drift apart.
+    # If the shield is wanted again, take it back from Segoe Fluent.
     'chartline':     ("\uE9D2", "\U0001f4ca"),    # System Info Snapshot
     'pulse':         ("\uE9D9", "\U0001f493"),    # Health & Drift Report — a heartbeat
                                                   # trace, the one mark in the family
@@ -1479,8 +1483,19 @@ def shell_qss(t: dict) -> str:
 
 
 def sidebar_qss(t: dict) -> str:
+    """The sidebar surface, and every bare QFrame inside it.
+
+    Scoped by ID rather than written as a bare `QFrame` rule so it can be
+    CONCATENATED into one sheet with the shell's and the content's (see
+    chrome_qss). The selector list is exactly equivalent to the bare rule
+    it replaces: a stylesheet set on a widget applies to that widget AND
+    its descendants, so `QFrame {...}` on the sidebar meant "the sidebar,
+    plus every QFrame under it" — which is what `#sidebar, #sidebar QFrame`
+    spells out. It has to be spelled out once the sheet moves up to the
+    shell, where a bare `QFrame` would swallow every frame in the app.
+    """
     return f"""
-        QFrame {{
+        #sidebar, #sidebar QFrame {{
             background: {t['panel']};
             border-radius: {RADIUS['panel']}px;
             border: 1px solid {t['panel_line']};
@@ -1489,13 +1504,40 @@ def sidebar_qss(t: dict) -> str:
 
 
 def content_qss(t: dict) -> str:
+    """The content surface, and every bare QFrame inside it. See
+    sidebar_qss for why the selector is spelled out rather than bare."""
     return f"""
-        QFrame {{
+        #content, #content QFrame {{
             background: {t['overlay']};
             border-radius: {RADIUS['panel']}px;
             border: 1px solid {t['panel_line']};
         }}
     """
+
+
+def chrome_qss(t: dict) -> str:
+    """SHELL + SIDEBAR + CONTENT AS ONE SHEET, set on the shell alone.
+
+    This is a PERFORMANCE contract, and it is the single largest one in the
+    theme switch. QWidget.setStyleSheet does not merely record a string: it
+    repolishes the widget and EVERY descendant, and it does so
+    unconditionally — measured here, re-setting the byte-identical sheet on
+    the shell costs the same 54ms as changing it, because the cost is the
+    504-widget tree walk and not the parse.
+
+    The shell contains the sidebar, which contains nothing much, and the
+    content, which contains all four category pages and the dashboard. So
+    three sheets on three nested containers walked essentially the same
+    tree three times over: 105ms for three rules that describe three
+    rectangles. Concatenated, the same three rules cost one walk — 61ms —
+    and nothing about what they select has changed, which is why both
+    halves are ID-scoped above.
+
+    Kept as three functions plus this joiner rather than one big f-string:
+    each surface is still describable on its own, and the tests that read
+    an individual surface's tokens still have something to read.
+    """
+    return shell_qss(t) + sidebar_qss(t) + content_qss(t)
 
 
 def nav_button_qss(t: dict) -> str:
@@ -3046,19 +3088,33 @@ def link_button_qss(t: dict, accent: str) -> str:
 PALETTE_ROW_H = CONTROL_H + SPACE["xs"]
 PALETTE_FIELD_H = CONTROL_H + SPACE["md"]
 
-#: Height of a section divider between two groups of results.
+#: Air above a section heading, between it and the last row of the group
+#: before it.
 #:
-#: DELIBERATELY A STEP SHORTER THAN A RESULT ROW, which is the whole
-#: statement: a divider that measured the same as the rows around it is a
-#: row, and the eye counts it as one while the arrow keys skip over it —
-#: the specific way a grouped list stops feeling keyboard-driven.
+#: THE HEADING NEEDS TO BELONG TO WHAT IS UNDER IT, and at the old spacing
+#: it did not belong to anything: the label sat bottom-aligned in a box a
+#: step shorter than a row, which put it nearly equidistant between the
+#: group it named and the group above, and the list read as one continuous
+#: column with occasional grey text in it. Loading the space ABOVE the
+#: heading and keeping it tight below is the oldest trick in typographic
+#: hierarchy and the only one this needed.
+PALETTE_SECTION_PAD_TOP = SPACE["md"]
+
+#: ...and the much smaller gap under it, which is what does the grouping.
+PALETTE_SECTION_PAD_BOTTOM = SPACE["xs"]
+
+#: Height of a section divider between two groups of results, derived from
+#: its parts rather than written as a number — the label is a 10px
+#: letterspaced caption, so 14px is its line box.
 #:
 #: Stated as a height at all (rather than left to the label's own hint)
 #: because a QListWidget sizes an item widget from the hint it is GIVEN,
 #: and a QLabel's hint before its stylesheet has been polished reports the
 #: default font rather than the 10px letterspaced caption it will become.
 #: Rows overlapping their headers is what that looks like.
-PALETTE_SECTION_H = PALETTE_ROW_H - SPACE["md"]
+PALETTE_SECTION_TEXT_H = 14
+PALETTE_SECTION_H = (PALETTE_SECTION_PAD_TOP + PALETTE_SECTION_TEXT_H
+                     + PALETTE_SECTION_PAD_BOTTOM)
 
 
 def palette_field_qss(t: dict) -> str:
@@ -3147,6 +3203,19 @@ def palette_section_qss(t: dict) -> str:
     MODULES label wear it — a group of results inside a palette and a band
     of cards on a page are the same idea at two scales."""
     return label_qss(t, "section")
+
+
+def palette_section_rule_qss(t: dict) -> str:
+    """The hairline that closes the group ABOVE a heading.
+
+    Padding alone groups; a rule SEPARATES, and the difference matters on a
+    surface where the two things being told apart are a heading and a
+    clickable row rendered a few pixels beneath it. Quiet enough that the
+    list still reads as one surface — this is the panel hairline, not the
+    accent rule a page band uses, for the same reason hairline_qss exists:
+    an accent fade here would read as a heading whose title had gone
+    missing."""
+    return f"background: {t['panel_line']}; border: none;"
 
 
 def palette_row_qss(t: dict, selected: bool = False) -> str:
@@ -3514,7 +3583,23 @@ _LABEL_ROLES = {
     # them quiet (they are still 10px, 700-weight, wide-tracked labels) but
     # legible, and lifts every section header in the app at once.
     "section":  ("10px", "700", "text_muted", "letter-spacing: 4px;"),
-    "brand":    ("11px", "600", "text_muted", "letter-spacing: 2px;"),
+    # THE TITLE-BAR WORDMARK, and its only call site (widgets.TitleBar).
+    #
+    # 11px/text_muted was a CAPTION pretending to be a logotype: it sat at
+    # the same size as the version number beside it, in the same dimmed
+    # tone as a secondary label, next to a mark drawn at more than twice
+    # its height. The three elements of the brand block were reading as
+    # icon, label, label — three sizes of quiet — where they should read
+    # as one identity with two annotations.
+    #
+    # 14px lifts the wordmark clear of the 11px version pill it shares the
+    # row with; text (not text_muted) is the difference between a name and
+    # a footnote, and it is the single biggest contrast gain available in
+    # the chrome. Tracking comes DOWN as the size goes up — 2px of
+    # letter-spacing is generous at 11px and starts to look unresolved at
+    # 14 — which is the same size/tracking relationship the title roles
+    # above already follow.
+    "brand":    ("14px", str(WEIGHT["semi"]), "text", "letter-spacing: 1.5px;"),
     "caption":  ("10px", "500", "text_faint", "letter-spacing: 1px;"),
 }
 # Removed in v10: "hero", "value" and "meta" — all three had zero call

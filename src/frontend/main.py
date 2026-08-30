@@ -200,6 +200,28 @@ def _focus_neighbour(cards: list, cols: int, current, direction: str) -> bool:
 # ============================================================
 #  PAGES
 # ============================================================
+def flush_pending_theme(view) -> None:
+    """Settle a theme a hidden view was not re-skinned for.
+
+    The other half of PulseApp._apply_view_theme. A page that was hidden
+    when the theme changed carries the new tokens on `_pending_theme`
+    instead of having applied them; this drains that on the way back in.
+
+    Called from showEvent, which Qt delivers BEFORE the first paint, so a
+    deferred page is never SEEN in the previous theme — it simply is not
+    computed while nobody is looking at it.
+
+    A plain function rather than a mixin class: PySide6 widgets carry
+    Shiboken's metaclass, and inserting an ordinary base in front of
+    QWidget is a metaclass conflict waiting for the next PySide upgrade.
+    """
+    pending = getattr(view, "_pending_theme", None)
+    if pending is None:
+        return
+    view._pending_theme = None
+    view.apply_theme(pending)
+
+
 class WelcomePage(QWidget):
     """SYSTEM HEALTH & QUICK HUB — the landing view, and a control centre
     rather than a splash:
@@ -712,6 +734,10 @@ class WelcomePage(QWidget):
     # -- system pulse lifecycle: sample only while the page is shown ----
     def showEvent(self, e):
         super().showEvent(e)
+        # FIRST, before the pulse tick: _tick_pulse re-styles the tiles from
+        # self._t, and a stale _t would paint them in the outgoing theme for
+        # one frame.
+        flush_pending_theme(self)
         self._tick_pulse()          # prime immediately (CPU fills on tick 2)
         self._pulse_timer.start()
 
@@ -1457,6 +1483,13 @@ class CategoryPage(QWidget):
         self._filter.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._filter.showPopup()
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        # A page the stack was not showing when the theme changed re-skins
+        # here instead — see main.flush_pending_theme and
+        # PulseApp._apply_view_theme.
+        flush_pending_theme(self)
+
     def apply_theme(self, t: dict):
         self._t = t
         accent = TH.resolve_accent(t, self.category["accent"])
@@ -1662,6 +1695,10 @@ class PulseApp(QMainWindow):
 
         self._build_ui()
         self._ui_ready = True
+        # The app opens ON the dashboard, and _build_ui does not route
+        # through go_home — so without this the lockup is painted once,
+        # beside the masthead's, before the first navigation hides it.
+        self.titlebar.set_brand_visible(self.stack.currentIndex() != 0)
         # Catch up on any window state restored before the widgets existed
         # (a geometry saved while maximized comes back maximized here).
         self._sync_window_state()
@@ -1778,6 +1815,9 @@ class PulseApp(QMainWindow):
 
         # -- sidebar ------------------------------------------
         self._sidebar = QFrame()
+        # Named, because its surface rule is ID-scoped and lives in the
+        # shell's sheet now — see theme.chrome_qss.
+        self._sidebar.setObjectName("sidebar")
         self._sidebar.setFixedWidth(250)
         pad_side = TH.PAD["surface"]
         side = QVBoxLayout(self._sidebar)
@@ -1856,6 +1896,7 @@ class PulseApp(QMainWindow):
 
         # -- content ------------------------------------------
         self._content = QFrame()
+        self._content.setObjectName("content")   # see theme.chrome_qss
         content = QVBoxLayout(self._content)
         # PAD["surface"], on all four sides: the content frame is a
         # bordered container in the layout, exactly like the sidebar
@@ -1930,22 +1971,56 @@ class PulseApp(QMainWindow):
         pal.setBrush(QPalette.ColorRole.Window, TH.canvas_brush(t))
         self.setPalette(pal)
         self.setAutoFillBackground(True)
-        self._shell.setStyleSheet(TH.shell_qss(t))
-        self._sidebar.setStyleSheet(TH.sidebar_qss(t))
-        self._content.setStyleSheet(TH.content_qss(t))
+        # ONE sheet for all three container surfaces — see theme.chrome_qss.
+        # setStyleSheet repolishes every descendant unconditionally, so
+        # three sheets on three NESTED containers walked the same 500-widget
+        # tree three times for three rectangles.
+        self._shell.setStyleSheet(TH.chrome_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
         self.update_badge.apply_theme(t)
         self.status_rail.apply_theme(t)
         self.titlebar.apply_theme(t)
-        self.welcome.apply_theme(t)
         for btn in self._nav_buttons:
             btn.apply_theme(t)
-        for page in self.pages:
-            page.apply_theme(t)
+        # THE PAGES ARE RE-SKINNED LAZILY, and the dashboard with them.
+        #
+        # A category page costs ~20ms to re-skin and exactly one of the five
+        # views is on screen at a time, so re-skinning all five made four
+        # fifths of every theme switch work nobody could see. Each view's
+        # own showEvent drains what it is owed (flush_pending_theme), and
+        # Qt delivers that BEFORE the page's first paint — so a deferred
+        # page is never SEEN in the old theme, it is only never computed
+        # while nobody is looking at it.
+        #
+        # Deferred, not skipped: `_pending_theme` records what is owed, and
+        # a page shown later applies it rather than inheriting the theme it
+        # was built with.
+        for view in self._themed_views():
+            self._apply_view_theme(view, t)
         self.activity.apply_theme(t)
         self.toasts.apply_theme(t)
         self._set_status(self._status_state, self.status_text.fullText())
+
+    def _themed_views(self):
+        """The dashboard and every category page — the five heavy views the
+        stack pages between, and the only ones eligible for deferral."""
+        return [self.welcome, *self.pages]
+
+    @staticmethod
+    def _apply_view_theme(view, t: dict):
+        """Re-skin `view` now if it is visible, or record the debt.
+
+        The visibility test is isVisible(), which is False for every page
+        the stack is not showing — that is the whole saving. A hidden page
+        stores the tokens on `_pending_theme` and settles up in its own
+        showEvent, both of which call flush_pending_theme.
+        """
+        if view.isVisible():
+            view._pending_theme = None
+            view.apply_theme(t)
+        else:
+            view._pending_theme = t
 
     def _toggle_theme_animated(self):
         """Theme switch with a 220ms cross-fade: a snapshot of the old look
@@ -1997,6 +2072,9 @@ class PulseApp(QMainWindow):
     # ============================================================
     def go_home(self):
         self._select_nav(None)
+        # The dashboard carries its own masthead lockup, so the chrome's is
+        # a duplicate there and only there — see TitleBar.set_brand_visible.
+        self.titlebar.set_brand_visible(False)
         if self.stack.currentIndex() != 0:
             self.cascade.stop()
             # The fade puts a QGraphicsOpacityEffect on the whole page for
@@ -2025,6 +2103,9 @@ class PulseApp(QMainWindow):
         is what made the four modules feel heavy to move between.
         """
         self._select_nav(index)
+        # Off the dashboard there is no masthead, so the bar is the only
+        # thing naming the app: the lockup comes back.
+        self.titlebar.set_brand_visible(True)
         page = self.pages[index]
         if self.stack.currentWidget() is page:
             return
@@ -3005,6 +3086,16 @@ class PulseApp(QMainWindow):
                 os.path.join(root, "Backups", "OneDrive"),
                 os.path.join(desktop, "Pulse_OneDriveBackup"),
                 os.path.join(desktop, "HTCore_OneDriveBackup"),
+            ),
+            # Same three-deep fallback as OneDrive's, for the same reason:
+            # 02-Safety.Backup-EdgeState writes to $Script:EdgeBackupFolder,
+            # and 00-Foundation's Move-LegacyPulseData migrates BOTH legacy
+            # Desktop homes into it on engine start — so an upgraded machine
+            # that has not run the engine yet still finds its backup here.
+            "@open_edge_backup": (
+                os.path.join(root, "Backups", "Edge"),
+                os.path.join(desktop, "Pulse_EdgeBackup"),
+                os.path.join(desktop, "HTCore_EdgeBackup"),
             ),
         }
         candidates = targets.get(task)

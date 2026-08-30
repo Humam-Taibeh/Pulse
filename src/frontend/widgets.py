@@ -673,6 +673,29 @@ _SELECTOR_WIDTH_FRACTION = 0.55
 _SELECTOR_WIDTH_MIN = 760
 _SELECTOR_WIDTH_MAX = 840
 
+#: ...and the STARTUP MANAGER's own band, because its row is a different
+#: shape from every other selector's and the default band was never sized
+#: for it.
+#:
+#: Every other selector row is [icon | one label | one control]. A startup
+#: row is [name | IMPACT badge | recommendation badge | ... | switch] over
+#: a second line of type-and-reason prose — four competing elements on one
+#: line, three of which are text that cannot shrink. At 840 the badges were
+#: being squeezed against StartupRow.SWITCH_COL_W with no gutter, which is
+#: the crowding this band exists to fix; the row's own elision (see
+#: StartupRow.NAME_MAX_W) handles the name, but elision cannot manufacture
+#: room for the two badges, and shrinking THOSE would cost the words that
+#: make the audit worth reading.
+#:
+#: DECLARED, not measured. The dialog used to reach 869 through
+#: _content_width_floor — a number nobody chose, which fell out of the
+#: widest Run-key name on the developer's machine and would have silently
+#: changed the moment the row's elision landed. A band states the intent
+#: (880 comfortable, 900 on a wide display) and holds it whatever the
+#: content happens to measure.
+_STARTUP_WIDTH_MIN = 880
+_STARTUP_WIDTH_MAX = 900
+
 #: The tallest a selector may grow before its list starts scrolling inside
 #: it. A fraction of the host BODY, so the dialog can never outgrow the
 #: window it opens in, and never so tall that a full panel has nowhere to
@@ -778,16 +801,21 @@ def _selector_panel_width(dialog: QDialog) -> int:
     clipped content would be choosing empty margins over legibility, which
     is the same trade this whole pass is undoing in the other direction.
 
-    In practice one dialog exercises it: the Startup Manager's rows carry a
-    name, two badges and a switch, and report a minimum wider than the
-    band's 840. It opens at that minimum; every other selector sits inside
-    the band.
+    A dialog may also DECLARE its own band via `_selector_width_band`,
+    which is the honest version of the same escape hatch. The Startup
+    Manager is the one that does (see _STARTUP_WIDTH_MIN): its rows used to
+    reach ~869 through the content floor alone — a width nobody chose, which
+    fell out of whichever Run key happened to be longest — and a stated band
+    survives the row's elision landing, where a measured floor would have
+    silently collapsed back to 840 and re-crowded the badges.
     """
-    floor = max(_SELECTOR_WIDTH_MIN, _content_width_floor(dialog))
+    band_min, band_max = getattr(dialog, "_selector_width_band",
+                                 (_SELECTOR_WIDTH_MIN, _SELECTOR_WIDTH_MAX))
+    floor = max(band_min, _content_width_floor(dialog))
     host = _resolve_host_window(dialog)
     if host is None:
         return floor
-    return max(floor, min(_SELECTOR_WIDTH_MAX,
+    return max(floor, min(band_max,
                           round(host.width() * _SELECTOR_WIDTH_FRACTION)))
 
 
@@ -860,6 +888,23 @@ def _apply_panel_size(dialog: QDialog):
         panel.setMinimumHeight(_SELECTOR_HEIGHT_MIN)
         panel.setMaximumHeight(_selector_panel_height_cap(dialog))
 
+
+#: The square a catalog row's brand mark is drawn into — the plaque.
+#:
+#: 28 -> 36, and the argument is legibility rather than presence. Every mark
+#: in assets/appicons is the vendor's real artwork (utils/appicons.py has the
+#: provenance), and a lot of that artwork is DETAILED: Brave's lion, Discord's
+#: face, the VS Code ribbon and Spotify's three arcs all carry internal
+#: structure that a 28px box — 10% of which is the optical inset, and more
+#: again when the mark sits on a backing plaque — renders as a coloured smudge.
+#: Those are the marks a user identifies the row by, so the size that loses
+#: them is the size that makes an authentic logo look like an approximation.
+#:
+#: 36 is not an arbitrary step up: it is TH.CONTROL_H, the height of every
+#: operable control in the app, so the icon column lines up with the filter
+#: field and the tab pills directly above it instead of floating four pixels
+#: shy of them.
+APP_ICON_PX = TH.CONTROL_H
 
 #: Height of a pill in a _chip_strip, and of every control that has to line
 #: up with one (the catalog's filter field). A named constant because three
@@ -1463,17 +1508,24 @@ class TitleBar(QWidget):
         # read at 30px rather than scaled down from a hero. See BrandMark
         # for the four things that changed and why each of them was
         # costing this mark its contrast.
-        self._glyph = BrandMark("✦", size=30, accent=t["accent"],
+        self._glyph = BrandMark("✦", size=36, accent=t["accent"],
                                 breathe=False)
         lay.addWidget(self._glyph)
         self._name = QLabel(app_name)
         lay.addWidget(self._name)
-        self._version = QLabel(f"v{version}")
-        lay.addWidget(self._version)
-        self._channel: QLabel | None = None
-        if channel:
-            self._channel = QLabel(channel.upper())
-            lay.addWidget(self._channel)
+        # THE VERSION AND CHANNEL ARE NOT HERE ANY MORE, and `version` /
+        # `channel` are still taken so the caller does not have to know
+        # that (they are what the tooltip is built from).
+        #
+        # They were "v10.8.0" and a "BETA" pill sitting immediately right
+        # of the wordmark — and the SAME two facts, in the same order,
+        # already sit in the sidebar's status rail as "PULSE v10.8.0 ·
+        # BETA", where they are also a BUTTON that checks for updates. So
+        # the chrome carried the app's version twice, and the copy that
+        # could act on it was the one nobody was looking at. One home, and
+        # it is the one that does something.
+        self.setToolTip(f"{app_name} v{version}"
+                        + (f" · {channel.upper()}" if channel else ""))
         # The left cluster is a brand-only block: elevation state, the
         # theme toggle and the update check all live in the sidebar's
         # status rail (widgets.StatusRail), which is the one place in the
@@ -1508,14 +1560,32 @@ class TitleBar(QWidget):
         fluent, fallback = self._ICONS[key]
         return fluent if self._icon_font is not None else fallback
 
+    # -- the brand lockup, shown only where it is not a duplicate --
+    def set_brand_visible(self, on: bool):
+        """Show or hide the mark AND the wordmark together.
+
+        THE WHOLE LOCKUP, not just the mark, and that is the point rather
+        than an over-reach. On the dashboard the masthead already carries
+        ✦ at 58px with PULSE at 34px directly beneath this bar — so the
+        title bar's ✦ + PULSE is the same lockup at a sixth of the size,
+        forty pixels above the original. Hiding only the mark would leave
+        an orphaned "PULSE" above a bigger "PULSE": one duplicate traded
+        for a worse one.
+
+        On every other view the masthead is not on screen, and the bar is
+        the only thing identifying the app — so the lockup comes back. The
+        window is still draggable by the empty strip either way: the whole
+        bar answers HTCAPTION, not just the widgets in it (see the class
+        docstring), so removing them from view costs no drag surface.
+        """
+        self._glyph.setVisible(on)
+        self._name.setVisible(on)
+
     # -- theming ----------------------------------------------
     def apply_theme(self, t: dict):
         self._t = t
         self._glyph.apply_theme(t)
         self._name.setStyleSheet(TH.label_qss(t, "brand"))
-        self._version.setStyleSheet(TH.label_qss(t, "version"))
-        if self._channel is not None:
-            self._channel.setStyleSheet(TH.beta_badge_qss(t))
         for btn in (self._btn_min, self.btn_max):
             btn.setStyleSheet(TH.titlebar_button_qss(t, t["titlebar_hover"]))
         self._btn_close.setStyleSheet(TH.titlebar_close_qss(t))
@@ -1928,7 +1998,8 @@ class ElidedCaption(QLabel):
     MAX_WIDTH = 120
 
     def __init__(self, parent: QWidget | None = None,
-                 max_width: int | None = None):
+                 max_width: int | None = None,
+                 elide: Qt.TextElideMode = Qt.TextElideMode.ElideRight):
         """`max_width` overrides MAX_WIDTH for one instance.
 
         The hero masthead's tagline is the reason it exists: that line
@@ -1937,10 +2008,22 @@ class ElidedCaption(QLabel):
         the card footer's 120px ceiling would have "fixed" the clipping by
         truncating the tagline permanently, at every window size — trading
         a bug at one width for a worse one at all of them.
+
+        `elide` picks WHERE the ellipsis lands, and the default stays
+        ElideRight because that is right for prose: a caption's meaning is
+        front-loaded, so dropping the tail costs the least.
+
+        It is exactly wrong for IDENTIFIERS, which is why the parameter
+        exists. A Run-key name distinguishes itself from its neighbours at
+        BOTH ends — "MicrosoftEdgeAutoLaunch_9F2A…" and
+        "MicrosoftEdgeAutoLaunch_1C40…" are the same string under
+        ElideRight — so the Startup Manager passes ElideMiddle and keeps
+        the head and the tail, which together are what identify the entry.
         """
         super().__init__(parent)
         self._full = ""
         self._max_width = self.MAX_WIDTH if max_width is None else max_width
+        self._elide = elide
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
                            QSizePolicy.Policy.Fixed)
 
@@ -2038,8 +2121,7 @@ class ElidedCaption(QLabel):
             super().setText(self._full)
             return
         super().setText(
-            self.fontMetrics().elidedText(
-                self._full, Qt.TextElideMode.ElideRight, available))
+            self.fontMetrics().elidedText(self._full, self._elide, available))
 
 
 class ClampedLabel(QLabel):
@@ -2070,6 +2152,10 @@ class ClampedLabel(QLabel):
         self._full = text
         self._elided = False
         self._reflowing = False
+        #: The (text, width, font, budget) the CURRENT painted string was
+        #: laid out for, or None before the first successful reflow. See
+        #: _layout_key — this is what makes a theme switch cheap.
+        self._reflow_key: tuple | None = None
         super().setText(text)
 
     # -- public API -------------------------------------------
@@ -2104,13 +2190,36 @@ class ClampedLabel(QLabel):
         # included) has actually resolved, so that is where the budget is
         # computed. StyleChange covers a live theme re-skin.
         super().changeEvent(e)
-        if e.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
-            self._pin_height()
-            self._reflow()
+        if e.type() not in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            return
+        # ...but a StyleChange is NOT evidence that anything about the text
+        # layout moved, and treating it as such is what made a theme switch
+        # slow. setStyleSheet() on any ancestor sends StyleChange to every
+        # descendant, and _apply_theme sets one on the shell, the content
+        # frame, the page, and then on each of ~276 cards — so a single
+        # label received the event four or five times per toggle and ran a
+        # full QTextLayout for each. Measured on the real window: ~2,700
+        # reflows per switch, 35% of the whole cost, all of them producing
+        # a string byte-identical to the one already painted, because the
+        # two themes share one type scale and change only colour.
+        #
+        # The key is the COMPLETE set of inputs _reflow_impl reads, so a
+        # match means the output is provably unchanged — this is a skip, not
+        # a heuristic. A theme that did change a font size would change
+        # font().toString() and reflow exactly as before.
+        if self._reflow_key is not None and self._layout_key() == self._reflow_key:
+            return
+        self._pin_height()
+        self._reflow()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._reflow()
+
+    def _layout_key(self) -> tuple:
+        """Everything _reflow_impl's output depends on, and nothing else."""
+        return (self._full, self.width() - self.margin() * 2,
+                self.font().toString(), self._max_lines)
 
     def _reflow(self):
         width = self.width() - self.margin() * 2
@@ -2118,9 +2227,17 @@ class ClampedLabel(QLabel):
             return
         if self._reflowing:      # setFixedHeight below re-enters via resizeEvent
             return
+        key = self._layout_key()
+        if key == self._reflow_key:
+            return
         self._reflowing = True
         try:
             self._reflow_impl(width)
+            # AFTER the impl, never before: _reflow_impl calls _pin_height,
+            # which can re-enter through resizeEvent, and a key recorded up
+            # front would let that re-entry believe the new layout was
+            # already applied.
+            self._reflow_key = key
         finally:
             self._reflowing = False
 
@@ -2979,7 +3096,7 @@ class BrandMark(QWidget):
         the largest thing on the landing view, it has room, and a slow
         pulse there reads as the app being alive.
 
-      the TITLE BAR (30px, static) is a LOGO. It sits beside the wordmark
+      the TITLE BAR (36px, static) is a LOGO. It sits beside the wordmark
         as identity, at a size where the same treatment stopped working:
         a Light-weight glyph at 58% of a 26px box is a 15px hairline
         character, painted in the mid-tone accent, breathing down to 45%
@@ -2990,11 +3107,18 @@ class BrandMark(QWidget):
     So a static mark is not merely "the same thing without the animation".
     It is drawn to be READ at chrome scale:
 
-      * DemiBold rather than Light. At 20px a hairline weight has no mass
-        left once antialiasing has taken its share.
-      * 20px of glyph in a 30px box (GLYPH_RATIO), which is the app's own
-        ICON["plaque"] size — the mark is the same optical weight as every
-        other glyph in the chrome.
+      * DemiBold rather than Light. At this size a hairline weight has no
+        mass left once antialiasing has taken its share.
+      * 24px of glyph in a 36px box (STATIC_GLYPH_RATIO). It was 20-in-30,
+        matched to ICON["plaque"] so the mark carried the same optical
+        weight as every other glyph in the chrome — and that was the
+        mistake, restated as a rule: the app's LOGO is not one more chrome
+        glyph. It is the only mark in the window that identifies the
+        product, it sits in a 50px bar with room to spare, and matching it
+        to the nav icons made it the quietest thing in a row of quiet
+        things. 36 is the same step the catalog's brand plaques take
+        (APP_ICON_PX) and the same as TH.CONTROL_H, so it still lands on
+        the scale — one step up it, deliberately.
       * full opacity, always. The breath's floor was the single largest
         contrast loss and it bought nothing on a logo.
       * painted in the BRAND SWEEP (accent → accent2, the indigo-to-cyan
@@ -3016,9 +3140,9 @@ class BrandMark(QWidget):
 
     #: Glyph size as a fraction of the widget box, per mode. The hero can
     #: afford a delicate 58% because it is 58px across and the negative
-    #: space is part of the composition; a 30px chrome mark cannot — at
-    #: 58% it is 17px of Light-weight glyph in a box big enough to make it
-    #: look lost. 0.68 of 30 lands on 20, the plaque glyph size.
+    #: space is part of the composition; a chrome mark cannot — at 58% it
+    #: is a Light-weight glyph in a box big enough to make it look lost.
+    #: 0.68 of the title bar's 36px box lands on 24.
     GLYPH_RATIO = 0.58
     STATIC_GLYPH_RATIO = 0.68
 
@@ -7100,15 +7224,23 @@ class SoftwareCatalogDialog(PulseDialog):
     the user to work untangling it. Nothing here is pre-ticked and the
     deploy button stays inert until something is actually chosen.
 
-    ONE FILTER ROW, no quick-select bundles. The dialog used to carry a
-    second strip of "Java / University Stack" / "AI / Python Stack" /
-    "Web Dev Stack" buttons under the tabs. They were a THIRD way to
-    narrow a list that already has two (tabs by category, field by name),
-    they only applied to one of the five tabs, and they answered a
-    question — "which five apps does a Java course need?" — that the
-    Development & Tools tab answers by simply being read. Removing the
-    row also removes the only control in the dialog that appeared and
-    disappeared as you changed tabs.
+TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
+    and the tabs narrow by CATEGORY; they compose, but they no longer
+    share a line. They did, with the field pinned to the right of the
+    scrolling tab strip, and that arrangement broke both of them: a scroll
+    area takes the width it is given and reports overflow rather than
+    asking for more, so the strip simply surrendered the field's 180px and
+    put a tab under the scrollbar at every window size — while the field
+    itself was 180px wide on a panel five times that. See the row's own
+    comment in __init__.
+
+    There is no THIRD control. The dialog used to carry a strip of
+    "Java / University Stack" / "AI / Python Stack" / "Web Dev Stack"
+    buttons under the tabs; they only applied to one of the five tabs, and
+    they answered a question — "which five apps does a Java course need?"
+    — that the Development & Tools tab answers by simply being read.
+    Removing them also removed the only control in the dialog that
+    appeared and disappeared as you changed tabs.
 
     After Accepted, exactly one of these is populated:
       `selected_ids`     ticked AppIds for the bulk winget deploy
@@ -7154,19 +7286,37 @@ class SoftwareCatalogDialog(PulseDialog):
         self._blurb.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._blurb)
 
-        # -- tab bar + in-list search ----------------------------
-        # THE one filter row, and the only one: the tabs narrow by
-        # CATEGORY, the field narrows by NAME, and nothing else in this
-        # dialog narrows anything. Side by side because they compose —
-        # "development" + "sql" is a question neither can answer alone.
-        # Both controls share a top edge — see _CHIP_H and the AlignTop
-        # below.
-        filter_row = QHBoxLayout()
-        filter_row.setSpacing(TH.SPACE["sm"])
+        # -- the filter row, then the tab row --------------------
+        # TWO ROWS, and they used to be one. The tabs narrow by CATEGORY,
+        # the field narrows by NAME, and they do compose — "development" +
+        # "sql" is a question neither answers alone — but composing is not
+        # a reason to make them share a line, and sharing one is what broke
+        # both of them.
+        #
+        # The field was a 180px fixed block on the right of a row whose
+        # left-hand item is a SCROLLING STRIP. A scroll area takes whatever
+        # width it is given and reports overflow rather than asking for
+        # more, so the two never competed honestly for space: the strip
+        # simply surrendered ~190px of its own to the field and the fifth
+        # tab went under the scrollbar at every window size, not only at the
+        # narrow ones. Meanwhile the field itself was 180px on a 900px panel
+        # — a search box that could show about twenty characters.
+        #
+        # Split apart, each control gets the full content width: the field
+        # spans the panel, and the strip below it gets ~190px back, which is
+        # roughly one more tab visible before it has to scroll at all.
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Filter apps…")
+        self._search.setFixedHeight(_CHIP_H)
+        self._search.setClearButtonEnabled(True)
+        self._search.setStyleSheet(TH.catalog_search_qss(t, accent))
+        self._search.textChanged.connect(self._on_query)
+        lay.addWidget(self._search)
 
         # The tabs live in a horizontally scrolling strip, NOT directly in
-        # the row — five labelled pills want ~1300px against a panel that
-        # caps at 1100. See _chip_strip.
+        # the layout — five labelled pills want ~1300px against a panel that
+        # caps at 900, so the strip is what makes the overflow reachable
+        # rather than clipped.
         #
         # No emoji on the tabs, deliberately: it buys ~140px across the row
         # (more tabs visible before the strip has to scroll) and loses
@@ -7185,19 +7335,7 @@ class SoftwareCatalogDialog(PulseDialog):
             self._tab_buttons[key] = btn
             tab_lay.addWidget(btn)
         tab_lay.addStretch()
-        filter_row.addWidget(tab_strip, 1)
-
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("Filter apps…")
-        self._search.setFixedSize(180, _CHIP_H)
-        self._search.setClearButtonEnabled(True)
-        self._search.setStyleSheet(TH.catalog_search_qss(t, accent))
-        self._search.textChanged.connect(self._on_query)
-        # Top, not centre: the strip is taller than its pills by exactly
-        # the scrollbar lane, so a centred field would drift half a lane
-        # down the moment the tabs overflow and the bar appears.
-        filter_row.addWidget(self._search, 0, Qt.AlignmentFlag.AlignTop)
-        lay.addLayout(filter_row)
+        lay.addWidget(tab_strip)
 
         # -- select-all / select-none + live counter -------------
         toolbar = QHBoxLayout()
@@ -7398,6 +7536,166 @@ class SoftwareCatalogDialog(PulseDialog):
 # ============================================================
 #  COMMAND PALETTE — Ctrl+K fuzzy quick-launcher
 # ============================================================
+# ============================================================
+#  SEARCH INTELLIGENCE — normalisation, aliases, typo tolerance
+# ============================================================
+#: Arabic characters that carry no distinguishing meaning for search, or
+#: that a user types inconsistently. Normalising them is not a nicety —
+#: without it the palette is unusable in Arabic, because the SAME word is
+#: routinely written several ways:
+#:
+#:   * ALEF comes as ا أ إ آ, and which one a keyboard produces depends on
+#:     the layout and on whether the writer bothered with the hamza;
+#:   * final YEH is ي in Egypt and ى in the Gulf, for the same word;
+#:   * TEH MARBUTA (ة) and HEH (ه) are interchanged constantly in typing;
+#:   * HARAKAT (the short-vowel marks) are optional and usually absent;
+#:   * TATWEEL (ـ) is a decorative stretch with no phonetic value at all.
+#:
+#: So "تحديثات" typed two ways is two different strings to `in`, and one of
+#: them silently matches nothing. Folding them to one form first is what
+#: makes an Arabic query behave like an English one.
+_AR_DIACRITICS = "".join(chr(c) for c in range(0x064B, 0x0653)) + "\u0640\u0670"
+_AR_FOLD = {
+    "\u0623": "\u0627", "\u0625": "\u0627", "\u0622": "\u0627",  # أإآ -> ا
+    "\u0649": "\u064a",                                          # ى  -> ي
+    "\u0629": "\u0647",                                          # ة  -> ه
+    "\u0624": "\u0648", "\u0626": "\u064a",                      # ؤئ -> وي
+}
+
+
+def normalise_query(text: str) -> str:
+    """Casefold, strip Arabic diacritics, and unify the interchangeable
+    Arabic letter forms. Latin text is unaffected beyond lowercasing."""
+    out = []
+    for ch in text.strip().lower():
+        if ch in _AR_DIACRITICS:
+            continue
+        out.append(_AR_FOLD.get(ch, ch))
+    return "".join(out)
+
+
+#: Query term -> the English words it should ALSO search for.
+#:
+#: This is the multi-language half, and it is a translation table rather
+#: than a translated UI on purpose. Pulse's interface is English: the cards
+#: say "Aggressive Cache Clean", and translating those strings is a
+#: different, much larger project with its own review burden. What an
+#: Arabic-speaking user needs first is not a translated card — it is to be
+#: able to FIND it. So the query is translated, once, into the words the
+#: interface already uses, and the result list stays in the language the
+#: rest of the app is written in.
+#:
+#: The English entries are here for the same reason: a user types the VERB
+#: they want ("uninstall", "speed up") far more often than the noun a card
+#: happens to be titled with, and "remove" finding "Purge OneDrive" is the
+#: same lookup as "احذف" finding it.
+#:
+#: Keys are stored already normalised (see normalise_query).
+SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
+    # -- Arabic: the verbs a user reaches for ----------------------
+    "تحديث":   ("update", "upgrade"),
+    "تحديثات": ("update", "upgrade"),
+    "تسريع":   ("performance", "power", "optimize", "speed"),
+    "سرعه":    ("performance", "power", "speed"),
+    "تنظيف":   ("clean", "cache", "cleanup"),
+    "نظافه":   ("clean", "cache"),
+    "حذف":     ("remove", "uninstall", "purge", "delete"),
+    "احذف":    ("remove", "uninstall", "purge"),
+    "ازاله":   ("remove", "uninstall", "purge"),
+    "الغاء":   ("remove", "uninstall", "disable"),
+    "تثبيت":   ("install", "deploy"),
+    "برامج":   ("software", "apps", "catalog"),
+    "تطبيقات": ("software", "apps", "catalog"),
+    "خصوصيه":  ("privacy", "telemetry"),
+    "امان":    ("security", "defender", "safety"),
+    "حمايه":   ("security", "defender", "protection"),
+    "شبكه":    ("network", "dns"),
+    "انترنت":  ("network", "dns"),
+    "قرص":     ("drive", "disk", "storage"),
+    "تخزين":   ("storage", "drive", "disk"),
+    "ذاكره":   ("memory", "ram"),
+    "بدء":     ("startup", "boot"),
+    "تشغيل":   ("startup", "boot", "run"),
+    "نسخه":    ("backup", "restore", "version"),
+    "استعاده": ("restore", "recovery", "restore point"),
+    "اصلاح":   ("repair", "fix", "sfc"),
+    "سجل":     ("log", "history", "report"),
+    "تقرير":   ("report", "health"),
+    "مظهر":    ("theme", "dark", "appearance"),
+    "لغه":     ("language", "region"),
+    "طاقه":    ("power", "battery", "plan"),
+    # -- English: the verb a user types, not the noun on the card ---
+    "uninstall": ("remove", "purge"),
+    "delete":    ("remove", "purge"),
+    "speed":     ("performance", "power", "optimize"),
+    "faster":    ("performance", "power", "optimize"),
+    "cleanup":   ("clean", "cache"),
+    "antivirus": ("defender", "security"),
+    "wifi":      ("network", "dns"),
+    "internet":  ("network", "dns"),
+    "ram":       ("memory", "storage"),
+    "boot":      ("startup",),
+    "bloat":     ("bloatware", "remove"),
+}
+
+
+def _edit_distance_within(a: str, b: str, limit: int) -> int | None:
+    """Damerau-Levenshtein distance between `a` and `b`, or None once it is
+    provably greater than `limit`.
+
+    BOUNDED, and the bound is what makes it safe to use here. A full
+    distance over every title on every keystroke is wasted work, and — far
+    worse — an UNBOUNDED distance turns the palette into a random-result
+    generator, because at distance 5 every short word is near every other
+    short word. The caller allows 1 edit on a short query and 2 on a long
+    one, which covers the real cases (a transposed pair, a doubled letter,
+    a dropped one) and nothing else.
+
+    Transpositions are counted as ONE edit rather than two, which is the
+    Damerau part and the reason it is here: "cahce" for "cache" and
+    "sfc"/"scf" are transpositions, and plain Levenshtein scores those the
+    same as two unrelated typos.
+    """
+    if abs(len(a) - len(b)) > limit:
+        return None
+    previous2: list[int] = []
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        current = [i] + [0] * len(b)
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            current[j] = min(previous[j] + 1,        # deletion
+                             current[j - 1] + 1,     # insertion
+                             previous[j - 1] + cost)  # substitution
+            if (i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb):
+                current[j] = min(current[j], previous2[j - 2] + 1)
+        if min(current) > limit:
+            return None
+        previous2, previous = previous, current
+    return previous[-1] if previous[-1] <= limit else None
+
+
+def _typo_hit(query: str, title: str) -> bool:
+    """True when `query` is one or two edits from a WORD of `title`.
+
+    Per word, never against the whole title: "dark" is 3 edits from "Global
+    Dark Mode" as a whole string and 0 from the word inside it, so matching
+    whole titles would need a bound so loose it matched everything.
+    """
+    if len(query) < 4:
+        return False          # under four letters, one edit is another word
+    limit = 1 if len(query) <= 6 else 2
+    # LOWERCASED HERE, defensively. The query arrives normalised and the
+    # title does not, and a capital letter is a substitution: without this,
+    # "cahce" was 2 edits from "Cache" (the transposition plus the C) and
+    # fell outside a limit of 1 — so the typo tolerance silently did
+    # nothing for every title, which is all of them.
+    for word in title.lower().replace("-", " ").replace("/", " ").split():
+        if _edit_distance_within(query, word, limit) is not None:
+            return True
+    return False
+
+
 def _fuzzy_score(needle: str, haystack: str) -> int | None:
     """Subsequence fuzzy match: every needle char must appear in haystack
     in order (case handled by the caller); tighter, earlier matches score
@@ -7449,6 +7747,20 @@ _MATCH_CATEGORY = 420
 _MATCH_DESC_WORD = 360
 _MATCH_DESC_SUB = 300
 _MATCH_FUZZY_TITLE = 200
+
+#: An ALIAS hit — the query was translated before it matched (Arabic, or an
+#: English verb the interface does not use). Scored as its own tier rather
+#: than as whatever the translated word scored, so a card that matches the
+#: user's LITERAL text always outranks one that needed translating: someone
+#: typing "update" gets Check for Updates, and someone typing "تحديث" gets
+#: the same card, but "update" never loses to a translated match.
+_MATCH_ALIAS = 500
+
+#: ...and a TYPO hit, below every deliberate match. A misspelling is the
+#: weakest evidence the palette accepts, so it may only ever fill the list
+#: BELOW anything that matched as typed — otherwise "disk" finding
+#: "Disable" (one edit) would push a real "Drive Space Report" hit down.
+_MATCH_TYPO_TITLE = 150
 
 
 def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | None:
@@ -7513,12 +7825,38 @@ def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | Non
     if query in note:
         return (_MATCH_DESC_SUB - len(note), "")
 
-    # -- last resort: initials / abbreviations, TITLE ONLY ---------
+    # -- initials / abbreviations, TITLE ONLY ----------------------
     # Keeps "sfc", "odt" and "cdi" style shorthand working without letting
     # a long contents blob match everything.
     fuzzy = _fuzzy_score(query, title)
     if fuzzy is not None:
         return (_MATCH_FUZZY_TITLE + fuzzy - len(title), "")
+
+    # -- the query, translated -------------------------------------
+    # Arabic, or an English verb the interface does not happen to use. Each
+    # expansion is re-run through this same function, so a translated query
+    # gets the full structured treatment (title, contents, description)
+    # rather than a second, weaker matcher of its own — which is how
+    # "تحديث" reaches Check for Updates by its title and "برامج" reaches
+    # the Software Catalog by the apps it contains.
+    #
+    # RECURSION IS SAFE AND BOUNDED: the expansions are plain English words
+    # and none of them is itself a key in SEARCH_ALIASES, so the second
+    # call cannot expand again. The guard is explicit rather than trusted,
+    # because a future alias pointing at another alias would otherwise
+    # recurse until the stack ran out.
+    for alias in SEARCH_ALIASES.get(query, ()):
+        if alias in SEARCH_ALIASES:
+            continue
+        hit = _match_entry(alias, item, category)
+        if hit is not None:
+            # Capped at the alias tier: a translated match is real, and it
+            # is still weaker evidence than the user's own words.
+            return (min(hit[0], _MATCH_ALIAS) - len(title), hit[1])
+
+    # -- last resort: a misspelling of a word in the title ----------
+    if _typo_hit(query, title):
+        return (_MATCH_TYPO_TITLE - len(title), "")
     return None
 
 
@@ -7776,7 +8114,10 @@ class CommandPalette(PulseDialog):
     def _refilter(self, text: str):
         self._list.clear()
         self._rows.clear()
-        query = text.strip().lower()
+        # normalise_query, not .lower(): an Arabic query typed with
+        # harakat, or with a different alef, is the same query and has to
+        # fold to the same string before anything compares it.
+        query = normalise_query(text)
 
         scored = []
         for item, category in self._entries:
@@ -7814,8 +8155,8 @@ class CommandPalette(PulseDialog):
             module, _sep, hub = row[3].partition(" › ")
             groups.setdefault(module, []).append((row, hub))
 
-        for module, rows in groups.items():
-            self._add_header(module)
+        for index, (module, rows) in enumerate(groups.items()):
+            self._add_header(module, first=(index == 0))
             for (_score, matched, item, _cat), hub in rows:
                 self._add_result(item, matched, hub)
         # The row count changed, so the height the list wants changed with
@@ -7826,24 +8167,60 @@ class CommandPalette(PulseDialog):
         self._list.updateGeometry()
         self._select_first()
 
-    def _add_header(self, title: str):
+    def _add_header(self, title: str, first: bool = False):
+        """A group heading: a hairline closing the previous group, then the
+        module name with its air ABOVE it.
+
+        A WIDGET rather than a bare QLabel, and the reason is the same one
+        that made the result rows widgets: a single label has a single box,
+        so the only lever it offered was where the text sat inside it —
+        which is how the heading ended up bottom-aligned in a short box,
+        floating almost equidistant between the group it named and the one
+        above. Padding groups the heading with its rows; the rule tells the
+        previous group it has ended. Those are two jobs and they need two
+        things drawn.
+
+        `first` suppresses the rule on the topmost group, where there is
+        nothing above to separate from and a rule would just be a line
+        under the search field.
+        """
         head = QListWidgetItem()
         head.setFlags(Qt.ItemFlag.NoItemFlags)
         head.setData(Qt.ItemDataRole.UserRole, self._HEADER)
+
+        cell = QWidget()
+        cell.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        cell.setFixedHeight(TH.PALETTE_SECTION_H)
+        column = QVBoxLayout(cell)
+        column.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["md"], 0)
+        column.setSpacing(0)
+
+        rule = QFrame()
+        rule.setFixedHeight(1)
+        rule.setStyleSheet(TH.palette_section_rule_qss(self._t))
+        rule.setVisible(not first)
+        column.addWidget(rule)
+        # The rule occupies the first pixel of the top pad rather than
+        # adding to it, so a group with a rule and the first group without
+        # one are exactly the same height and the rows below them line up.
+        column.addSpacing(TH.PALETTE_SECTION_PAD_TOP - 1)
+
         label = QLabel(title.upper())
         label.setStyleSheet(TH.palette_section_qss(self._t))
-        label.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["md"], 0)
+        label.setFixedHeight(TH.PALETTE_SECTION_TEXT_H)
         label.setAlignment(Qt.AlignmentFlag.AlignLeft
-                           | Qt.AlignmentFlag.AlignBottom)
-        label.setFixedHeight(TH.PALETTE_SECTION_H)
-        # An EXPLICIT hint, not the label's own: a QListWidget sizes an
+                           | Qt.AlignmentFlag.AlignVCenter)
+        column.addWidget(label)
+        column.addSpacing(TH.PALETTE_SECTION_PAD_BOTTOM)
+
+        # An EXPLICIT hint, not the widget's own: a QListWidget sizes an
         # item widget from the hint the ITEM carries, and a QLabel asked
         # for its hint before Qt has polished its stylesheet answers for
         # the default font rather than for the 10px letterspaced caption
         # it is about to become. The rows then overlap their headers.
         head.setSizeHint(QSize(0, TH.PALETTE_SECTION_H))
         self._list.addItem(head)
-        self._list.setItemWidget(head, label)
+        self._list.setItemWidget(head, cell)
 
     def _add_result(self, item: dict, matched: str, hub: str):
         # THE HINT NAMES WHY THIS ROW IS HERE, when that is not obvious.
@@ -8659,7 +9036,7 @@ class DevHubRow(QFrame):
         # set otherwise. The app_id is what keys the brand lookup, so it
         # rides along with the name (see utils.appicons).
         self._icon = QLabel()
-        self._icon.setFixedSize(28, 28)
+        self._icon.setFixedSize(APP_ICON_PX, APP_ICON_PX)
         self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._icon.setStyleSheet("background: transparent; border: none;")
         row.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -8696,7 +9073,8 @@ class DevHubRow(QFrame):
         # brand marks are recoloured per theme (appicons' contrast guard);
         # shell icons are theme-independent and come straight from cache
         self._icon.setPixmap(
-            appicons.app_icon(self._app_name, 28, t, app_id=self.app_id))
+            appicons.app_icon(self._app_name, APP_ICON_PX, t,
+                              app_id=self.app_id))
         if self._hint_label is not None:
             self._hint_label.setStyleSheet(TH.label_qss(t, "caption"))
 
@@ -10066,6 +10444,30 @@ class StartupRow(QFrame):
 
     _REC_LABELS = {"Disable": "Recommended to Disable", "Keep": "Safe to Keep", "Review": "Worth Reviewing"}
 
+    #: The row's fixed right-hand column, and the switch lives in it alone.
+    #:
+    #: A ToggleSwitch is 42px wide and was being added straight into the
+    #: row's own QHBoxLayout, so the column it occupied was whatever was
+    #: left after the name and its two badges had taken theirs. That is the
+    #: crowding defect: a long Run-key name widened the text block, the
+    #: badges slid right, and on the longest names they arrived hard against
+    #: the switch with no gutter between the last badge and a control the
+    #: user is about to click.
+    #:
+    #: A FIXED cell makes the switch's position a property of the row rather
+    #: than of the entry's name — every switch in the list lines up on one
+    #: axis, at one x, however long the name beside it is. 80px is the 42px
+    #: control plus enough air either side that the badge before it and the
+    #: card edge after it both keep a real margin.
+    SWITCH_COL_W = 80
+
+    #: What the NAME may ask for. It is an ElidedCaption, so this caps the
+    #: request rather than the grant: the label takes what the row can spare
+    #: up to here, elides in the MIDDLE past it (see the note on the caption
+    #: below), and reports a minimum of zero — which is what actually stops
+    #: it pushing anything.
+    NAME_MAX_W = 380
+
     toggle_requested = Signal(str, bool)   # (encoded_id, want_enabled)
 
     def __init__(self, item: dict, t: dict):
@@ -10089,7 +10491,17 @@ class StartupRow(QFrame):
         col.setSpacing(TH.SPACE["xs"])
         name_row = QHBoxLayout()
         name_row.setSpacing(TH.SPACE["sm"])
-        self._name = QLabel(str(item.get("Name", "")))
+        # MIDDLE elision, and a zero minimum. A Run key can be named
+        # "MicrosoftEdgeAutoLaunch_1C40B5E8F2..." — long enough that a plain
+        # QLabel's minimum width became a floor the whole row had to honour,
+        # which is what drove the badges into the switch. ElideMiddle keeps
+        # both ends of the identifier, which is where two entries from the
+        # same publisher actually differ; ElideRight would render every
+        # Edge auto-launch key as the same string.
+        self._name = ElidedCaption(max_width=self.NAME_MAX_W,
+                                   elide=Qt.TextElideMode.ElideMiddle)
+        self._name.setFullText(str(item.get("Name", "")))
+        self._name.setToolTip(str(item.get("Name", "")))
         name_row.addWidget(self._name)
         self._impact_badge = QLabel(f"{self._impact.upper()} IMPACT")
         name_row.addWidget(self._impact_badge)
@@ -10111,9 +10523,20 @@ class StartupRow(QFrame):
         col.addWidget(self._meta)
         outer.addLayout(col, 1)
 
+        # The switch's own column — see SWITCH_COL_W. The cell is what is
+        # added to the row; the switch is centred inside it, so the control
+        # sits at the same x on every row regardless of what precedes it.
         self.switch = ToggleSwitch(t, checked=self._enabled)
         self.switch.toggled.connect(self._on_switch)
-        outer.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignVCenter)
+        switch_cell = QWidget()
+        switch_cell.setFixedWidth(self.SWITCH_COL_W)
+        switch_cell.setStyleSheet("background: transparent; border: none;")
+        cell_lay = QHBoxLayout(switch_cell)
+        cell_lay.setContentsMargins(0, 0, 0, 0)
+        cell_lay.addStretch()
+        cell_lay.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignVCenter)
+        cell_lay.addStretch()
+        outer.addWidget(switch_cell, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.apply_theme(t)
         self._sync_disabled_prop()
@@ -10137,6 +10560,10 @@ class StartupRow(QFrame):
     def apply_theme(self, t: dict):
         self.setStyleSheet(TH.startup_row_qss(t))
         self._name.setStyleSheet(TH.label_qss(t, "card"))
+        # The stylesheet changes the metrics the elision was measured
+        # against, so re-run it against the new font rather than leaving
+        # the row showing a string elided for the previous theme's.
+        self._name.setFullText(self._name.fullText())
         self._impact_badge.setStyleSheet(TH.impact_badge_qss(t, self._impact))
         self._rec_badge.setStyleSheet(
             TH.recommendation_badge_qss(t, self._recommendation, self._protected))
@@ -10173,6 +10600,10 @@ class StartupManagerDialog(PulseDialog):
         self._active_want_enabled: bool = False
 
         accent = t["accent"]
+        # BEFORE _dialog_chrome, which sizes the panel on the way out —
+        # declared afterwards, the first layout pass would use the default
+        # band and the dialog would open narrow and jump on its first refit.
+        self._selector_width_band = (_STARTUP_WIDTH_MIN, _STARTUP_WIDTH_MAX)
         panel = _dialog_chrome(self, t, accent, responsive=True)
         lay = dialog_body(panel, "md")
 

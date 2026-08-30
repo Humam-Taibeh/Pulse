@@ -504,49 +504,145 @@ function Restore-EdgeState {
 # ============================================================
 #  ONEDRIVE FILE BACKUP
 # ============================================================
+function Get-OneDriveSyncRoots {
+    <#
+    .SYNOPSIS
+        Every local OneDrive sync root on this machine, de-duplicated.
+
+    .DESCRIPTION
+        "%USERPROFILE%\OneDrive" IS NOT THE ONLY ONE, and assuming it was is
+        how a pre-removal backup could report success having rescued none of
+        the files that mattered. A machine signed into a work or school
+        tenant syncs to "OneDrive - <Organisation>" beside the personal
+        folder, a machine with two tenants has one per tenant, and any of
+        them can be REDIRECTED off the profile entirely - at which point the
+        profile-relative guess finds nothing and reports "nothing to back
+        up" while several hundred GB sit somewhere else.
+
+        Two sources, unioned:
+
+          the PROFILE  - "OneDrive*" directories directly under
+                         %USERPROFILE%, which is where both the personal
+                         folder and the default business folders land.
+
+          the CLIENT'S OWN ENV VARS - OneDrive / OneDriveConsumer /
+                         OneDriveCommercial, which OneDrive.exe sets to the
+                         sync roots it is ACTUALLY using. These are what
+                         catch a redirected root, and they are authoritative
+                         where they disagree with the guess.
+
+        De-duplicated on the resolved full path, case-insensitively, so a
+        root that both sources name is copied once.
+    #>
+    $Roots = New-Object System.Collections.ArrayList
+    $Seen  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+
+    $Candidates = New-Object System.Collections.ArrayList
+    if ($env:USERPROFILE) {
+        foreach ($Dir in @(Get-ChildItem -LiteralPath $env:USERPROFILE -Directory -Filter "OneDrive*" -ErrorAction SilentlyContinue)) {
+            [void]$Candidates.Add($Dir.FullName)
+        }
+    }
+    foreach ($VarName in @("OneDrive", "OneDriveConsumer", "OneDriveCommercial")) {
+        $Value = [Environment]::GetEnvironmentVariable($VarName, "Process")
+        if (-not $Value) { $Value = [Environment]::GetEnvironmentVariable($VarName, "User") }
+        if ($Value) { [void]$Candidates.Add($Value) }
+    }
+
+    foreach ($Path in $Candidates) {
+        if ([string]::IsNullOrWhiteSpace($Path)) { continue }
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) { continue }
+        $Full = (Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue).Path
+        if (-not $Full) { continue }
+        # TRAILING SEPARATORS TRIMMED FOR THE KEY ONLY. Resolve-Path keeps
+        # whatever the caller wrote, and the env var half of this function
+        # routinely spells the same folder with a trailing backslash where
+        # the profile half does not - so "...\OneDrive" and "...\OneDrive\"
+        # were two entries, and the same gigabytes were robocopied twice.
+        # The trimmed form is the identity; the untrimmed one is still what
+        # gets copied, because that is the path the system reported.
+        if ($Seen.Add($Full.TrimEnd('\', '/'))) { [void]$Roots.Add($Full) }
+    }
+    return @($Roots)
+}
+
 function Backup-OneDriveFiles {
     <#
     .SYNOPSIS
-        Returns $true when it's safe for the caller (Remove-OneDrivePackage)
-        to proceed with the destructive removal, $false when a requested
-        backup did not actually complete and the removal should be aborted
-        instead of silently destroying unbacked-up data.
+        Evacuates EVERY local OneDrive sync root to
+        %LOCALAPPDATA%\PULSE\Backups\OneDrive before the caller
+        (Remove-OneDrivePackage) uninstalls the client.
+
+        Returns $true when it's safe for the caller to proceed with the
+        destructive removal, $false when a requested backup did not actually
+        complete and the removal should be aborted instead of silently
+        destroying unbacked-up data.
+
+    .DESCRIPTION
+        Each root is copied into its OWN subfolder of the backup, named
+        after the root ("OneDrive", "OneDrive - Contoso"). That naming is
+        not cosmetic: flattening two tenants' folders into one destination
+        would merge two different "Documents" directories into a single
+        tree, and the user would have no way to tell afterwards which file
+        came from where.
+
+        ALL-OR-NOTHING on the return value. One root failing to copy is
+        enough to return $false, because the caller's next act removes the
+        client for every root at once - a partial evacuation is exactly the
+        state where "the backup worked" is the most dangerous thing to say.
     #>
-    $OneDrivePath = "$env:USERPROFILE\OneDrive"
-    if (-not (Test-Path $OneDrivePath)) {
+    $Roots = @(Get-OneDriveSyncRoots)
+    if ($Roots.Count -eq 0) {
         Write-Info "No local OneDrive folder found - nothing to back up."
         return $true
     }
+
     $SizeGB = "Unknown"
     try {
-        $SizeGB = [math]::Round(((Get-ChildItem -Path $OneDrivePath -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum) / 1GB, 2)
+        $Bytes = 0
+        foreach ($Root in $Roots) {
+            $Bytes += ((Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue |
+                Measure-Object -Property Length -Sum).Sum)
+        }
+        $SizeGB = [math]::Round($Bytes / 1GB, 2)
     } catch {}
 
-    if (-not (Ask-User "Back Up Local OneDrive Files First" "Copies your local OneDrive folder (approx. $SizeGB GB) to $Script:OneDriveBackupFolder before removing OneDrive. Recommended, but can take a while for large folders.")) {
+    $RootList = ($Roots -join ", ")
+    if (-not (Ask-User "Back Up Local OneDrive Files First" "Copies your local OneDrive folder(s) - $RootList (approx. $SizeGB GB) - to $Script:OneDriveBackupFolder before removing OneDrive. Recommended, but can take a while for large folders.")) {
         Write-Warn "Skipping backup at your request - proceeding to remove OneDrive without one."
         return $true
     }
-    if (Test-DryRun "Copy local OneDrive folder (~$SizeGB GB) to $Script:OneDriveBackupFolder via robocopy") { return $true }
-    try {
-        New-Item -Path $Script:OneDriveBackupFolder -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
-        Write-Info "Copying files - this may take a while depending on folder size..."
-        & (Get-SystemBinary 'robocopy') $OneDrivePath $Script:OneDriveBackupFolder /E /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
-        # Robocopy's exit code is a bitmask, not a boolean - 0-7 all mean
-        # "completed, no failed copies" (bits just flag "files copied" /
-        # "extra files" etc.); 8+ means at least one file failed to copy.
-        # This was never checked, so a partial/failed copy still reported a
-        # clean backup immediately before the caller deletes the real data.
-        if ($LASTEXITCODE -lt 8) {
-            Write-Success "OneDrive files backed up to $Script:OneDriveBackupFolder."
-            return $true
-        } else {
-            Write-ErrorX "OneDrive backup incomplete (robocopy exit code $LASTEXITCODE) - not all files copied successfully."
-            return $false
+    if (Test-DryRun "Copy $($Roots.Count) local OneDrive sync root(s) (~$SizeGB GB) to $Script:OneDriveBackupFolder via robocopy") { return $true }
+
+    $Robocopy = Get-SystemBinary 'robocopy'
+    $AllOk = $true
+    foreach ($Root in $Roots) {
+        $Leaf = Split-Path -Path $Root -Leaf
+        $Dest = Join-Path $Script:OneDriveBackupFolder $Leaf
+        try {
+            New-Item -Path $Dest -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+            Write-Info "Copying '$Root' - this may take a while depending on folder size..."
+            & $Robocopy $Root $Dest /E /R:1 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+            # Robocopy's exit code is a bitmask, not a boolean - 0-7 all mean
+            # "completed, no failed copies" (bits just flag "files copied" /
+            # "extra files" etc.); 8+ means at least one file failed to copy.
+            # This was never checked, so a partial/failed copy still reported a
+            # clean backup immediately before the caller deletes the real data.
+            if ($LASTEXITCODE -lt 8) {
+                Write-Success "'$Leaf' backed up to $Dest."
+            } else {
+                Write-ErrorX "Backup of '$Leaf' incomplete (robocopy exit code $LASTEXITCODE) - not all files copied successfully."
+                $AllOk = $false
+            }
+        } catch {
+            Write-ErrorX "Backup of '$Leaf' failed: $($_.Exception.Message)"
+            $AllOk = $false
         }
-    } catch {
-        Write-ErrorX "OneDrive backup failed: $($_.Exception.Message)"
-        return $false
     }
+    if ($AllOk) {
+        Write-Success "All $($Roots.Count) OneDrive sync root(s) backed up to $Script:OneDriveBackupFolder."
+    }
+    return $AllOk
 }
 
 # ============================================================

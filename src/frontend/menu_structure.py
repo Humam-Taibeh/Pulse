@@ -17,7 +17,8 @@ Contract with the backend (src/backend/core.ps1 + src/backend/modules/):
     Tasks starting with "@" are LOCAL actions handled by the GUI itself
     (no PowerShell process is spawned by main.py's task pipeline):
         @open_log              -> opens %LOCALAPPDATA%\\Pulse\\logs\\Pulse_Log.txt
-        @open_onedrive_backup  -> opens Desktop\\Pulse_OneDriveBackup
+        @open_onedrive_backup  -> opens ...\\PULSE\\Backups\\OneDrive
+        @open_edge_backup      -> opens ...\\PULSE\\Backups\\Edge
         @playbooks             -> widgets.PlaybookDialog
         @health_report         -> widgets.HealthReportDialog
         @activation            -> widgets.ActivationStatusDialog
@@ -460,9 +461,10 @@ CATEGORIES = [
             # the machine before the user arrived), and it was filed under
             # System & Tweaks / PRIVACY, so the app's three "remove what
             # came preinstalled" actions lived in two different modules.
-            # NOTE: ApplyAllPrivacy still composes Remove-Bloatware in the
-            # backend — its description over there names that explicitly
-            # now that the card is no longer its neighbour.
+            # Remove Bloatware is now the ONLY card that removes it: the
+            # "Apply ALL Privacy Settings" pass that also composed
+            # Remove-Bloatware in the backend is gone, so nothing performs
+            # this action except the card that names it.
             #
             # Edge and OneDrive each stay a HUB rather than becoming flat
             # cards, because the remove/restore pair is the whole point:
@@ -500,6 +502,20 @@ CATEGORIES = [
                      {"icon": "🔁", "title": "Reinstall Microsoft Edge",
                       "desc": "Reinstall Edge and restore your backed-up settings.",
                       "glyph": "sync", "task": "RestoreEdge", "timeout": 1800, "action": "Reinstall"},
+                     # The counterpart of OneDrive Backup Folder below, and
+                     # it is here for the identical reason. Remove Microsoft
+                     # Edge writes a version + full-profile backup that
+                     # nothing in the GUI could reach, so this card's own
+                     # description — "a backup is kept either way, so the
+                     # removal is reversible" — was a promise with no door
+                     # on it. Both teardown hubs now offer the same three
+                     # rows in the same order (remove · restore · open what
+                     # was saved), which is what makes them read as one
+                     # pattern rather than as two dialogs that happen to
+                     # resemble each other.
+                     {"icon": "📁", "title": "Edge Backup Folder",
+                      "desc": "Open the settings and profile data saved before removal.",
+                      "glyph": "folder", "task": "@open_edge_backup", "action": "Open"},
                  ]},
                 {"icon": "☁️", "glyph": "cloud", "title": "Microsoft OneDrive",
                  "desc": "Uninstall OneDrive with your local files rescued first — "
@@ -628,11 +644,21 @@ CATEGORIES = [
             ]},
             # Remove Bloatware left this band in v1.1 — it uninstalls
             # preinstalled software, which is Software Management's job and
-            # is where Remove Edge and Purge OneDrive already lived. The
-            # full-pass card below still triggers Remove-Bloatware in the
-            # backend (see ApplyAllPrivacy in 30-GuiDispatcher.ps1), so its
-            # description now names bloatware explicitly rather than
-            # leaning on a neighbouring card that has moved away.
+            # is where Remove Edge and Purge OneDrive already lived.
+            #
+            # "Apply ALL Privacy Settings" left it too, and its removal is
+            # the more consequential one. It was a fourth card that ran the
+            # other three plus Remove-Bloatware in one pass, which made it
+            # the only card on the page whose effect could not be read off
+            # its own name — and the only one whose state badge was a
+            # COMPOSITE (11-StateProbe.ps1 derived it from its four parts
+            # and had to invent a "mixed" verdict to stay honest about a
+            # half-applied pass). Bundling is the job of the modular
+            # playbooks architecture now being built: a playbook composes
+            # named steps the user can see, reorder and drop, where this
+            # card composed four hidden ones. The three granular tweaks
+            # below are the whole band, and each of them still says exactly
+            # what it does.
             {"title": "PRIVACY", "items": [
                 {"icon": "🛡️", "title": "Disable Telemetry",
                  "desc": "Stop diagnostic data collection and scheduled tasks.",
@@ -643,10 +669,6 @@ CATEGORIES = [
                 {"icon": "🕓", "title": "Disable Activity History",
                  "desc": "Stop Timeline activity sync to Microsoft servers.",
                  "glyph": "history", "task": "DisableActivityHistory", "timeout": 120},
-                {"icon": "🔒", "title": "Apply ALL Privacy Settings",
-                 "desc": "One pass: telemetry, advertising ID, activity history "
-                         "and bloatware removal.",
-                 "glyph": "defender", "task": "ApplyAllPrivacy", "timeout": 1800, "confirm": True},
             ]},
         ],
     },
@@ -956,7 +978,7 @@ ADMIN_REQUIRED_TASKS = frozenset({
     "DisableHibernation", "EnableHibernation", "DisableTelemetry", "DisableActivityHistory",
     "NetworkOptimization", "UltimatePowerPlan", "RemoveOneDrive", "RemoveEdge",
     "CreateRestorePoint", "DriverBackup", "RestoreServices", "RestoreEdge", "RestoreOneDrive",
-    "ApplyAllPrivacy", "ResetTweaks", "InstallOfficeODT", "InstallOfficeODTAuto",
+    "ResetTweaks", "InstallOfficeODT", "InstallOfficeODTAuto",
     "StartupDisableItem", "StartupEnableItem",
     # v1.0 two-way toggles: ONLY the two that write HKLM policy keys, which
     # is exactly the pairing 01-Catalogs.ps1 makes. The other six reverts

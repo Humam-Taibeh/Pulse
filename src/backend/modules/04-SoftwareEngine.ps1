@@ -1273,11 +1273,16 @@ function Invoke-GuiLocalInstall {
         # inherits Pulse's working directory instead, which is neither the
         # installer's folder nor anything the installer knows about.
         $WorkDir = Split-Path -Path $FilePath -Parent
+        # -NoNewWindow on both branches. It suppresses a CONSOLE, not a
+        # window: a GUI installer still shows its own UI exactly as it does
+        # on a double-click, while a console-mode one stops flashing a
+        # black box over Pulse. Without it, msiexec and every NSIS/Inno
+        # stub allocated one.
         if ($Ext -eq ".msi") {
             $Proc = Start-Process -FilePath (Get-SystemBinary "msiexec") -ArgumentList @("/i", ('"' + $FilePath + '"')) `
-                -WorkingDirectory $WorkDir -Wait -PassThru
+                -WorkingDirectory $WorkDir -Wait -NoNewWindow -PassThru
         } else {
-            $Proc = Start-Process -FilePath $FilePath -WorkingDirectory $WorkDir -Wait -PassThru
+            $Proc = Start-Process -FilePath $FilePath -WorkingDirectory $WorkDir -Wait -NoNewWindow -PassThru
         }
         if ($Proc.ExitCode -eq 0 -or $Proc.ExitCode -eq 3010) {
             Write-Success "Installer finished (exit code $($Proc.ExitCode))."

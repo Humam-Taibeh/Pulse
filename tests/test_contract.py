@@ -173,7 +173,7 @@ class TestStateProbe:
             "DisableActivityHistory", "DisableTelemetry",
             "DisableHibernation", "EnableHibernation", "UltimatePowerPlan",
             "RemoveEdge", "RemoveOneDrive", "RemoveWindowsOld",
-            "RemoveBloatware", "ApplyAllPrivacy",
+            "RemoveBloatware",
         }
         assert expected <= _probe_keys(), (
             f"probe coverage regressed, missing: {sorted(expected - _probe_keys())}")
@@ -420,7 +420,11 @@ def test_the_backend_admin_list_was_fully_parsed():
     """Guard the parser itself — see _backend_admin_tasks. A truncated set
     makes every check below pass for the wrong reason."""
     tasks = _backend_admin_tasks()
-    assert len(tasks) >= 30, f"only {len(tasks)} admin tasks parsed: {sorted(tasks)}"
+    # 29 since ApplyAllPrivacy was removed with its card. The floor is a
+    # TRIPWIRE FOR THE REGEX, not a target for the list — it is meant to
+    # catch a parse that silently returns two entries, so it tracks the real
+    # count and is expected to move when the gate list genuinely does.
+    assert len(tasks) >= 29, f"only {len(tasks)} admin tasks parsed: {sorted(tasks)}"
     # the two that the old truncating parse could not see
     assert {"ContextMenuToggle", "ContextMenuRestore"} <= tasks
 
@@ -516,7 +520,7 @@ class TestRevertToggles:
         forbidden = {
             "RemoveEdge", "RemoveOneDrive", "RemoveWindowsOld",
             "RemoveBloatware", "DisableHibernation", "EnableHibernation",
-            "UltimatePowerPlan", "NetworkOptimization", "ApplyAllPrivacy",
+            "UltimatePowerPlan", "NetworkOptimization",
         }
         offered = sorted(forbidden & set(self._revert_map()))
         assert not offered, (

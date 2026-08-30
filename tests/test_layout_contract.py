@@ -1613,15 +1613,30 @@ class TestChipStrip:
         assert strips, "the catalog's tab strip is not a _chip_strip"
         return strips[0]
 
+    #: Narrow enough that the catalog's five tabs cannot fit whatever the
+    #: font metrics are on the machine running this. The overflow behaviour
+    #: is the thing under test, and since the filter field moved off this
+    #: row (see test_the_filter_field_has_its_own_row) the tabs DO fit at
+    #: the app's own minimum window — so the overflow has to be forced
+    #: rather than waited for, or these two assertions quietly stop testing
+    #: anything on a machine with a slightly narrower font.
+    _FORCE_OVERFLOW_W = 240
+
     def test_the_scrollbar_lane_is_exactly_reserved(self, window, qapp):
-        """Viewport == pill height: the lane the strip adds and the space
-        Qt takes for the bar have to be the same number, or the pills
-        shift by the difference the moment the row overflows."""
+        """Viewport == pill height WHILE THE BAR IS SHOWING: the lane the
+        strip adds and the space Qt takes for the bar have to be the same
+        number, or the pills shift by the difference the moment the row
+        overflows."""
         from frontend.widgets import _CHIP_H
         dialog = dict(_dialog_specs(window))["SoftwareCatalogDialog"]()
         dialog.show()
         qapp.processEvents()
         strip = self._strip(dialog)
+        strip.setFixedWidth(self._FORCE_OVERFLOW_W)
+        qapp.processEvents()
+        assert strip.horizontalScrollBar().isVisible(), (
+            "the strip was squeezed below its content and still shows no "
+            "scrollbar — the rest of this assertion would be vacuous")
         assert strip.viewport().height() == _CHIP_H, (
             f"viewport {strip.viewport().height()}px against a {_CHIP_H}px "
             "pill — the lane and the scrollbar disagree")
@@ -1630,50 +1645,64 @@ class TestChipStrip:
         qapp.processEvents()
 
     def test_an_overflowing_strip_can_actually_be_scrolled(self, window, qapp):
-        """At the app's minimum width the five tabs cannot all fit, so the
-        strip MUST scroll: a clipped tab with no scrollbar is a filter the
-        user simply cannot reach."""
-        from frontend.widgets import refit_dialog
-        original = window.size()
-        window.resize(_MIN_W, _MIN_H)
-        qapp.processEvents()
-        try:
-            dialog = dict(_dialog_specs(window))["SoftwareCatalogDialog"]()
-            dialog.resize(window.size())
-            dialog.show()
-            qapp.processEvents()
-            refit_dialog(dialog)
-            qapp.processEvents()
-            strip = self._strip(dialog)
-            assert strip.horizontalScrollBar().maximum() > 0, (
-                "the tab strip does not scroll at the minimum window size — "
-                "its overflowing tabs are unreachable")
-            dialog.reject()
-            dialog.deleteLater()
-            qapp.processEvents()
-        finally:
-            window.resize(original)
-            qapp.processEvents()
+        """A row wider than its viewport MUST scroll: a clipped tab with no
+        scrollbar is a filter the user simply cannot reach.
 
-    def test_the_filter_row_shares_one_top_edge(self, window, qapp):
-        """Tabs and search field are one control row and must read as one:
-        the field is aligned to the strip's TOP, not its centre, because
-        the strip is taller than its pills by the scrollbar lane."""
+        This used to squeeze the WINDOW to the app minimum and rely on the
+        five tabs not fitting the panel. They fit now — the filter field
+        that used to take ~190px out of this row moved to its own row above
+        it — so the strip is squeezed directly instead. The property is
+        unchanged and the trigger is no longer a coincidence of font
+        metrics."""
         dialog = dict(_dialog_specs(window))["SoftwareCatalogDialog"]()
         dialog.show()
         qapp.processEvents()
         strip = self._strip(dialog)
-        panel = dialog.panel
+        strip.setFixedWidth(self._FORCE_OVERFLOW_W)
+        qapp.processEvents()
+        assert strip.horizontalScrollBar().maximum() > 0, (
+            "a strip narrower than its own pills does not scroll — its "
+            "overflowing tabs are unreachable")
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+    def test_the_filter_field_has_its_own_row(self, window, qapp):
+        """The field and the tabs are TWO rows, and this is the assertion
+        that used to say the opposite.
+
+        They shared one line, with the field pinned to the right of a
+        SCROLLING strip. A scroll area takes the width it is given and
+        reports overflow instead of asking for more, so the two never
+        competed honestly: the strip surrendered the field's ~190px and
+        put a tab under the scrollbar at every window size, while the field
+        itself was 180px on a panel three times that wide. Both are fixed
+        by the split, and both would come back the moment someone merged
+        the rows again — so what is pinned here is the separation itself,
+        the field spanning the content width, and the two never overlapping.
+        """
+        dialog = dict(_dialog_specs(window))["SoftwareCatalogDialog"]()
+        dialog.show()
+        qapp.processEvents()
+        strip = self._strip(dialog)
+        field = dialog._search
+
+        field_rect = field.rect().translated(
+            field.mapTo(dialog.panel, field.rect().topLeft()))
+        strip_rect = strip.rect().translated(
+            strip.mapTo(dialog.panel, strip.rect().topLeft()))
+        assert not field_rect.intersects(strip_rect), (
+            f"the filter field {field_rect} overlaps the tab strip "
+            f"{strip_rect} — they are back on one row")
+        assert field_rect.bottom() <= strip_rect.top(), (
+            "the filter field is not above the tab strip")
+        assert field.width() == strip.width(), (
+            f"the field is {field.width()}px against a {strip.width()}px "
+            "strip — it no longer spans the content column")
         tab = next(iter(dialog._tab_buttons.values()))
-        tab_top = tab.mapTo(panel, tab.rect().topLeft()).y()
-        field_top = dialog._search.mapTo(
-            panel, dialog._search.rect().topLeft()).y()
-        assert tab_top == field_top, (
-            f"the tabs start at y={tab_top} and the filter field at "
-            f"y={field_top} — the row is misaligned by "
-            f"{abs(tab_top - field_top)}px")
-        assert tab.height() == dialog._search.height()
-        assert strip.width() > 0
+        assert tab.height() == field.height(), (
+            "a tab pill and the filter field are both controls and must "
+            "share one height")
         dialog.reject()
         dialog.deleteLater()
         qapp.processEvents()

@@ -150,8 +150,10 @@ being zeroed. Latent today because every current call site passes a default.
 
 - [x] **Probe coverage extended** to the remaining readable tasks —
   `NetworkOptimization`, `RemoveEdge`, `RemoveOneDrive`, `RemoveWindowsOld`,
-  `RemoveBloatware`, `ApplyAllPrivacy` — under the same read-only, never-guess
-  contract. *(v10.1)*
+  `RemoveBloatware` — under the same read-only, never-guess contract.
+  *(v10.1; the `ApplyAllPrivacy` composite probe retired with its card —
+  it was the only derived verdict here, and the only one that needed a
+  "mixed" state to describe a half-applied pass honestly.)*
 - [x] **Probe/GUI key contract test** so a probe key can never drift from the
   task name it claims to describe. *(v10.1)*
 - [x] **Last run & typical duration on cards**, derived from a persisted

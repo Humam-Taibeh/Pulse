@@ -3,8 +3,10 @@ src/utils/appicons.py
 
 APP ICON RESOLUTION for Software Management rows.
 
-Every catalog row (SoftwareCatalogDialog, Update Center) shows a 28px
-icon beside the app's name. Three sources, tried in order:
+Every catalog row (SoftwareCatalogDialog, Update Center) shows the app's
+mark on a square plaque beside its name — widgets.APP_ICON_PX, currently
+36px, which is TH.CONTROL_H so the icon column lines up with the filter
+field and the tab pills above it. Three sources, tried in order:
 
   1. A BUNDLED VECTOR MARK — assets/appicons/<AppId>.svg, fetched at BUILD
      time by tools/fetch_app_icons.py and rendered here as vector so it
@@ -12,27 +14,40 @@ icon beside the app's name. Three sources, tried in order:
      MARK; Pulse ships no hand-drawn stand-ins. Two kinds live here, and
      the manifest's "color" flag distinguishes them:
 
-       - MONOCHROME (Simple Icons): a single-path silhouette with a brand
-         hex, recoloured at paint time subject to the contrast guard below.
+       - FULL COLOUR — the real artwork including gradients: Chrome's
+         four-colour wheel, Firefox's fox, Edge's swirl. Rendered exactly
+         as drawn; legibility is handled by the WELL underneath rather
+         than by altering the colours, because recolouring real vendor
+         artwork is what would make it inauthentic. This is now all but
+         one of them.
 
-       - FULL COLOUR (Iconify's brand-logo sets, principally the CC0 `logos`
-         collection): the real artwork including gradients — VS Code's blue
-         ribbon, Edge's swirl. Rendered exactly as drawn; legibility is
-         handled by a backing plaque rather than by altering the colours,
-         because recolouring real vendor artwork is what would make it
-         inauthentic.
+       - MONOCHROME — a single-path silhouette with a brand hex,
+         recoloured at paint time subject to the contrast guard below.
+         ONE MARK still takes this path (Cursor), because Cursor's own
+         brand cube IS monochrome; a "colour" version would be invented.
 
-     SEVEN CATALOG APPS HAVE NO BUNDLED MARK, and that is a finding, not
-     an omission: BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor,
-     CrystalDiskInfo and Open WebUI have no authentic logo in ANY open,
-     licensed set. That was measured — the full Simple Icons index (~3300
-     marks), the whole `logos` collection (1861), and Iconify's federated
-     search across every collection it aggregates. They fall to tier 2,
-     where the vendor's own artwork is read out of their own installed
-     binary, and to tier 3 when the app is not present. An invented
-     pictogram in that gap was tried and REMOVED: a mark that describes
-     software is still not that software's logo, and the rule here is that
-     a wrong logo is worse than no logo.
+     THAT SPLIT USED TO RUN THE OTHER WAY — 34 silhouettes to 2 real
+     logos, because Simple Icons is a monochrome set. A recoloured
+     silhouette is authentic in SHAPE and wrong in every other respect:
+     Chrome was a flat blue disc, Steam a flat black one, and the thing
+     that makes those marks recognisable at 20px is precisely the colour
+     that had been taken out of them. The fetcher now prefers the CC0
+     `logos` collection and the MIT `thesvg-color` / `devicon` sets, and
+     falls back to a silhouette only where no colour artwork exists.
+
+     SIX CATALOG APPS HAVE NO BUNDLED MARK AT ALL, and that is a finding,
+     not an omission: BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor and
+     CrystalDiskInfo have no authentic logo in ANY open, licensed set.
+     That was measured, twice — the full Simple Icons index (~3300 marks),
+     the whole `logos` collection (1880), and Iconify's federated search
+     across every collection it aggregates. They fall to tier 2, where the
+     vendor's own artwork is read out of their own installed binary, and
+     to tier 3 when the app is not present. An invented pictogram in that
+     gap was tried and REMOVED: a mark that describes software is still
+     not that software's logo, and the rule here is that a wrong logo is
+     worse than no logo. The traps are real and close — the index offers
+     `campaignmonitor` for HWMonitor and `crystal` (the programming
+     language) for CrystalDiskInfo.
 
      THIS OUTRANKS THE INSTALLED APP'S OWN ICON, which is not the obvious
      ordering and was arrived at by looking at the result. Windows' icon
@@ -51,6 +66,14 @@ icon beside the app's name. Three sources, tried in order:
      mark, so this tier no longer fires for them; it still covers the
      Update Center, which lists whatever winget reports as upgradable and
      is therefore not limited to the catalog.
+
+  ALL THREE TIERS ARE PRESENTED IDENTICALLY: a 20px mark centred in a
+  36px well with an 8px radius (see _MARK_RATIO and _paint_well). Brand
+  SVGs disagree about their own internal padding, so drawing each "as
+  large as fits" produced a column of marks at visibly different optical
+  sizes — which reads as scavenged however genuine each one is. Fixing the
+  INNER box is what makes them a set, and putting tiers 2 and 3 on the
+  same plate is what stops the one unknown app in a list looking broken.
 
   3. A NEUTRAL GLYPH — a soft rounded "package" mark in the theme's muted
      tone. This replaced the LETTER MONOGRAM plaques, which put a bare
@@ -230,6 +253,28 @@ def _icon_provider():
     return _PROVIDER
 
 
+def _in_well(mark: QPixmap, px: int, tone: QColor) -> QPixmap:
+    """Present an already-rendered mark on the standard well.
+
+    Tier 2 and tier 3 go through this so a row whose icon came from the
+    installed binary, or from the neutral fallback, still lines up with the
+    bundled marks beside it. A column where two of thirty icons sit on a
+    different plate at a different size is the same "scavenged" reading the
+    well exists to fix, and it is MORE obvious for the odd one out.
+    """
+    size = px * 2
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    _paint_well(p, size, tone)
+    p.drawPixmap(_mark_rect(size).toRect(), mark)
+    p.end()
+    pm.setDevicePixelRatio(2.0)
+    return pm
+
+
 def _shell_pixmap(path: str, px: int) -> QPixmap | None:
     """The file's own shell icon, DPR-doubled so it stays crisp on scaled
     displays. Returns None when the extractor handed back its generic
@@ -353,8 +398,106 @@ def _readable_brand_color(brand: QColor, surface: QColor, dark: bool) -> QColor:
     return QColor("#f2f4f8") if dark else QColor("#12151b")
 
 
+# ============================================================
+#  THE WELL — one plate every mark is presented on
+# ============================================================
+#: The mark's size inside the plaque, as a fraction of it. 20 in 36.
+#:
+#: EVERY MARK GETS THE SAME BOX, and that uniformity is the point rather
+#: than a constraint. Brand SVGs do not agree on their own padding: some
+#: are drawn edge-to-edge in their viewBox, some carry 15% of built-in air,
+#: and a few are wordmark-shaped rather than square. Rendered "as large as
+#: fits", the column came out as a row of marks at visibly different
+#: optical sizes — which is the thing that reads as "these were scavenged"
+#: however authentic each one is individually.
+#:
+#: Fixing the INNER box instead of the outer one is what makes them a set.
+_MARK_RATIO = 20.0 / 36.0
+
+#: Corner radius of the well, same fraction (8 in 36) — the squircle every
+#: app store and both desktop platforms present an app icon in.
+_WELL_RADIUS_RATIO = 8.0 / 36.0
+
+
+def _well_color(surface: QColor | None, dark: bool) -> QColor:
+    """The plate a mark sits on: a quiet neutral lift off the row.
+
+    Dark mode lifts with white, light mode settles with black, and both at
+    a weight low enough that the plate reads as a recess in the row rather
+    than as a tile stuck on top of it. This is the RESTING tone — see
+    _rescue_well, which brightens it for the marks that would otherwise
+    disappear into it.
+    """
+    if dark:
+        return QColor(255, 255, 255, 18)
+    return QColor(0, 0, 0, 12)
+
+
+def _rescue_well(renderer: QSvgRenderer, size: int,
+                 surface: QColor | None, dark: bool) -> QColor:
+    """The well tone for one mark, brightened when the mark needs it.
+
+    THE GEOMETRY IS ALWAYS THE SAME AND ONLY THE TONE MOVES, which is the
+    resolution of two requirements that look opposed: every icon should be
+    presented identically, AND a near-black mark has to stay visible on a
+    near-black canvas. Making the plate appear only for the marks that need
+    rescuing (what this module did before) satisfies the second and breaks
+    the first — the column ends up with tiles under some logos and not
+    others, at different sizes, which is exactly the inconsistency the
+    uniform well exists to remove.
+
+    So the plate is unconditional and its COLOUR is measured. Ollama,
+    Notion, Steam, 7-Zip and Epic are all essentially #000000 artwork; on
+    obsidian they get the near-white plate an app store would give them,
+    and every other mark keeps the quiet neutral.
+
+    Near-white rather than pure: a hard #ffffff tile on the light theme's
+    porcelain canvas reads as a hole punched in the row.
+    """
+    resting = _well_color(surface, dark)
+    if surface is None:
+        return resting
+    luminance = _mark_luminance(renderer, size)
+    if luminance is None:
+        return resting
+    # Measured against what the mark will ACTUALLY sit on: the resting
+    # well composited over the row, not the row alone.
+    plate = _composite(resting, surface)
+    hi, lo = max(luminance, _luminance(plate)), min(luminance, _luminance(plate))
+    if (hi + 0.05) / (lo + 0.05) >= _MIN_CONTRAST:
+        return resting
+    rescue = QColor("#f7f8fa")
+    rescue.setAlphaF(0.96)
+    return rescue
+
+
+def _composite(over: QColor, under: QColor) -> QColor:
+    """`over` blended onto opaque `under` — what the eye actually sees."""
+    a = over.alphaF()
+    return QColor(
+        int(round(over.red() * a + under.red() * (1 - a))),
+        int(round(over.green() * a + under.green() * (1 - a))),
+        int(round(over.blue() * a + under.blue() * (1 - a))))
+
+
+def _paint_well(p: QPainter, size: int, tone: QColor) -> None:
+    """Fill the plate. `size` is in DEVICE pixels."""
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(tone)
+    radius = size * _WELL_RADIUS_RATIO
+    p.drawRoundedRect(QRectF(0, 0, size, size), radius, radius)
+
+
+def _mark_rect(size: int) -> QRectF:
+    """The centred box a mark is drawn into. `size` is in DEVICE pixels."""
+    inner = size * _MARK_RATIO
+    offset = (size - inner) / 2.0
+    return QRectF(offset, offset, inner, inner)
+
+
 def _brand_pixmap(app_id: str, px: int, tone: QColor,
-                  surface: QColor | None = None) -> QPixmap | None:
+                  surface: QColor | None = None,
+                  dark: bool = True) -> QPixmap | None:
     """Render the bundled SVG at 2x.
 
     TWO KINDS OF MARK live in assets/appicons/, and the manifest's `color`
@@ -396,23 +539,21 @@ def _brand_pixmap(app_id: str, px: int, tone: QColor,
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         full_colour = bool(entry.get("color"))
-        plaque = _backing_plaque(renderer, size, surface) if full_colour else None
-        if plaque is not None:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(plaque)
-            p.drawRoundedRect(QRectF(0, 0, size, size),
-                              size * 0.22, size * 0.22)
-
-        # 10% inset: the marks are drawn edge-to-edge in their viewBox,
-        # and a logo butting against the row's text needs optical padding
-        # to sit as calmly as the shell icons beside it. A mark on a
-        # backing plaque insets further so it does not touch the corners.
-        pad = size * (0.19 if plaque is not None else 0.10)
-        renderer.render(p, QRectF(pad, pad, size - pad * 2, size - pad * 2))
+        # THE WELL IS UNCONDITIONAL and the mark's box is fixed — see
+        # _rescue_well and _MARK_RATIO for why uniform geometry with a
+        # measured TONE is the only arrangement that satisfies both
+        # "present every icon identically" and "a black mark must stay
+        # visible on a black canvas".
+        _paint_well(p, size, _rescue_well(renderer, size, surface, dark))
+        renderer.render(p, _mark_rect(size))
         if not full_colour:
+            # SourceIn would take the well with it — it replaces the alpha
+            # of everything already on the pixmap. Clip to the mark's own
+            # box so the recolour reaches the silhouette and stops there.
+            p.setClipRect(_mark_rect(size))
             p.setCompositionMode(
                 QPainter.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(pm.rect(), tone)
+            p.fillRect(_mark_rect(size), tone)
         p.end()
         pm.setDevicePixelRatio(2.0)
         return pm
@@ -512,8 +653,10 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
     from PySide6.QtGui import QPen
     p.setPen(QPen(body, pen_w))
     p.setBrush(Qt.BrushStyle.NoBrush)
-    inset = size * 0.20
-    box = QRectF(inset, inset, size - inset * 2, size - inset * 2)
+    # The same centred box every bundled mark is drawn into, shrunk by the
+    # pen so the stroke stays inside it.
+    box = _mark_rect(size).adjusted(pen_w / 2, pen_w / 2,
+                                    -pen_w / 2, -pen_w / 2)
     p.drawRoundedRect(box, size * 0.10, size * 0.10)
     # a single horizontal seam — reads as a parcel, not as a blank frame
     p.drawLine(int(box.left()), int(box.center().y()),
@@ -547,22 +690,25 @@ def app_icon(app_name: str, px: int, t: dict, app_id: str = "") -> QPixmap:
         if entry.get("color"):
             # Real vendor artwork: rendered as drawn. `tone` is unused on
             # this path, so the contrast guard is skipped here and the
-            # backing plaque inside _brand_pixmap does the legibility work
-            # instead — moving the surface, never the brand's own colours.
-            pm = _brand_pixmap(app_id, px, QColor("#000000"), surface)
+            # WELL does the legibility work instead — moving the surface,
+            # never the brand's own colours.
+            pm = _brand_pixmap(app_id, px, QColor("#000000"), surface, dark)
         else:
             brand = QColor(entry.get("hex", "#000000"))
             if not brand.isValid():
                 brand = QColor("#888888")
             pm = _brand_pixmap(app_id, px,
                                _readable_brand_color(brand, surface, dark),
-                               surface)
+                               surface, dark)
     if pm is None:
         path = _installed_icon_path(app_name)
         if path:
-            pm = _shell_pixmap(path, px)
+            shell = _shell_pixmap(path, px)
+            if shell is not None:
+                pm = _in_well(shell, px, _well_color(surface, dark))
     if pm is None:
         pm = _neutral_pixmap(px, QColor(t.get("text_faint", "#858d9d")))
+        pm = _in_well(pm, px, _well_color(surface, dark))
 
     _PIXMAP_CACHE[key] = pm
     return pm
