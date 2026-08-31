@@ -1659,6 +1659,10 @@ class PulseApp(QMainWindow):
         self._playbook_dialog = None
         self._probe_thread: QThread | None = None
         self._probe_worker: PowerShellTask | None = None
+        #: A state refresh that arrived while one was already running, and
+        #: therefore still owes the user an answer. See
+        #: _refresh_tweak_state for why dropping it was wrong.
+        self._probe_pending = False
         self._update_check_thread: QThread | None = None
         self._update_check_worker: SelfUpdateCheckWorker | None = None
         #: The Update a background/manual check last found, or None. Kept
@@ -2145,8 +2149,33 @@ class PulseApp(QMainWindow):
         # this method is reached from timers armed up to 600ms earlier, so
         # "is the window still there?" cannot be assumed from having been
         # called at all.
-        if self._shutting_down or not self.ps1_path or self._probe_thread is not None:
+        if self._shutting_down or not self.ps1_path:
             return
+        # A SECOND REQUEST IS REMEMBERED, NOT DISCARDED.
+        #
+        # This used to `return` when a probe was already in flight, which
+        # reads as harmless de-duplication and is not: the two callers that
+        # matter both fire 400ms after a task finishes, and a probe takes
+        # ~1 second (measured: 0.91-0.99s for GetTweakState). So any task
+        # completing within roughly a second of a previous refresh had its
+        # own refresh dropped — permanently, because nothing re-ran it.
+        #
+        # The card then kept its PRE-ACTION badge until some later,
+        # unrelated action happened to schedule another probe. "Dark Mode:
+        # not applied" sitting under a Dark Mode task that had just
+        # succeeded is precisely the false state this probe exists to
+        # prevent, and it was most likely exactly where it hurt most: two
+        # quick tweaks in a row, or a first action taken while the startup
+        # probe (armed at 600ms) was still running.
+        #
+        # Coalescing rather than queueing is deliberate — the probe reads
+        # whole-system state, so one run after the last change answers for
+        # all of them; what matters is only that a run STARTS after the
+        # final change, never how many were asked for.
+        if self._probe_thread is not None:
+            self._probe_pending = True
+            return
+        self._probe_pending = False
         thread = QThread(self)
         worker = PowerShellTask(self.ps1_path, "GetTweakState", timeout=90)
         worker.moveToThread(thread)
@@ -2245,6 +2274,15 @@ class PulseApp(QMainWindow):
         if self._probe_thread is not None:
             self._probe_thread.deleteLater()
             self._probe_thread = None
+        # Serve whatever arrived while this one was running. singleShot(0)
+        # rather than a direct call: this runs from the thread's own
+        # `finished` signal, with the QThread mid-deleteLater, and starting
+        # its replacement from inside that handler is how a
+        # "QThread: Destroyed while thread is still running" abort gets
+        # written. Deferring puts it back on a clean event-loop turn.
+        if self._probe_pending and not self._shutting_down:
+            self._probe_pending = False
+            QTimer.singleShot(0, self._refresh_tweak_state)
 
     # ============================================================
     #  SELF-UPDATE (v10.3) — two manual entry points (the sidebar
@@ -2640,12 +2678,42 @@ class PulseApp(QMainWindow):
     #  MODAL PRESENTATION
     # ============================================================
     def _exec_dialog(self, dialog) -> int:
-        """exec() any Pulse dialog. The dialog itself (PulseDialog) sizes
-        to the shell body and paints its own scrim backdrop in showEvent —
-        see widgets._present_dialog — so the card grid / console underneath
-        is fully masked and a click on the backdrop dismisses the dialog,
-        with no separate scrim widget to coordinate here."""
-        return dialog.exec()
+        """exec() any Pulse dialog, then let it go.
+
+        The dialog itself (PulseDialog) sizes to the shell body and paints
+        its own scrim backdrop in showEvent — see widgets._present_dialog —
+        so the card grid / console underneath is fully masked and a click
+        on the backdrop dismisses the dialog, with no separate scrim widget
+        to coordinate here.
+
+        THE deleteLater IS THE POINT OF THIS BEING A FUNNEL. Every modal in
+        the app is built as `SomeDialog(self, ...)` — parented to the
+        window — and then dropped on the floor when the local goes out of
+        scope. A parented QWidget does not care: the C++ object belongs to
+        PulseApp and lives until PulseApp does, so each modal survived
+        until the app was closed.
+        Measured: ten Ctrl+K presses left ten live CommandPalettes holding
+        120 list rows and 970 child QObjects between them, and every one of
+        the twenty-two call sites through here had the same shape. The
+        palette is the app's primary navigation surface, so "dozens per
+        session" is the ordinary case rather than the pathological one.
+
+        Deferred deletion is what makes this safe to do here rather than at
+        each call site: deleteLater posts a DeferredDelete event for the
+        next event-loop turn, while every caller reads what it needs
+        (`palette.chosen_item`, `dialog.selected_ids`, `wizard.result`)
+        synchronously on the line after this returns. The object is fully
+        alive for all of them.
+
+        The one modal NOT covered is the playbook's run-mode dialog, which
+        deliberately calls dialog.exec() itself: it is wired to a runner's
+        signals that can still arrive after exec() returns, so its lifetime
+        belongs to the run rather than to this call.
+        """
+        try:
+            return dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     # ============================================================
     #  HUB NAVIGATION — a primary card's drill-down landing screen

@@ -3155,6 +3155,9 @@ class BrandMark(QWidget):
         self._accent2 = QColor(accent)
         self._breathe = breathe
         self._breath = 1.0
+        #: The quantised step last painted — see BREATH_STEPS. Starts at a
+        #: value no step can equal, so the first frame always paints.
+        self._breath_step = -1
         self.setFixedSize(size, size)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
@@ -3192,9 +3195,42 @@ class BrandMark(QWidget):
         if self._anim is not None:
             self._anim.stop()
 
+    #: How many distinct opacities the breath is allowed to paint.
+    #:
+    #: THE ANIMATION TICKS AT 60Hz; THE MARK DOES NOT NEED TO. Qt drives
+    #: every QVariantAnimation off one 60fps timer, and _on_frame used to
+    #: repaint on every one of those ticks — 60 radial gradients, 60
+    #: antialiased glyphs, and 60 repaints of every transparent ancestor
+    #: between this widget and the window, per second, forever, for a
+    #: decoration.
+    #:
+    #: Measured on a settled idle window: 3.26% of a CPU core, all of it
+    #: this one widget (pausing it alone took the process to 0.00%, with
+    #: the status dot still breathing). The docstring's claim that "a
+    #: repaint costs microseconds" was true of THIS widget and missed what
+    #: it costs everything underneath it.
+    #:
+    #: 24 steps over a 2600ms sine loop is ~18 repaints a second at the
+    #: fastest part of the curve and fewer at the ends, where the value
+    #: barely moves. For a slow opacity ease with no motion in it, that is
+    #: indistinguishable from 60 — film runs at 24 — and it is the same
+    #: quantisation the hover lift and the paint cache already use rather
+    #: than a new idea.
+    BREATH_STEPS = 24
+
     # -- painting ----------------------------------------------
     def _on_frame(self, value: float):
-        self._breath = float(value)
+        # Repaint only when the painted result would actually differ.
+        # Snapping _breath to the step (rather than keeping the raw value
+        # and merely skipping the update) is what makes a frame a pure
+        # function of the step — the same input always paints the same
+        # pixels, which is what a pixmap cache would need if this ever
+        # wants one.
+        step = round(float(value) * self.BREATH_STEPS)
+        if step == self._breath_step:
+            return
+        self._breath_step = step
+        self._breath = step / self.BREATH_STEPS
         self.update()
 
     def _pen(self):

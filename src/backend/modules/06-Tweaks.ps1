@@ -17,13 +17,36 @@
 # ============================================================
 #  DATA-DRIVEN TWEAK ENGINE
 # ============================================================
-function Test-TweakAlreadyOn {
-    param([hashtable]$Tweak)
+function Test-TweakInState {
+    <# Is every entry of this tweak already sitting at the value the given
+       direction would write?
+
+       BOTH DIRECTIONS, because the engine drives both and only one of them
+       used to be asked. Test-TweakAlreadyOn existed and was consulted for
+       "On" alone, so re-applying an applied tweak short-circuited with
+       "already applied" while re-reverting a reverted one walked the whole
+       write path again. Harmless in effect - the values written are the
+       ones already there, and the snapshot layer is first-write-wins - but
+       it reported a no-op as work, which is the half of idempotence a user
+       can actually see. #>
+    param(
+        [Parameter(Mandatory)][hashtable]$Tweak,
+        [ValidateSet("On","Off")][string]$State = "On"
+    )
     foreach ($E in $Tweak.Entries) {
+        $Wanted = if ($State -eq "On") { $E.OnValue } else { $E.OffValue }
         $Current = Get-RegValue -Path $E.Path -Name $E.Name
-        if ("$Current" -ne "$($E.OnValue)") { return $false }
+        if ("$Current" -ne "$Wanted") { return $false }
     }
     return $true
+}
+
+function Test-TweakAlreadyOn {
+    <# Back-compat shim for the original name, which read only one
+       direction. Kept because it is the name the console menus and any
+       out-of-tree caller know. #>
+    param([hashtable]$Tweak)
+    return (Test-TweakInState -Tweak $Tweak -State "On")
 }
 
 function Invoke-Tweak {
@@ -34,8 +57,11 @@ function Invoke-Tweak {
 
     Write-SectionHeader $Tweak.Description
 
-    if ($State -eq "On" -and (Test-TweakAlreadyOn -Tweak $Tweak)) {
-        Write-AlreadyOK "$($Tweak.Key) is already applied."
+    # SYMMETRICAL, because the engine is: a Revert* task is this same
+    # function with State="Off", and only the "On" side was ever asked.
+    if (Test-TweakInState -Tweak $Tweak -State $State) {
+        $Already = if ($State -eq "On") { "already applied" } else { "already reverted" }
+        Write-AlreadyOK "$($Tweak.Key) is $Already."
         return
     }
 
@@ -47,7 +73,11 @@ function Invoke-Tweak {
             $Value = if ($State -eq "On") { $E.OnValue } else { $E.OffValue }
             Set-RegValue -Path $E.Path -Name $E.Name -Value $Value -Type $E.Type
         }
-        Write-Success "$($Tweak.Key) applied successfully."
+        # The direction, not a fixed word: this same line printed
+        # "DarkMode applied successfully." while REVERTING Dark Mode,
+        # because the message was written when only one direction existed.
+        $Verb = if ($State -eq "On") { "applied" } else { "reverted" }
+        Write-Success "$($Tweak.Key) $Verb successfully."
     } | Out-Null
 
     # Theme-affecting tweaks (Dark/Light) need the shell nudged or the change

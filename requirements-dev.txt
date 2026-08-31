@@ -12,3 +12,16 @@ pyinstaller>=6.0
 # The window tests need a REAL top-level window (they send live Win32
 # messages), so they are skipped under QT_QPA_PLATFORM=offscreen.
 pytest>=8.0
+
+# Setup wizard artwork: tools/make_installer_art.py renders the banner and
+# header mark from assets/pulse.ico, and tests/test_packaging.py reads them
+# back to check each file is the size its name claims and that the mark
+# still carries alpha.
+#
+# DEV-ONLY, DELIBERATELY. Nothing in src/ imports PIL — the images are
+# built once and committed, so the shipped app never carries Pillow. It is
+# listed here rather than left implicit because it was available on the
+# author's machine only as a dependency of an unrelated package, which is
+# exactly the kind of accident that passes locally and fails on a clean
+# runner.
+Pillow>=10.0

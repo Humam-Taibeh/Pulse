@@ -19,6 +19,127 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.9.2] — 2026-08-31
+
+A modern Setup wizard, and four defects that only a long session would
+have shown you.
+
+The installer stopped shipping stock Inno clipart — which it had been
+doing by omission rather than by choice, since Inno supplies its own when
+you name none. The other four are the kind that pass every test: a state
+badge that could report the world as it was before your click, a modal
+that was never deleted, a revert that announced it had applied, and an
+apply-direction idempotence check that was never asked in reverse.
+
+### Fixed — a card could report the state it had BEFORE the action
+- **A state refresh requested while one was already running was dropped,
+  not queued.** `_refresh_tweak_state` returned early when a probe was in
+  flight, which reads as harmless de-duplication and was not: both callers
+  that matter fire 400ms after a task ends, and a probe takes about a
+  second (measured: 0.91-0.99s for `GetTweakState`). Any task finishing
+  within roughly a second of a previous refresh therefore lost its own
+  refresh permanently, and the card kept its pre-action badge until some
+  later, unrelated action happened to schedule another probe — "not
+  applied" sitting under a tweak that had just succeeded. The likeliest
+  ways to hit it were also the most ordinary: two quick tweaks in a row, or
+  a first action taken while the startup probe was still running. A
+  pending request is now remembered and served when the probe in flight
+  finishes.
+
+### Fixed — every modal the shell opened lived until the app quit
+- **No modal was ever deleted.** Each one is built as `SomeDialog(self,
+  …)` — parented to the window — and dropped when the local goes out of
+  scope; the C++ object belongs to `PulseApp` and outlives every one of
+  them. Measured: ten Ctrl+K presses left ten live `CommandPalette`s
+  holding 120 list rows and 970 child QObjects between them, and all
+  twenty-two call sites through `_exec_dialog` had the same shape. The
+  funnel now deletes what it showed. Deferred deletion is what makes that
+  safe in one place: every caller reads its result (`chosen_item`,
+  `selected_ids`) synchronously on the next line, before the event loop
+  turns. The playbook's run-mode dialog is deliberately exempt — it calls
+  `exec()` itself because its lifetime belongs to the run, not the call.
+
+### Fixed — reverting a tweak announced that it had applied one
+- **`Invoke-Tweak` printed "`<Key>` applied successfully" in both
+  directions**, so reverting Dark Mode wrote "DarkMode applied
+  successfully" into the live console. The message now follows the
+  direction.
+- **Only the apply direction was asked whether it had anything to do.**
+  `Test-TweakAlreadyOn` was consulted for `State="On"` alone, so
+  re-reverting an already-reverted tweak walked the whole write path again
+  and reported success for a no-op. The end state was never wrong — the
+  values written are the ones already there, and the snapshot layer is
+  first-write-wins — but it was the half of idempotence a user can see.
+  `Test-TweakInState` now answers for either direction; the original
+  single-direction helper is kept as a shim for the console menus.
+
+### Changed — the idle brand mark repaints at the rate it needs
+- `BrandMark` repainted on every one of Qt's 60Hz animation ticks, which
+  also repainted every transparent ancestor between it and the window.
+  Quantising the breath to 24 steps takes it to ~19 repaints a second —
+  474/s against 640/s across the whole window, a 27% reduction — with no
+  visible difference in a 2.6s sine ease. Idle CPU is directionally better
+  (median 3.67% of a core against 4.14%, n=5) but that difference sits
+  inside this machine's measurement noise, so it is reported as a paint
+  reduction rather than a CPU win. See the note in the code: most of the
+  remaining idle cost is the 60Hz animation machinery itself, not painting.
+
+### Changed — the Setup wizard stopped looking like 2009
+- **The stock Inno artwork was never removed, because there was nothing to
+  remove.** `pulse.iss` set neither `WizardImageFile` nor
+  `WizardSmallImageFile`, and Inno does not default to "no image" — with
+  `WizardStyle=modern` it supplies its own teal abstract graphic. Every
+  Pulse installer up to 10.9.1 therefore shipped stock Inno clipart *by
+  omission*. Both directives are now set, so the artwork is overridden
+  rather than inherited.
+- **Real dark mode, following the user's Windows setting.**
+  `WizardStyle=modern dynamic windows11`. Inno 6.6 added native dark mode
+  and custom styles; 6.7.3 is what this builds against. `dynamic` rather
+  than forced `dark` on purpose: Pulse's own UI defaults to dark and offers
+  a toggle, so an installer that hard-forced dark would be the one surface
+  in the product ignoring the same system preference the app respects.
+  `windows11` supplies a deliberate light counterpart, and is what themes
+  the controls — the licence memo's border, the tasks checkboxes, the
+  buttons.
+- **Pulse's own mark, at every DPI.** A dark sidebar banner (star, wordmark,
+  accent hairline) and a transparent header mark, rendered at five scales
+  each from 100% to 200% so Inno never has to upscale. Generated by the new
+  `tools/make_installer_art.py` from `assets/pulse.ico` — the real brand
+  asset, matted off its tile, never redrawn. The header mark is PNG with
+  alpha precisely so ONE file serves both appearances: it sits directly on
+  a page that is off-white in light mode and near-black in dark, and
+  anything with a background of its own would show as a rectangle in one of
+  them.
+- **One page fewer.** `DisableReadyPage=yes`. The Ready page recites the
+  user's own choices back one screen after they made them; with a single
+  optional task there is nothing on it they have not just seen. The flow is
+  now Licence → Destination → Tasks → Install → Finished.
+- Verified by compiling throwaway light and dark previews and driving them
+  through every page. Not asserted from the source alone: the source says
+  what was asked for, and a screenshot says what Windows actually drew.
+
+### Fixed — a build-only dependency that was only ever there by accident
+- `Pillow` is now declared in `requirements-dev.txt`. The new wizard-art
+  tool needs it, and so do the packaging tests that read each image back to
+  check it is the size its name claims and that the header mark still
+  carries alpha. It was present on the author's machine only as a
+  dependency of an unrelated package — the exact shape of a thing that
+  passes locally and fails on a clean runner.
+
+### Added — guards for the wizard's appearance
+- The stock artwork cannot come back by deletion: both image directives
+  must be set, non-blank, and must not point at a `compiler:` bitmap.
+- Every image `pulse.iss` names must exist, and its pixel size must match
+  the size in its filename — a correctly-named wrong-sized file would
+  silently reintroduce the upscaling the per-DPI set exists to avoid.
+- The header mark must be a PNG with genuinely transparent pixels.
+- `WizardStyle` must stay `dynamic` (never forced `dark`), no `[Setup]`
+  directive may be written twice, and `WizardResizable` — dropped in Inno
+  6.7, a no-op on every version before it, and still silently accepted by
+  the compiler — must not be resurrected.
+
+---
+
 ## [10.9.1] — 2026-08-30
 
 The build that actually contains what 10.9.0 announced.

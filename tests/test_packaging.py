@@ -370,6 +370,145 @@ def test_signing_is_wired_but_inert(iss):
 
 
 # ============================================================
+#  THE WIZARD'S APPEARANCE
+# ============================================================
+def test_the_stock_inno_artwork_is_overridden(iss):
+    """THERE WAS NOTHING HERE TO DELETE, WHICH IS WHY IT SHIPPED.
+
+    Inno does not default to "no image": with WizardStyle=modern it
+    supplies its own teal abstract graphic, and pulse.iss named no
+    replacement, so every installer up to 10.9.1 carried stock Inno
+    artwork by omission. The fix is an override, and an override is a line
+    that can be deleted again by anyone tidying up — hence this test.
+    """
+    for directive in ("WizardImageFile", "WizardSmallImageFile"):
+        match = re.search(rf"^{directive}=(.+)$", iss, re.MULTILINE)
+        assert match, f"{directive} is not set — Setup is back on Inno's stock artwork"
+        assert match.group(1).strip(), (
+            f"{directive} is blank; the wizard shows no mark at all")
+        assert "compiler:" not in match.group(1), (
+            f"{directive} points back at a compiler-bundled bitmap")
+
+
+def test_every_wizard_image_the_installer_names_exists(iss):
+    """A missing file here fails the BUILD, not the tests — but it fails it
+    minutes in, after PyInstaller has run. Catching it in the suite costs
+    nothing and names the file."""
+    named = []
+    for directive in ("WizardImageFile", "WizardSmallImageFile"):
+        match = re.search(rf"^{directive}=(.+)$", iss, re.MULTILINE)
+        named += [p.strip() for p in match.group(1).split(",") if p.strip()]
+    assert len(named) >= 4, f"only {len(named)} wizard image(s) declared"
+    missing = [p for p in named
+               if not os.path.isfile(os.path.join(_ROOT, "installer", *p.split("\\")))]
+    assert not missing, f"pulse.iss names wizard images that do not exist: {missing}"
+
+
+def test_the_wizard_art_is_rendered_at_every_dpi_it_claims(iss):
+    """ONE FILE PER DPI, and the filenames have to be the sizes.
+
+    Inno picks the nearest entry from the list and scales it; handing it a
+    single 164px bitmap on a 200% display is exactly the soft, fringed
+    result the modern style exists to avoid. The names encode the size, so
+    a file whose CONTENT stopped matching its NAME would send Inno a
+    correctly-named wrong-sized image and silently reintroduce the scaling.
+    """
+    from PIL import Image
+
+    checked = 0
+    for directive in ("WizardImageFile", "WizardSmallImageFile"):
+        match = re.search(rf"^{directive}=(.+)$", iss, re.MULTILINE)
+        paths = [p.strip() for p in match.group(1).split(",") if p.strip()]
+        assert len(paths) >= 4, (
+            f"{directive} declares {len(paths)} size(s); the HiDPI set is gone")
+        for rel in paths:
+            full = os.path.join(_ROOT, "installer", *rel.split("\\"))
+            claimed = re.search(r"-(\d+)x(\d+)\.(bmp|png)$", rel)
+            assert claimed, f"{rel} does not encode its size in its name"
+            with Image.open(full) as im:
+                assert im.size == (int(claimed.group(1)), int(claimed.group(2))), (
+                    f"{rel} is {im.size}, not the size its name claims")
+            checked += 1
+    assert checked >= 8
+
+
+def test_the_header_mark_keeps_its_transparency(iss):
+    """ONE ASSET, TWO GROUNDS. The small mark sits directly on the wizard
+    page, which is off-white under the windows11 style's light half and
+    near-black under its dark half. A flattened copy would show as a
+    rectangle in whichever one it was not built for."""
+    from PIL import Image
+
+    match = re.search(r"^WizardSmallImageFile=(.+)$", iss, re.MULTILINE)
+    for rel in [p.strip() for p in match.group(1).split(",") if p.strip()]:
+        assert rel.lower().endswith(".png"), (
+            f"the header mark {rel} is not a PNG, so it cannot carry alpha")
+        with Image.open(os.path.join(_ROOT, "installer", *rel.split("\\"))) as im:
+            assert im.mode == "RGBA", f"{rel} has no alpha channel"
+            alpha = im.getchannel("A")
+            assert alpha.getextrema()[0] == 0, (
+                f"{rel} has no fully transparent pixels — it is a plate, not "
+                "a mark, and will show as a rectangle on one of the two "
+                "backgrounds")
+
+
+def test_the_wizard_follows_the_users_windows_theme(iss):
+    """`dynamic` rather than `dark`. Pulse's own UI defaults to dark and
+    offers a toggle; an installer that hard-forced dark would be the one
+    surface in the product ignoring the same system preference the app
+    respects. `windows11` supplies the light half so both appearances are
+    deliberate."""
+    match = re.search(r"^WizardStyle=(.+)$", iss, re.MULTILINE)
+    assert match, "WizardStyle is not set"
+    tokens = match.group(1).lower().split()
+    assert "modern" in tokens, "the wizard is back on the classic layout"
+    assert "dynamic" in tokens, (
+        f"WizardStyle is {tokens} — it no longer follows the system theme")
+    assert "dark" not in tokens, (
+        "forced dark ignores the user's Windows setting, and skips the "
+        "DynamicDark directives entirely")
+    assert "windows11" in tokens
+
+
+def test_the_flow_has_no_page_that_only_recites(iss):
+    """The Ready page reads the user's own choices back to them one screen
+    after they made them. With a single optional task there is nothing on
+    it they have not just seen."""
+    assert re.search(r"^DisableReadyPage=yes", iss, re.MULTILINE)
+    assert re.search(r"^DisableProgramGroupPage=yes", iss, re.MULTILINE)
+    # ...but never the pages that carry a real decision.
+    for kept in ("DisableDirPage", "DisableFinishedPage", "DisableWelcomePage"):
+        assert not re.search(rf"^{kept}=yes", iss, re.MULTILINE), (
+            f"{kept}=yes removes a page the user actually acts on")
+
+
+def test_no_directive_is_written_twice(iss):
+    """A [Setup] key set twice is one edit away from the two copies
+    disagreeing, and Inno takes the last one silently."""
+    seen: dict[str, int] = {}
+    body = iss[iss.index("[Setup]"):]
+    body = body[:body.index("\n[")]
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        seen[key] = seen.get(key, 0) + 1
+    dupes = {k: n for k, n in seen.items() if n > 1}
+    assert not dupes, f"[Setup] directives set more than once: {dupes}"
+
+
+def test_a_dropped_directive_is_not_resurrected(iss):
+    """WizardResizable was dropped in Inno 6.7 — the wizard is no longer
+    resizable by anyone — and before that it defaulted to `no`. Writing it
+    would be a line that has never once changed a build, and the compiler
+    still accepts it, so nothing else would ever say so."""
+    assert not re.search(r"^WizardResizable=", iss, re.MULTILINE), (
+        "WizardResizable is set; it has been a no-op on every version that "
+        "ever read this file")
+
+
+# ============================================================
 #  THE BUILD SCRIPT
 # ============================================================
 def test_the_build_script_emits_checksums(build_script):

@@ -274,6 +274,93 @@ class TestNothingStartsAfterClose:
             "a closed window started the applied-state probe — the thread "
             "outlives the window and aborts the process when it is deleted")
 
+    def test_a_refresh_asked_for_mid_probe_is_served_not_dropped(
+            self, fresh_window, qapp, monkeypatch):
+        """A BADGE THAT REPORTS THE STATE BEFORE THE ACTION.
+
+        Two call sites schedule a state refresh 400ms after a task ends,
+        and the probe itself takes about a second (measured: 0.91-0.99s for
+        GetTweakState). The guard that skipped a refresh while one was
+        already in flight therefore did not de-duplicate anything — it
+        DROPPED the refresh belonging to any task that finished within
+        roughly a second of a previous one, and nothing re-ran it.
+
+        The card then kept its pre-action badge until some later, unrelated
+        action happened to schedule another probe: "not applied" sitting
+        under a tweak that had just succeeded. The likeliest way to hit it
+        was also the most ordinary — two quick tweaks in a row, or a first
+        action taken while the startup probe was still running.
+        """
+        from PySide6.QtCore import QThread
+        from frontend import main as M
+
+        launched: list[str] = []
+
+        class CountingTask(M.PowerShellTask):
+            def __init__(self, *a, **kw):
+                launched.append(a[1] if len(a) > 1 else kw.get("task"))
+                super().__init__(*a, **kw)
+
+            def run(self):               # never spawn a real powershell
+                pass
+
+        monkeypatch.setattr(M, "PowerShellTask", CountingTask)
+        win = fresh_window()
+
+        # A PROBE IN FLIGHT, WITHOUT ONE ACTUALLY RUNNING. The guard reads
+        # the handle, so an unstarted QThread is a faithful stand-in — and
+        # starting a real one is a trap: the stub worker above never emits
+        # finished/failed/cancelled, so nothing ever calls thread.quit()
+        # and the thread's event loop runs forever. That does not fail this
+        # test; it hangs the NEXT one, at teardown, when the window waits
+        # for a thread that will never stop.
+        sentinel = QThread(win)
+        win._probe_thread = sentinel
+        win._probe_worker = None
+        win._probe_pending = False
+        launched.clear()
+
+        try:
+            # The refresh a finishing task schedules, arriving mid-probe.
+            win._refresh_tweak_state()
+            qapp.processEvents()
+            assert not launched, "a second probe ran concurrently"
+            assert win._probe_pending, (
+                "the refresh was discarded rather than remembered")
+
+            # ...and now the in-flight probe finishes.
+            win._probe_thread = None      # what the real handler sees
+            win._on_probe_thread_finished()
+            settle(qapp, 60)
+            assert len(launched) == 1, (
+                "the pending refresh never ran — the badge keeps its "
+                "pre-action value indefinitely")
+        finally:
+            # Settle whatever the re-armed refresh started, for the same
+            # reason the sentinel exists.
+            for thread in (win._probe_thread, sentinel):
+                if thread is not None:
+                    thread.quit()
+                    thread.wait(3000)
+            win._probe_thread = None
+            win._probe_worker = None
+            win._probe_pending = False
+
+    def test_a_pending_refresh_dies_with_the_window(self, fresh_window, qapp):
+        """The coalescing must not become a way to start a probe on a
+        window that is closing: _on_probe_thread_finished fires during
+        teardown, which is exactly when the pending flag is most likely
+        set."""
+        win = fresh_window()
+        win._probe_pending = True
+        win.close()
+        qapp.processEvents()
+        win._on_probe_thread_finished()
+        settle(qapp, 60)
+        assert win._probe_thread is None, (
+            "a closing window started the probe its pending flag had "
+            "queued — the thread outlives the window")
+
     def test_a_closed_window_refuses_to_start_the_update_check(
             self, fresh_window, qapp):
         win = fresh_window()
@@ -307,3 +394,118 @@ class TestNothingStartsAfterClose:
         assert not alive, (
             f"{len(alive)} thread(s) still running after close — deleting "
             "this window would abort the process")
+
+
+# ============================================================
+#  MODAL LIFETIME — every dialog the shell opens, and lets go
+# ============================================================
+class TestModalsAreReleased:
+    """A PARENTED QDialog THAT NOBODY DELETES LIVES AS LONG AS THE WINDOW.
+
+    Every modal in the app is built as `SomeDialog(self, ...)` and dropped
+    on the floor once exec() returns. The Python reference goes; the C++
+    object does not, because it is a child of PulseApp. Measured before the
+    fix: ten Ctrl+K presses left ten live CommandPalettes holding 120 list
+    rows and 970 child QObjects between them, and all twenty-two call sites
+    through _exec_dialog had the same shape.
+
+    It is a leak of exactly the kind that never shows up in a test run and
+    only bites the user who keeps the app open all afternoon — which, for a
+    tool whose whole premise is running a sequence of maintenance tasks, is
+    the normal way to use it.
+    """
+
+    @staticmethod
+    def _probe_dialog(window):
+        """A dialog whose exec() returns without a nested event loop.
+
+        Patching QDialog.exec globally instead deadlocks the suite: the
+        shell opens dialogs during construction and teardown, and a
+        show/reject stand-in re-enters them.
+        """
+        from PySide6.QtWidgets import QDialog
+
+        class Probe(QDialog):
+            def exec(self):
+                return QDialog.DialogCode.Rejected
+
+        return Probe(window)
+
+    @staticmethod
+    def _drain(qapp):
+        from PySide6.QtCore import QEvent
+        for _ in range(3):
+            qapp.processEvents()
+            qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            qapp.processEvents()
+
+    def test_exec_dialog_destroys_what_it_showed(self, window, qapp):
+        import shiboken6
+
+        dialog = self._probe_dialog(window)
+        assert shiboken6.isValid(dialog)
+        window._exec_dialog(dialog)
+        self._drain(qapp)
+        assert not shiboken6.isValid(dialog), (
+            "the modal outlived its own exec() — it is parented to the "
+            "window and nothing deletes it, so it lives until the app quits")
+
+    def test_the_caller_can_still_read_the_result(self, window, qapp):
+        """deleteLater is DEFERRED, and the callers depend on that: they
+        read `palette.chosen_item` / `dialog.selected_ids` on the line
+        after _exec_dialog returns. A direct delete here would turn every
+        one of those into a use-after-free."""
+        import shiboken6
+
+        dialog = self._probe_dialog(window)
+        dialog.chosen_item = {"title": "still here"}
+        window._exec_dialog(dialog)
+        # Exactly what a caller does: read before yielding to the loop.
+        assert shiboken6.isValid(dialog), (
+            "the dialog was destroyed synchronously; every call site that "
+            "reads a result off it is now a use-after-free")
+        assert dialog.chosen_item["title"] == "still here"
+
+    def test_repeated_opens_do_not_accumulate(self, window, qapp):
+        """The shape the leak actually took: the palette is the app's
+        primary navigation surface, so it is opened over and over."""
+        import gc
+
+        from frontend import widgets as W
+
+        def live():
+            out = 0
+            for obj in gc.get_objects():
+                if isinstance(obj, W.CommandPalette):
+                    try:
+                        obj.objectName()
+                        out += 1
+                    except RuntimeError:
+                        pass
+            return out
+
+        from PySide6.QtWidgets import QDialog
+
+        class _NonBlocking(W.CommandPalette):
+            """exec() without the nested event loop.
+
+            The real one blocks until the dialog closes, and nothing in a
+            headless test ever closes it — an earlier version of this test
+            called it and hung the whole suite, which is a far worse defect
+            than the leak it was written to catch. Subclassed rather than
+            monkeypatched on QDialog: the shell opens dialogs of its own
+            during teardown and a global stand-in re-enters them.
+            """
+
+            def exec(self):     # noqa: A003 - Qt's name
+                return QDialog.DialogCode.Rejected
+
+        self._drain(qapp)
+        before = live()
+        for _ in range(5):
+            window._exec_dialog(_NonBlocking(window, window.theme.t, []))
+            self._drain(qapp)
+        after = live()
+        assert after <= before, (
+            f"{after - before} CommandPalette(s) survived five open/close "
+            "cycles")
