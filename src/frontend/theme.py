@@ -29,9 +29,10 @@ import ctypes
 import math
 import sys
 
-from PySide6.QtCore import QObject, QRect, Signal
+from PySide6.QtCore import QObject, QRect, Qt, Signal
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontDatabase, QGradient, QLinearGradient,
+    QBrush, QColor, QFont, QFontDatabase, QGradient, QGuiApplication, QIcon,
+    QLinearGradient, QPainter, QPixmap,
 )
 
 # ============================================================
@@ -317,6 +318,25 @@ RADIUS = {
 PLAQUE_SIZE = 36
 CONTROL_H = 36
 
+#: THE SIDEBAR'S LEFT RULE — how far in from the rail's own padding every
+#: leading element starts.
+#:
+#: Three things have to land on it and all three used to spell it `12`:
+#: the search doorway's text inset (sidebar_search_qss), the painted icon
+#: well of a nav entry (widgets.NavButton._PLAQUE_X, which nav_button_qss
+#: then adds the well and a gap to for its own text) and the "MODULES"
+#: section label above them. The label was the one that drifted — it sat
+#: at 10, so the rail's strongest vertical edge (a column of filled 36px
+#: wells) and the label naming that column disagreed by two pixels, which
+#: is exactly the amount that reads as sloppiness rather than as a
+#: decision.
+#:
+#: Not a SPACE step, and not PAD: SPACE measures the gap BETWEEN things
+#: and PAD the air INSIDE a surface, while this is an alignment rule that
+#: three unrelated widgets have to share. Enforced by
+#: test_layout_contract.
+SIDEBAR_GUTTER = 12
+
 #: The icon well's corner, and the one place a surface takes the SMALL
 #: tier. RADIUS['plaque'] (12) is the tier for things you OPERATE — nav
 #: entries, list rows, the card itself. A 36px well holding a 20px glyph is
@@ -410,16 +430,50 @@ TYPE = {
     "caption": 11,   # section band headers, secondary labels
     "body":    12,   # default UI text, card descriptions, buttons
     "label":   13,   # card titles, nav entries, list rows
+    # v15.2 — THE THREE STEPS `_LABEL_ROLES` WAS KEEPING TO ITSELF.
+    #
+    # The label-role table shipped its sizes as bare strings ("22px",
+    # "16px", "14px"), so three of the app's most prominent type sizes —
+    # a page title, every card title, the title-bar wordmark — were
+    # hand-picked numbers that no scale had ever seen. The enforcement
+    # test could not see them either: it scans for `font-size: NNpx` in
+    # QSS, and these were interpolated in at run time.
+    #
+    # They are added rather than snapped onto a neighbouring step for the
+    # reason the scale states — a step the app genuinely needs gets added
+    # WITH ITS REASON — and because snapping them is not free: `card` is
+    # the size 6 card titles render at and `title` the size a page header
+    # renders at, and moving either reflows text that is measured
+    # elsewhere (ClampedLabel's line budget, the masthead tagline's elide
+    # point). The ramp is finer at this end than at the top, which is
+    # correct: 22 -> 26 -> 34 -> 40 are display sizes where a step has to
+    # be large to read as a step at all, while 12 -> 16 is where the app
+    # does almost all of its reading.
+    "brand":   14,   # the title-bar wordmark, and only that
     "lead":    15,   # sub-headings, dialog section leads
-    "glyph":   18,   # chevrons and inline directional marks
-    # v15 — THE STAT-TILE VALUE, and the one step between `glyph` and the
+    "card":    16,   # a card's own title
+    # 18 — THE SMALLEST HEADING STEP. Renamed from `glyph` in v15.2, which
+    # is a rename the scale forces rather than a preference: TYPE allows
+    # exactly one name per size (test_the_type_scale_has_no_redundant_
+    # steps), and 17 dialog headings were already rendering at this size
+    # through _LABEL_ROLES["dialog"] while the step was named for the two
+    # chevrons that also use it. Named for the dominant use.
+    #
+    # The two directional marks keep it deliberately: a drill-in '>' is
+    # sized to the heading it points away from, not to the body text it
+    # sits in, and one that renders smaller than its own title reads as a
+    # mistake. (The ICON scale is for FLUENT GLYPHS IN A WELL — see the
+    # note on TH.ICON; these two are text characters in a QLabel.)
+    "heading": 18,
+    "title":   22,   # a page header, and the largest non-display step
+    # v15 — THE STAT-TILE VALUE, and the one step between `title` and the
     # dashboard hero. A health tile is a figure with a label under it: the
     # figure has to out-weigh every other number on the page at a glance
     # and must NOT compete with the masthead wordmark, which is the view's
     # single hero (display, 34). 18 reads as body copy in a tile that size;
     # 34 makes four of them shout over the thing they sit beneath. Added
     # rather than reused because no existing step is in the gap — the ramp
-    # jumps 18 -> 34, which is exactly the hole a stat tile falls into.
+    # jumps 22 -> 34, which is exactly the hole a stat tile falls into.
     "metric":  26,
     "display": 34,   # the dashboard's hero heading
     "hero":    40,   # the empty-state glyph inside a dialog
@@ -876,6 +930,52 @@ def glyph(name: str) -> tuple[str, str]:
     if fluent and has_icon_font():
         return (fluent, True)  # type: ignore[return-value]
     return (emoji, False)      # type: ignore[return-value]
+
+
+def glyph_icon(name: str, px: int, color: str) -> QIcon | None:
+    """A glyph as a QIcon — for the one control that carries a Fluent mark
+    NEXT TO ordinary text, and returns None when it cannot.
+
+    Everywhere else in the app an icon is either PAINTED (widgets.NavButton,
+    widgets.IconPlaque) or IS the entire control, in which case the glyph is
+    simply the button's text and icon_font() its font (widgets.StatusRail).
+    The sidebar's search doorway can do neither: one QWidget has one font, so
+    putting the codepoint in the label would render "Search everything…" in
+    the icon family too. That is why it shipped wearing a literal colour
+    emoji — the only one left in the app's persistent chrome, at the top of
+    the rail, next to fourteen monochrome line icons.
+
+    RENDERED AT THE SCREEN'S DEVICE PIXEL RATIO. A 15px pixmap handed to a
+    150% display is upscaled by Qt, and a soft magnifier beside crisp text
+    is a worse defect than the emoji was. The pixmap therefore carries its
+    own ratio, and because this is called from a theme switch — not from a
+    paint or a timer — regenerating it is free.
+
+    None when the OS icon font is absent (non-Windows, stripped Win10), so
+    the caller keeps the emoji fallback it has always had rather than
+    rendering nothing.
+    """
+    char, fluent = glyph(name)
+    if not fluent:
+        return None
+    font = icon_font(px)
+    if font is None:
+        return None
+    screen = QGuiApplication.primaryScreen()
+    dpr = float(screen.devicePixelRatio()) if screen is not None else 1.0
+    pixmap = QPixmap(round(px * dpr), round(px * dpr))
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    painter.setFont(font)
+    painter.setPen(QColor(color))
+    # The pixmap's own rect is in DEVICE pixels; the painter works in
+    # logical ones once the ratio is set, so the box has to be the logical
+    # square or the glyph centres against a rect twice its size.
+    painter.drawText(QRect(0, 0, px, px), Qt.AlignmentFlag.AlignCenter, char)
+    painter.end()
+    return QIcon(pixmap)
 
 
 # ============================================================
@@ -1554,9 +1654,10 @@ def nav_button_qss(t: dict) -> str:
             border-radius: {RADIUS['plaque']}px;
             color: {t['text_muted']};
             font-size: {TYPE['label']}px; font-weight: 500;
-            /* padding clears the painted icon plaque (12px inset + the
-               PLAQUE_SIZE well + an 8px gap) — see NavButton.paintEvent */
-            text-align: left; padding-left: {12 + PLAQUE_SIZE + SPACE['sm']}px;
+            /* padding clears the painted icon plaque (the rail gutter +
+               the PLAQUE_SIZE well + an 8px gap) — see NavButton.paintEvent */
+            text-align: left;
+            padding-left: {SIDEBAR_GUTTER + PLAQUE_SIZE + SPACE['sm']}px;
         }}
         QPushButton:hover {{
             background-color: {t['card_hover']};
@@ -1631,65 +1732,36 @@ def card_qss(t: dict, accent: str, danger: bool = False,
 
 
 def icon_plaque_qss(t: dict, accent: str, featured: bool = False) -> str:
-    """The v7 card icon container — a rounded, accent-tinted plaque holding
-    one monochrome Fluent glyph (or its emoji fallback). This is the single
-    biggest 'premium app' cue: instead of a bare emoji floating in the card,
-    every icon sits in a consistent, color-coordinated well.
+    """The icon well's GLYPH COLOUR, and — since v10.6 — nothing else.
 
-    v8.1 unification: EVERY card in EVERY section now shares the exact same
-    plaque finish — identical tint, 1px accent line and monochrome glyph
-    color — so the icon grid reads as one system page to page. The featured
-    hero card earns its lift from its squircle body + Aurora lit edge, NOT a
-    louder icon well, which previously made its glyph look bigger/brighter
-    than its siblings and broke cross-category consistency. `featured` is
-    still accepted for call-site compatibility but no longer alters the
-    plaque.
+    THE HISTORY MATTERS HERE, because this function's name still promises a
+    plaque and it no longer styles one. Through v12 it declared the whole
+    element in QSS: a soft vertical accent gradient filling the well, a 1px
+    accent hairline around it, and the glyph painted in the module's own
+    colour. v13 handed the well to a painter (widgets.IconPlaque) so it
+    could carry three things QSS cannot put on a QLabel — an ambient halo
+    bleeding outside the well, a second hairline inside the first, and a lit
+    top rim.
 
-    v9 "Spectrum": the plaque now carries REAL color at rest. Where v8.1
-    deliberately went fully monochrome (a soft text_soft glyph in a whisper
-    tint), v9 fills the well with a soft vertical accent gradient, firms its
-    hairline, and — the key move — paints the glyph in the module's own
-    accent. Every card and every sidebar entry therefore reads in its
-    module's color the instant the page loads, not only on hover, which is
-    what turns the old flat-gray grid into a vibrant, legible spectrum. The
-    tint stays low enough (≤0.24α) that the glyph, not the well, is the
-    focus, so the effect is jewel-like, never neon.
+    v10.6 then deleted all of it. That material was solved for a card grid
+    whose defining cue was COLOUR — seven module accents, each repeated on
+    every card inside its module — and once the palette collapsed to one
+    interactive accent (see the note on _DARK["module"]) four tinted rings
+    around a glyph on an otherwise empty canvas read as exactly that. The
+    well is now a single low-alpha NEUTRAL surface (`plaque_well`, painted
+    by IconPlaque and by NavButton), and the colour lives where it is not
+    repeated: on the glyph.
 
-    v12 SPLITS THE TINT PER MODE, because the two canvases work in opposite
-    directions and one pair of alphas cannot serve both. On obsidian the
-    tint DARKENS the well, pushing it away from the glyph and adding
-    contrast; on paper the very same tint LIGHTENS nothing — it drops a
-    colour wash between a white card and a dark ink glyph, and every point
-    of alpha subtracts from the thing the plaque exists to make legible.
-    Measured, light mode ran 3.46-3.70:1 in-plaque against dark's
-    4.64-6.80:1 — the whole mode about a third weaker, which is exactly the
-    washed-out quality the light renders showed.
+    So what is left is the glyph's colour, plus the two declarations that
+    keep a PAINTED QLabel from drawing over its own painter — an explicitly
+    transparent background and no border. Without those the label inherits
+    the card's sheet and paints a second, unstyled box on top of the well
+    (pinned by test_elevation.test_the_plaque_glyph_colour_is_all_that_is_
+    left_in_qss).
 
-    Dark keeps 0.24/0.13, the alphas its accents were solved against.
-    Light drops to 0.15/0.08, which lifts it to 3.89-4.05:1 while keeping
-    the well plainly tinted; below about 0.11 the gain flattens out and the
-    plaque stops reading as coloured at all, which would trade one mode's
-    weakness for another's.
-
-    v13 HANDS THE WELL TO THE PAINTER and keeps only the glyph here. The
-    plaque was a QSS rectangle: one flat gradient inside one flat 1px
-    border, sitting directly on the card with nothing between them. That is
-    a coloured box behind a glyph, and next to a Linear or Raycast icon
-    chip it reads exactly like one.
-
-    Three things a premium plaque has that QSS cannot express on a QLabel —
-    an ambient halo bleeding OUTSIDE the well, a second hairline INSIDE the
-    first, and a lit top rim on the well itself — are now painted by
-    widgets.IconPlaque, which composites the identical gradient underneath
-    them. The tint alphas therefore did not move (see plaque_tints): the
-    contrast solve above is still exactly what ships, and everything v13
-    adds lives at the plaque's EDGE, where it cannot subtract from the
-    glyph's legibility.
-
-    What stays in QSS is the glyph's own colour, plus an explicitly
-    transparent background and no border — without those two a QLabel
-    inherits the card's sheet and would paint a second, unstyled box on
-    top of everything the painter just did.
+    `featured` is still accepted for call-site compatibility and has not
+    altered the plaque since v8.1: the hero card earns its lift from its
+    squircle body and Aurora edge, not from a louder icon well.
     """
     return f"""
         QLabel {{
@@ -1698,60 +1770,6 @@ def icon_plaque_qss(t: dict, accent: str, featured: bool = False) -> str:
             color: {accent};
         }}
     """
-
-
-def plaque_tints(t: dict) -> tuple[float, float]:
-    """(top_alpha, bottom_alpha) of the accent wash filling an icon well.
-
-    The numbers and the reasoning behind them live in icon_plaque_qss,
-    which is where the contrast solve is documented; they are lifted into
-    their own function only because the well is painted now
-    (widgets.IconPlaque) while the glyph colour is still QSS, and the two
-    must not be able to drift apart.
-    """
-    return (0.15, 0.08) if t["name"] == "light" else (0.24, 0.13)
-
-
-#: Alpha of the accent hairline drawn ON the icon well's outer edge. The
-#: value the QSS border carried since v9; unchanged, so the plaque's
-#: perimeter weight is exactly what it was.
-PLAQUE_LINE = 0.42
-
-#: Alpha of the INNER hairline — a second line one pixel inside the first,
-#: white-tinted at the top and falling to nothing by the bottom.
-#:
-#: This is the single move that turns a coloured box into a machined
-#: micro-surface, and it is the same trick the cards themselves use one
-#: scale up (see sheen_alphas): a lit top rim tells the eye the object has
-#: a top FACE, and an object with a top face is an object rather than a
-#: region. At 42px the well is too small for a gradient to read, so it is
-#: spent as a single inset stroke instead.
-#:
-#: Split per mode on the same logic as every other edge weight in this
-#: file. On obsidian white is light and can be spent freely. On paper the
-#: well sits on a #FFFFFF card, so a white inner rim has nothing to
-#: brighten — light instead spends the budget on the accent's OWN hue at
-#: low alpha, which reads as the tint deepening toward the rim: a bevel,
-#: not a highlight.
-PLAQUE_INNER = {"dark": 0.20, "light": 0.16}
-
-#: (alpha, spread_px) of the soft accent bloom around the OUTSIDE of an
-#: icon well — "the module's colour is in the air around this glyph".
-#:
-#: Painted outside the well and never under the glyph, so it is contrast-
-#: neutral by construction: the in-plaque solve icon_plaque_qss documents
-#: measures the same before and after. Kept low enough that a grid of nine
-#: cards does not turn into nine coloured lamps; the halo is meant to be
-#: felt at a glance and not noticed when looked at directly.
-PLAQUE_HALO = {"dark": (0.13, 3), "light": (0.10, 3)}
-
-
-def plaque_halo(t: dict) -> tuple[float, int]:
-    return PLAQUE_HALO["light" if t["name"] == "light" else "dark"]
-
-
-def plaque_inner(t: dict) -> float:
-    return PLAQUE_INNER["light" if t["name"] == "light" else "dark"]
 
 
 def card_meta_pill_qss(t: dict, accent: str = "") -> str:
@@ -1867,7 +1885,7 @@ def card_chevron_qss(t: dict, accent: str) -> str:
     """The trailing '›' drill-in affordance on a hub/action card. Muted at
     rest; the card's own hover glow does the lighting, so this stays a quiet
     directional cue rather than a second competing accent."""
-    return (f"color: {t['text_faint']}; font-size: {TYPE['glyph']}px; font-weight: 400;"
+    return (f"color: {t['text_faint']}; font-size: {TYPE['heading']}px; font-weight: {WEIGHT['normal']};"
             "background: transparent; border: none;")
 
 
@@ -1906,7 +1924,7 @@ def sidebar_search_qss(t: dict) -> str:
             color: {t['text_faint']};
             border: 1px solid {t['panel_line']};
             border-radius: {RADIUS['control']}px;
-            padding: 0 12px;
+            padding: 0 {SIDEBAR_GUTTER}px;
             font-size: {TYPE['body']}px;
             text-align: left;
         }}
@@ -3560,29 +3578,67 @@ def dialog_go_qss(t: dict, accent: str) -> str:
 # The description roles are deliberately UNTOUCHED. The hierarchy is the
 # GAP between the two, and every point of weight added to the muted half
 # closes it again.
+#: A ROLE IS NOT A STEP, and this table is the mapping between them.
+#:
+#: TYPE says how big a thing is. This says what a thing IS — a card's
+#: title, a description under it, the wordmark in the title bar — and
+#: which step, weight and colour that role takes. Several roles legitimately
+#: land on one step (`body` and `desc` are the same size in different inks;
+#: `tagline` and `faint` likewise), which is the opposite of TYPE's own
+#: rule that one size carries one name: a step may not be duplicated, a
+#: role may share one.
+#:
+#: v15.2 ROUTES EVERY SIZE THROUGH TYPE, and the reason is that this table
+#: was a second type scale wearing a different coat. It shipped its sizes
+#: as bare strings, so `test_every_font_size_comes_off_the_type_scale`
+#: could not see them — that test scans source for `font-size: NNpx` and
+#: these were interpolated at run time — and three of them (22, 16, 14)
+#: existed nowhere in TYPE at all. Not one rendered size moves in this
+#: change; what moves is where the number comes from, which is the whole
+#: point of having a scale. Guarded now by
+#: test_layout_contract.test_every_label_role_lands_on_the_type_scale.
+#:
+#: TWO MAPPINGS LOOK WRONG AND ARE FAITHFUL — they are pre-existing drift
+#: this change makes VISIBLE rather than introduces, and neither can be
+#: corrected without moving pixels:
+#:   * role `body` takes step `label` (13), not step `body` (12). It is
+#:     the most-used role in the app (37 call sites).
+#:   * roles `body`/`desc`/`tagline` take WEIGHT["normal"] (400), which the
+#:     weight scale documents as being for glyphs and marks; WEIGHT names
+#:     `medium` (500) for body copy.
+#: Both are a deliberate hand-off, not an oversight: correcting either is a
+#: legibility decision with a re-measure attached, not a tidy-up.
 _LABEL_ROLES = {
-    "title":    ("22px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.5px;"),
+    "title":    (f"{TYPE['title']}px", WEIGHT["bold"], "text",
+                 "letter-spacing: -0.5px;"),
     # v10: a REAL dialog heading role. Every dialog used to build its
     # header as `label_qss(t, "card").replace("14px", "16px")` — but the
     # card role has been 16px since v7, so that replace matched nothing
     # and silently did nothing in all 8 call sites. Dialog titles have
     # been rendering at plain card-title size ever since; they now have
     # their own step above it.
-    "dialog":   ("18px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.3px;"),
-    "version":  ("11px", "500", "text_faint", ""),
-    "card":     ("16px", str(WEIGHT["bold"]), "text", "letter-spacing: -0.2px;"),
-    "body":     ("13px", "400", "text_muted", ""),
-    "desc":     ("13px", "400", "text_soft",  ""),
-    "tagline":  ("12px", "400", "text_muted", ""),
-    "status":   ("11px", "500", "text_muted", ""),
-    "faint":    ("12px", "400", "text_faint", ""),
+    "dialog":   (f"{TYPE['heading']}px", WEIGHT["bold"], "text",
+                 "letter-spacing: -0.3px;"),
+    # ("version" lived here until v15.2 with no call site anywhere in the
+    # app — 11px/500/text_faint, which is `status` in a different ink and
+    # `caption` one step up. The same rule that retired "hero", "value"
+    # and "meta" below: a role nothing asks for is not a role, it is a
+    # third answer waiting to be picked by accident.)
+    "card":     (f"{TYPE['card']}px", WEIGHT["bold"], "text",
+                 "letter-spacing: -0.2px;"),
+    "body":     (f"{TYPE['label']}px", WEIGHT["normal"], "text_muted", ""),
+    "desc":     (f"{TYPE['label']}px", WEIGHT["normal"], "text_soft",  ""),
+    "tagline":  (f"{TYPE['body']}px", WEIGHT["normal"], "text_muted", ""),
+    "status":   (f"{TYPE['caption']}px", WEIGHT["medium"], "text_muted", ""),
+    "faint":    (f"{TYPE['body']}px", WEIGHT["normal"], "text_faint", ""),
     # v1.0: lifted off the text_faint FLOOR to text_muted. Section headers
     # (MODULES, RECENT, QUICK ACTIONS) are the spine of the visual
     # hierarchy, and at the dimmest step they read as barely-there — the
     # "low-contrast hierarchy" the v1.0 pass called out. text_muted keeps
     # them quiet (they are still 10px, 700-weight, wide-tracked labels) but
     # legible, and lifts every section header in the app at once.
-    "section":  ("10px", "700", "text_muted", "letter-spacing: 4px;"),
+    "section":  (f"{TYPE['meta']}px", WEIGHT["bold"], "text_muted",
+                 "letter-spacing: 4px;"),
     # THE TITLE-BAR WORDMARK, and its only call site (widgets.TitleBar).
     #
     # 11px/text_muted was a CAPTION pretending to be a logotype: it sat at
@@ -3598,9 +3654,13 @@ _LABEL_ROLES = {
     # the chrome. Tracking comes DOWN as the size goes up — 2px of
     # letter-spacing is generous at 11px and starts to look unresolved at
     # 14 — which is the same size/tracking relationship the title roles
-    # above already follow.
-    "brand":    ("14px", str(WEIGHT["semi"]), "text", "letter-spacing: 1.5px;"),
-    "caption":  ("10px", "500", "text_faint", "letter-spacing: 1px;"),
+    # above already follow. It has its own TYPE step for exactly that
+    # reason: nothing else in the app is 14px, and a logotype that drifts
+    # onto the step above or below stops being a lockup.
+    "brand":    (f"{TYPE['brand']}px", WEIGHT["semi"], "text",
+                 "letter-spacing: 1.5px;"),
+    "caption":  (f"{TYPE['meta']}px", WEIGHT["medium"], "text_faint",
+                 "letter-spacing: 1px;"),
 }
 # Removed in v10: "hero", "value" and "meta" — all three had zero call
 # sites anywhere in the app (the card meta pills use card_meta_pill_qss,

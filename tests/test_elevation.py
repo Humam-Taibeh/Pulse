@@ -299,29 +299,111 @@ def test_the_icon_well_is_one_neutral_surface_everywhere():
     assert NavButton._PLAQUE == TH.PLAQUE_SIZE
 
 
-def test_the_plaque_tints_are_the_ones_that_were_solved():
-    """v13 moved the well from QSS to a painter. The tint had to survive
-    the move byte-for-byte or the contrast table moved with it. These are
-    the v12 values, duplicated deliberately."""
-    assert TH.plaque_tints(TH.tokens("dark")) == (0.24, 0.13)
-    assert TH.plaque_tints(TH.tokens("light")) == (0.15, 0.08)
+#: `plaque_well` is already an rgba() string, so TH.alpha (which takes a
+#: hex colour) cannot restate it at a new opacity — the channels have to be
+#: parsed and re-emitted. Lifting the well is the only thing that needs it.
+def _at_alpha(rgba: str, a: float) -> str:
+    r, g, b, _a = TH._parse_color(rgba)
+    return f"rgba({r}, {g}, {b}, {a})"
+
+
+#: Every surface a module glyph's well can be painted on, as
+#: (name, how to composite it) — the real ones, taken from the two
+#: painters rather than from the retired tint table.
+#:
+#: THE RAIL IS THE HALF THAT USED TO BE MISSING. The old sweep measured
+#: the card and only the card, which was already incomplete when it was
+#: written: NavButton paints the same well on the sidebar's PANEL, a
+#: different tier, and lifts it again when the entry is selected. So the
+#: two surfaces the sidebar can put a glyph on were never measured, and
+#: the one that was measured stopped existing in v10.6.
+def _well_surfaces(t: dict) -> list[tuple[str, str]]:
+    from frontend.widgets import NavButton
+
+    # The canvas is a two-stop ramp and the sidebar spans it, so the panel
+    # is composited over BOTH ends and the darker/lighter result is kept
+    # as its own surface — a glyph has to clear the floor at the top of
+    # the rail and at the bottom of it.
+    well = TH.to_qcolor(t["plaque_well"])
+    lifted = _at_alpha(t["plaque_well"],
+                       min(1.0, well.alphaF() * NavButton._SELECTED_LIFT))
+    card = TH.blend(t["bg_solid"], t["card"])
+    surfaces = [("card", TH.blend(card, t["plaque_well"]))]
+    for edge in ("bg_grad_top", "bg_grad_bottom"):
+        panel = TH.blend(t[edge], t["panel"])
+        surfaces.append((f"rail@{edge}", TH.blend(panel, t["plaque_well"])))
+        surfaces.append((f"rail@{edge}/selected", TH.blend(panel, lifted)))
+    return surfaces
 
 
 @pytest.mark.parametrize("mode", ["dark", "light"])
-def test_every_module_glyph_still_clears_its_floor_in_its_own_well(mode):
-    """The floor for a graphic object is 3:1. This re-measures it through
-    the PAINTED construction's own numbers rather than trusting that the
-    move from QSS was lossless."""
+def test_every_module_glyph_clears_its_floor_on_the_well_that_ships(mode):
+    """The floor for a graphic object is 3:1, measured against the well
+    the app ACTUALLY PAINTS.
+
+    This test used to compute the well from theme.plaque_tints — a
+    per-mode accent wash at 0.24/0.13 dark and 0.15/0.08 light. That
+    construction was deleted in v10.6 along with the halo and the two
+    hairlines around it, so for several versions the guard was measuring a
+    surface that no longer existed anywhere in the product: a solve for a
+    coloured well, run against a grid of glyphs that had been sitting on a
+    NEUTRAL one since the module palette collapsed. It passed the whole
+    time, and would have kept passing if `plaque_well` had been taken to
+    an alpha that swallowed the glyph whole — which is the only failure it
+    was ever there to catch.
+
+    It now composites `plaque_well` exactly as IconPlaque and NavButton do,
+    on every tier either of them can land it on. That is a strictly wider
+    sweep than the old one (five surfaces against one) as well as a real
+    one.
+    """
     t = TH.tokens(mode)
-    a_top, a_bot = TH.plaque_tints(t)
-    card = TH.blend(t["bg_solid"], t["card"])
     failures = []
-    for name, value in t["module"].items():
-        well = TH.blend(card, TH.alpha(value, (a_top + a_bot) / 2))
-        ratio = _ratio(_rgb(value), _rgb(well))
-        if ratio < 3.0:
-            failures.append(f"{name} {ratio:.2f}:1")
+    for glyph, value in t["module"].items():
+        for surface, well in _well_surfaces(t):
+            ratio = _ratio(_rgb(value), _rgb(well))
+            if ratio < 3.0:
+                failures.append(f"{glyph} on {surface} {ratio:.2f}:1")
     assert not failures, f"{mode} glyphs under the 3:1 floor: {failures}"
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_lifting_the_rail_well_never_costs_the_glyph_its_floor(mode):
+    """SELECTION LIFTS THE WELL RATHER THAN COLOURING IT, and the lift is
+    the one number describing this element that lives outside theme.py.
+
+    NavButton multiplies the neutral's alpha by _SELECTED_LIFT so "which
+    module is live" stays a question of VALUE — legible at a glance and in
+    both themes — instead of a question of hue against the glyph sitting
+    in it. That trade only holds while the lifted well stays a SURFACE:
+    push the multiplier far enough and the well becomes a chip, closing on
+    the glyph it is supposed to be a backdrop for.
+
+    Two things are pinned. The lifted well must still read as a surface
+    (the same 0.02-0.08 band the resting well is held to above, with the
+    lift applied), and it must move enough to be seen at all — a
+    "selected" state nobody can perceive is not a state.
+    """
+    from frontend.widgets import NavButton
+
+    t = TH.tokens(mode)
+    resting = TH.to_qcolor(t["plaque_well"]).alphaF()
+    lifted = min(1.0, resting * NavButton._SELECTED_LIFT)
+    assert lifted > resting * 1.5, (
+        f"{mode}: selection lifts the well from {resting:.3f} to "
+        f"{lifted:.3f} — not enough to read as a state")
+    assert lifted <= 0.16, (
+        f"{mode}: the selected well is at {lifted:.3f}, which is a chip "
+        f"behind the glyph rather than a surface under it")
+    # and the glyph still clears the graphic-object floor on it
+    for edge in ("bg_grad_top", "bg_grad_bottom"):
+        panel = TH.blend(t[edge], t["panel"])
+        well = TH.blend(panel, _at_alpha(t["plaque_well"], lifted))
+        for glyph, value in t["module"].items():
+            ratio = _ratio(_rgb(value), _rgb(well))
+            assert ratio >= 3.0, (
+                f"{mode}: {glyph} falls to {ratio:.2f}:1 on a selected "
+                f"rail well at {edge}")
 
 
 def test_the_plaque_glyph_colour_is_all_that_is_left_in_qss():

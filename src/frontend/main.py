@@ -32,8 +32,8 @@ if sys.platform == "win32":
     import ctypes.wintypes  # MSG / RECT for native window hit-testing
 
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, Qt, QThread,
-    QTimer, Signal,
+    QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt,
+    QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QFont, QIcon, QKeySequence, QPalette, QShortcut,
@@ -1498,7 +1498,7 @@ class CategoryPage(QWidget):
         self._sync_count_chip()
         self._home.apply_theme(t)
         self._crumb_sep.setStyleSheet(
-            f"color: {t['text_faint']}; font-size: {TH.TYPE['glyph']}px; font-weight: 400;"
+            f"color: {t['text_faint']}; font-size: {TH.TYPE['heading']}px; font-weight: {TH.WEIGHT['normal']};"
             "background: transparent; border: none;")
         self._accent_rail.setStyleSheet(
             f"background: {TH.resolve_accent(t, self.category['accent'])};"
@@ -1834,7 +1834,22 @@ class PulseApp(QMainWindow):
         # implementation, two entry points — the button exists for
         # discoverability (a keyboard-only affordance is invisible to
         # anyone who hasn't read the shortcut sheet).
-        self._search_btn = QPushButton("🔍  Search everything…")
+        # THE MARK IS A FLUENT GLYPH, NOT AN EMOJI. This button used to lead
+        # with a literal magnifier character — the last colour emoji in the
+        # app's persistent chrome, sitting at the top of a rail whose every
+        # other icon is a monochrome line glyph that re-tints itself with the
+        # theme. It cannot simply BE the button's text the way the status
+        # rail's glyphs are (one widget, one font: the label beside it would
+        # render in the icon family too), so it is carried as an icon —
+        # rendered from the same GLYPHS table, re-made per theme so it tracks
+        # the placeholder tone. See theme.glyph_icon, which falls back to the
+        # emoji-in-the-label wherever the OS icon font is missing.
+        self._search_glyph, self._search_fluent = TH.glyph("search")
+        self._search_btn = QPushButton(
+            "Search everything…" if self._search_fluent
+            else f"{self._search_glyph}  Search everything…")
+        self._search_btn.setIconSize(
+            QSize(TH.ICON["inline"], TH.ICON["inline"]))
         self._search_btn.setFixedHeight(TH.CONTROL_H)
         self._search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._search_btn.setToolTip(
@@ -1845,7 +1860,11 @@ class PulseApp(QMainWindow):
 
         self._section = QLabel("MODULES")
         self._section.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._section.setIndent(10)   # editor-style left-aligned section label
+        # Editor-style left-aligned section label, on the rail's own left
+        # rule — the same inset the search field's text and the nav entries'
+        # icon wells take. It sat at 10 while those two sat at 12, so the
+        # label naming the column of wells was two pixels adrift of it.
+        self._section.setIndent(TH.SIDEBAR_GUTTER)
         side.addWidget(self._section)
         side.addSpacing(TH.SPACE["sm"])
 
@@ -1981,6 +2000,9 @@ class PulseApp(QMainWindow):
         # tree three times for three rectangles.
         self._shell.setStyleSheet(TH.chrome_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
+        if self._search_fluent:
+            self._search_btn.setIcon(
+                TH.glyph_icon("search", TH.ICON["inline"], t["text_faint"]))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
         self.update_badge.apply_theme(t)
         self.status_rail.apply_theme(t)

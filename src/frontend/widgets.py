@@ -1686,7 +1686,24 @@ class NavButton(QPushButton):
     #: Plaque edge, from the app-wide scale — the card's icon well is the
     #: same object at the same size (see theme.PLAQUE_SIZE).
     _PLAQUE = TH.PLAQUE_SIZE
-    _PLAQUE_X = 12     # left inset — must stay in sync with nav_button_qss padding
+    #: Left inset. Read from the rail's own gutter rather than repeated as a
+    #: literal, which is what the comment here used to ask a reader to do by
+    #: hand ("must stay in sync with nav_button_qss padding") — and what the
+    #: MODULES label above these wells failed to do for four versions.
+    _PLAQUE_X = TH.SIDEBAR_GUTTER
+
+    #: What SELECTION does to the icon well: the same neutral, harder.
+    #:
+    #: Named because it is the one number describing the well that lives
+    #: outside theme.py, and because a test has to be able to measure the
+    #: lifted well's contrast without re-typing the multiplier (see
+    #: test_elevation's glyph-floor sweep, which walks every surface the
+    #: well can land on — and the lifted rail well is one of them).
+    #:
+    #: The well is neutral in both states on purpose: "which module is live"
+    #: stays a question of VALUE, which survives at a glance and in both
+    #: themes, rather than a question of hue.
+    _SELECTED_LIFT = 2.4
 
     def __init__(self, glyph_key: str, title: str, accent_key: str, t: dict):
         # QPushButton treats a lone "&" as a mnemonic marker (it vanishes
@@ -1709,6 +1726,7 @@ class NavButton(QPushButton):
         self._icon_font: QFont | None = None
         self._well = QColor(255, 255, 255, 10)
         self._light = False
+        self._bevel = TH.bevel_alphas(t)
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
@@ -1730,6 +1748,9 @@ class NavButton(QPushButton):
         # the plaque well, shared with widgets.IconPlaque
         self._well = TH.to_qcolor(t["plaque_well"])
         self._light = t["name"] == "light"
+        # the edge weights this mode spends — see paintEvent for why the
+        # rail is the one surface that spends them conditionally
+        self._bevel = TH.bevel_alphas(t)
 
     def set_selected(self, on: bool):
         self.setProperty("selected", on)
@@ -1774,7 +1795,7 @@ class NavButton(QPushButton):
         # instead of a question of hue against five other hues.
         well = QColor(self._well)
         if selected:
-            well.setAlphaF(min(1.0, well.alphaF() * 2.4))
+            well.setAlphaF(min(1.0, well.alphaF() * self._SELECTED_LIFT))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(well)
         p.drawRoundedRect(box, TH.PLAQUE_RADIUS, TH.PLAQUE_RADIUS)
@@ -1794,7 +1815,32 @@ class NavButton(QPushButton):
         p = QPainter(self)
         self._paint_plaque(p)
         radius = TH.RADIUS["plaque"]
-        paint_bevel_frame(p, self.rect(), radius)
+        # A BEVEL IS AN EDGE ON A SURFACE, AND AT REST THIS ROW IS NOT ONE.
+        #
+        # This call used to take paint_bevel_frame's own defaults — 0.14
+        # white / 0.20 black — which made the rail the only thing in the app
+        # painting a theme-agnostic edge, and the two modes rendered it as
+        # two different components. On obsidian a black bottom-right shade
+        # is invisible and the white top-left is a whisper, so dark got the
+        # "ghost rail" nav_button_qss describes: a bare transparent row
+        # carrying only its plaque and its label. On porcelain BOTH halves
+        # of that gradient land, so light mode drew a closed grey rectangle
+        # around every entry — four outlined boxes down a rail that is
+        # supposed to read as light and airy, and an outline around four
+        # rows whose QSS background is `transparent`.
+        #
+        # The weights now come from the theme like every other painted edge
+        # (theme.bevel_alphas), and they are spent only where the row
+        # actually HAS a surface to bevel: full when selected, ramping in
+        # with the pointer otherwise. QUANTIZED through hover_lift for the
+        # reason that function documents — paint_bevel_frame caches its
+        # stroke keyed on the alpha pair, so a continuously-varying weight
+        # would mint a new full-size stroke on every frame of every hover.
+        lift = (1.0 if self.property("selected")
+                else TH.hover_lift(self._glow.intensity))
+        if lift > 0.0:
+            lit, shade = self._bevel
+            paint_bevel_frame(p, self.rect(), radius, lit * lift, shade * lift)
         paint_ripple_frame(p, self.rect(), radius, self._glow.color,
                            self._ripple.progress, self._ripple.origin)
         paint_glow_frame(p, self.rect(), radius, self._glow.color,
@@ -2317,39 +2363,36 @@ class StatusChip(QLabel):
 
 
 class IconPlaque(QLabel):
-    """A card's icon well — a painted micro-surface, not a coloured box.
+    """A card's icon well — ONE NEUTRAL SURFACE for a glyph to sit on.
 
-    Through v12 this was a plain QLabel wearing icon_plaque_qss: one flat
-    accent gradient inside one flat 1px accent border, sitting directly on
-    the card with nothing between them. Every premium desktop app this one
-    is measured against (Linear, Raycast, Fluent 2) builds the same element
-    as a MATERIAL instead, and the difference is three things QSS cannot
-    put on a QLabel:
+    THE SHORT HISTORY, because this class spent three versions being
+    something else. Through v12 it was a plain QLabel wearing
+    icon_plaque_qss: a flat accent gradient inside a flat 1px accent
+    border. v13 handed it to a painter so it could carry an ambient halo
+    outside the well, a second hairline inside the first and a lit top rim
+    — the material a Linear or Raycast icon chip is built from, and three
+    things QSS cannot put on a QLabel.
 
-      * an ambient HALO outside the well, so the module's colour is in the
-        air around the glyph rather than stopping dead at a border;
-      * a second hairline INSIDE the first, lit at the top — the same "this
-        has a top face" cue the cards themselves use one scale up (see
-        theme.sheen_alphas), spent as a single stroke because at 42px a
-        gradient has nowhere to fall off;
-      * a lit top rim on the well's own edge, so the plaque catches the
-        same overhead light the card does instead of being lit from
-        nowhere.
+    v10.6 deleted all of it. That material was solved for a grid whose
+    defining cue was COLOUR, and once the palette collapsed to a single
+    interactive accent (see the note on theme._DARK["module"]) it read as
+    four tinted rings around a glyph. What is left is one rounded rect in
+    theme's `plaque_well` — a low-alpha NEUTRAL, lightening on obsidian and
+    darkening on porcelain — with the colour where it is not repeated: on
+    the glyph.
 
-    CONTRAST-NEUTRAL BY CONSTRUCTION. The well fill is the identical
-    translucent gradient icon_plaque_qss used to declare, at the identical
-    per-mode alphas (theme.plaque_tints), composited over the identical
-    card. Everything added lives at the EDGE — outside the well, or in its
-    outermost pixel — so nothing new lands between the glyph and its
-    background. The in-plaque contrast solve icon_plaque_qss documents
-    measures the same before and after, which is why it did not have to be
-    re-run.
+    THE SAME WELL AT EVERY SCALE. NavButton paints this exact token for the
+    sidebar entry that opens the card, so a module is one object seen twice
+    rather than two things drawn by two pieces of code (the reason
+    theme.PLAQUE_SIZE exists at all). The glyph's contrast against it is
+    swept on every surface it can land on — card, rail, and a selected
+    rail entry, whose well is the same neutral lifted by
+    NavButton._SELECTED_LIFT — by test_elevation's glyph-floor test.
 
-    STATIC. No timer, no animation, no QGraphicsEffect: the whole thing is
-    four cached-cheap strokes and a fill, repainted only when the card
-    repaints anyway. The glyph is still drawn by QLabel itself, so the
-    hover "pop" (GlassCard._sync_icon_scale, a setFont on a handful of
-    frames) keeps working untouched.
+    STATIC. No timer, no animation, no QGraphicsEffect: one fill, repainted
+    only when the card repaints anyway. The glyph is still drawn by QLabel
+    itself, so the hover "pop" (GlassCard._sync_icon_scale, a setFont on a
+    handful of frames) keeps working untouched.
     """
 
     #: THE WIDGET IS THE WELL. Through v10.5 this reserved 3px on each
@@ -3561,6 +3604,10 @@ class HealthTile(DepthCard):
         self.setObjectName("healthTile")
         self._t = t
         self._fraction: float | None = None
+        # The NAME of an overriding tone, or None to derive it from the
+        # ratio. Kept as a key rather than as a resolved colour so it can
+        # be re-resolved against a new palette — see _sync_tone.
+        self._tone_key: str | None = None
         self._tone = QColor(TH.to_qcolor(t["accent"]))
 
         lay = QVBoxLayout(self)
@@ -3589,18 +3636,41 @@ class HealthTile(DepthCard):
 
     def set_value(self, text: str, fraction: float | None = None):
         """Report the tile. `fraction` is the ratio the meter draws, or
-        None for a tile that is a count rather than a proportion."""
+        None for a tile that is a count rather than a proportion.
+
+        A fresh ratio DROPS any standing tone override: the number and the
+        severity are one report, so a caller that supplies the first
+        without the second is asking for the threshold answer.
+        """
         self._value.setText(text or "—")
         self._fraction = None if fraction is None else max(0.0, min(1.0, fraction))
-        self._tone = TH.to_qcolor(TH.health_tone(self._t, self._fraction))
-        self.update()
+        self._tone_key = None
+        self._sync_tone()
 
     def set_tone(self, tone_key: str):
         """Override the meter's tone with a named token — for tiles whose
         severity is not a ratio (a pending-action count is 'ok' at zero
         and 'warn' at anything else, and no threshold on the number itself
         would say that)."""
-        self._tone = TH.to_qcolor(self._t.get(tone_key, self._t["accent"]))
+        self._tone_key = tone_key
+        self._sync_tone()
+
+    def _sync_tone(self):
+        """Resolve the meter's colour against the CURRENT palette.
+
+        The override has to be re-resolved rather than remembered as a
+        colour, and that is the whole reason this is a method. apply_theme
+        used to re-derive the tone from the ratio unconditionally, so a
+        theme switch silently discarded whatever set_tone had said: the
+        dashboard's ACTIONS DUE meter is amber in the mode the app started
+        in and reverts to the plain accent in the other one, which turns
+        the tile's only severity channel off without anything having
+        changed about the machine it is reporting on.
+        """
+        t = self._t
+        self._tone = TH.to_qcolor(
+            t.get(self._tone_key, t["accent"]) if self._tone_key
+            else TH.health_tone(t, self._fraction))
         self.update()
 
     def apply_theme(self, t: dict):
@@ -3609,8 +3679,7 @@ class HealthTile(DepthCard):
         self.setStyleSheet(TH.health_tile_qss(t))
         self._value.setStyleSheet(TH.health_tile_value_qss(t))
         self._caption.setStyleSheet(TH.health_tile_caption_qss(t))
-        self._tone = TH.to_qcolor(TH.health_tone(t, self._fraction))
-        self.update()
+        self._sync_tone()
 
     def paintEvent(self, e):
         super().paintEvent(e)          # plate, shadow, hairline, top sheen

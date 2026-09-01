@@ -26,10 +26,13 @@ import re
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QVBoxLayout
 
 from conftest import settle
 from frontend import theme as TH
-from frontend.widgets import _CHIP_LANE, ElidedCaption, StatusDot
+from frontend.widgets import (
+    _CHIP_LANE, ElidedCaption, HealthTile, NavButton, StatusDot,
+)
 
 
 # ============================================================
@@ -842,3 +845,212 @@ def test_the_elevated_surface_is_the_one_the_spec_names(mode):
             f"the light card is {card}, not pure white")
         assert _lum(card) > _lum(container), (
             "the light card no longer rises off its container")
+
+
+# ============================================================
+#  9. THE NAV RAIL'S EDGE
+# ============================================================
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_nav_rail_carries_no_edge_at_rest(mode, qapp):
+    """A BEVEL IS AN EDGE ON A SURFACE, AND A RESTING NAV ROW IS NOT ONE.
+
+    nav_button_qss describes the rail as a ghost: `background-color:
+    transparent`, `border: 1px solid transparent`, only the painted plaque
+    and the label carrying weight. NavButton.paintEvent then drew a full
+    rounded-rect bevel over that transparency on every repaint — and drew
+    it at paint_bevel_frame's OWN defaults (0.14 white / 0.20 black), the
+    one theme-agnostic painted edge left in the app.
+
+    The two modes therefore rendered the rail as two different components.
+    On obsidian both halves of that diagonal gradient disappear into the
+    panel, so dark got the ghost rail as designed. On porcelain both land,
+    so light mode drew a closed grey rectangle around all four entries —
+    outlines on rows that have no fill to outline, and the reason the rail
+    reads as a stack of boxes in a light-mode screenshot and as a list of
+    labels in a dark one.
+
+    Measured off the PIXELS the row itself puts down. Its QSS fill is
+    transparent, so a resting entry should contribute NOTHING outside its
+    plaque and its label — every edge sample comes back fully transparent,
+    and the panel underneath shows through untouched.
+    """
+    t = TH.tokens(mode)
+    host = QFrame()
+    host.setObjectName("sidebar")
+    host.setStyleSheet(TH.chrome_qss(t))
+    lay = QVBoxLayout(host)
+    lay.setContentsMargins(0, 0, 0, 0)
+    button = NavButton("package", "Software Management", "software", t)
+    button.set_selected(False)
+    lay.addWidget(button)
+    host.resize(360, 46)
+    host.show()
+    settle(qapp, 60)
+
+    image = button.grab().toImage()
+    width, height = image.width(), image.height()
+    # a column past the end of the label, where the row is nothing but panel
+    clear_x = width - 24
+    reference = image.pixelColor(clear_x, height // 2)
+    edges = {
+        "top":    image.pixelColor(clear_x, 0),
+        "bottom": image.pixelColor(clear_x, height - 1),
+        "left":   image.pixelColor(0, height // 2),
+        "right":  image.pixelColor(width - 1, height // 2),
+    }
+    host.hide()
+
+    assert reference.alpha() == 0, (
+        "the reference sample is not bare panel — the row's label or plaque "
+        "has grown into it and the measurement below means nothing")
+    drawn = {name: (c.name(), c.alpha())
+             for name, c in edges.items() if c.alpha() > 0}
+    assert not drawn, (
+        f"{mode}: a resting nav entry draws its own edges {drawn} over a "
+        f"fill it declares transparent")
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_a_nav_entry_is_beveled_once_it_has_a_surface(mode, qapp):
+    """The cue is not deleted, it is spent where it means something.
+
+    A SELECTED entry has a real fill (the brand sweep) and a real border,
+    so it is an object, and it gets the same edge treatment every other
+    elevated surface in the app takes.
+    """
+    t = TH.tokens(mode)
+    button = NavButton("package", "Software Management", "software", t)
+    button.resize(218, 46)
+    button.set_selected(True)
+    lit = button.grab().toImage()
+    button._bevel = (0.0, 0.0)
+    flat = button.grab().toImage()
+    assert lit != flat, (
+        f"{mode}: a selected nav entry paints no bevel at all")
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_nav_bevel_is_the_modes_own_weight(mode, qapp):
+    """...and it comes off the theme, not off the painter's signature.
+
+    theme.bevel_alphas splits the pair per mode because the two canvases
+    receive light in opposite directions: obsidian keeps a real top-left
+    highlight, porcelain spends its whole (small) budget on the
+    bottom-right contact edge and none on a white highlight it has nothing
+    to highlight against. The rail was the one widget ignoring that.
+    """
+    t = TH.tokens(mode)
+    button = NavButton("package", "Software Management", "software", t)
+    assert button._bevel == TH.bevel_alphas(t), (
+        f"{mode}: the nav bevel is {button._bevel}, not the mode's "
+        f"{TH.bevel_alphas(t)}")
+    assert button._bevel != (0.14, 0.20), (
+        f"{mode}: the nav bevel is still paint_bevel_frame's default pair")
+
+
+# ============================================================
+#  10. THE HEALTH ROW'S SEVERITY CHANNEL
+# ============================================================
+def test_a_health_tile_keeps_its_tone_across_a_theme_switch(qapp):
+    """The meter is the tile's ONLY severity channel, and a theme switch
+    used to turn it off.
+
+    HealthTile.set_tone exists for tiles whose severity is not a ratio —
+    ACTIONS DUE is emerald at zero and amber at anything above it, which
+    no threshold on the number itself would say. apply_theme then
+    re-derived the tone from the FRACTION unconditionally, so switching
+    themes silently discarded the override and the meter fell back to the
+    plain interactive accent.
+
+    That is visible in any pair of light/dark screenshots taken either
+    side of a toggle: the same three overdue actions read amber in the
+    mode the app launched in and indigo in the other one, with nothing
+    about the machine having changed. The override is stored as a KEY now
+    and re-resolved against whichever palette is current.
+    """
+    dark, light = TH.tokens("dark"), TH.tokens("light")
+    tile = HealthTile("ACTIONS DUE", dark)
+    tile.set_value("3", 1.0)
+    tile.set_tone("warn")
+    assert tile._tone.name() == dark["warn"]
+
+    tile.apply_theme(light)
+    assert tile._tone.name() == light["warn"], (
+        "a theme switch dropped the tile's tone override back to the "
+        "ratio's answer")
+
+    tile.apply_theme(dark)
+    assert tile._tone.name() == dark["warn"]
+
+
+def test_a_fresh_ratio_drops_a_standing_tone_override(qapp):
+    """The number and its severity are ONE report.
+
+    A caller that hands the tile a new ratio without a new tone is asking
+    for the threshold answer — otherwise the first set_tone in a session
+    would pin the meter's colour for the life of the tile, which is the
+    opposite failure to the one above and just as silent.
+    """
+    dark = TH.tokens("dark")
+    tile = HealthTile("MEMORY", dark)
+    tile.set_tone("err")
+    assert tile._tone.name() == dark["err"]
+    tile.set_value("11%", 0.11)
+    assert tile._tone.name() == TH.health_tone(dark, 0.11), (
+        "a stale tone override outlived the value it was reporting on")
+
+
+# ============================================================
+#  11. THE SEARCH DOORWAY'S MARK
+# ============================================================
+#: The colour magnifier the doorway used to lead with.
+_MAGNIFIER = "\U0001f50d"
+
+
+def test_the_search_doorway_wears_the_line_icon_not_an_emoji(window):
+    """ONE ICON LANGUAGE IN THE CHROME.
+
+    Every glyph in the shell is a monochrome Fluent line icon that
+    re-tints itself with the theme — the nav plaques, the card plaques,
+    the status rail, the card chevrons. The sidebar's search doorway led
+    with a literal colour emoji: the only one left in the app's persistent
+    chrome, at the very top of the rail, immediately above four of the
+    line icons it does not match. It cannot simply BE the button's text
+    the way the status rail's glyphs are (one widget, one font — the label
+    beside it would render in the icon family too), so it is carried as an
+    icon rendered from the same GLYPHS table.
+    """
+    if not TH.has_icon_font():
+        # NOT a module-level skipif: has_icon_font() reaches QFontDatabase,
+        # and touching that during collection — before conftest's qapp
+        # fixture has built a QApplication — takes the interpreter down with
+        # a fail-fast exception and no traceback.
+        pytest.skip("no OS icon font — the emoji fallback is correct")
+    assert not window._search_btn.icon().isNull(), (
+        "the search doorway carries no icon")
+    assert _MAGNIFIER not in window._search_btn.text(), (
+        "the search doorway still leads with the magnifier emoji")
+
+
+def test_the_search_mark_is_rendered_for_the_screen_it_lands_on(qapp):
+    """A 15px pixmap upscaled to 150% is a soft icon beside crisp text,
+    which is a worse defect than the emoji it replaces. theme.glyph_icon
+    rasterises at the screen's device pixel ratio."""
+    icon = TH.glyph_icon("search", TH.ICON["inline"], "#ffffff")
+    if not TH.has_icon_font():
+        assert icon is None, "no icon font, but glyph_icon produced an icon"
+        return
+    assert icon is not None and not icon.isNull()
+    dpr = qapp.primaryScreen().devicePixelRatio()
+    expected = round(TH.ICON["inline"] * dpr)
+    assert icon.availableSizes()[0].width() == expected, (
+        f"the search mark is rasterised at "
+        f"{icon.availableSizes()[0].width()}px for a {dpr}x screen, not "
+        f"{expected}px")
+
+
+def test_glyph_icon_falls_back_rather_than_rendering_nothing(qapp):
+    """An unknown key has no codepoint and no emoji, so there is nothing
+    to draw — None, and the caller keeps its own text. A helper that
+    returned an empty QIcon here would leave a silent hole in a control."""
+    assert TH.glyph_icon("no-such-glyph", 15, "#ffffff") is None

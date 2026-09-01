@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QFrame, QLabel, QPushButton
 from conftest import settle
 from frontend import theme as TH
 from frontend.main import CategoryPage
+from frontend.widgets import NavButton
 from frontend.menu_structure import (
     CATEGORIES, category_bands, category_items, category_operations,
 )
@@ -134,6 +135,74 @@ def test_the_type_scale_has_no_redundant_steps():
         by_size.setdefault(px, []).append(role)
     clashes = {px: roles for px, roles in by_size.items() if len(roles) > 1}
     assert not clashes, f"TH.TYPE steps sharing a size: {clashes}"
+
+
+def test_every_label_role_lands_on_the_type_scale():
+    """_LABEL_ROLES IS A MAPPING ONTO THE SCALE, NOT A SECOND SCALE.
+
+    It was the second one. The table shipped its sizes as bare strings
+    ("22px", "16px", "14px", ...), which put eleven of the app's type
+    decisions — including every card title and every dialog heading —
+    outside the scale entirely: three of those sizes existed nowhere in
+    TH.TYPE, and the enforcement test above could not see any of them,
+    because it scans source for `font-size: NNpx` in QSS and these were
+    interpolated in at run time.
+
+    That is the exact hole SPACE, TYPE and RADIUS were each introduced to
+    close, hiding in the one table nobody thought to look at — the file's
+    own note on the type scale says "ten distinct font-size literals were
+    hand-written into about sixty QSS strings", and this was where the
+    eleventh through twenty-first lived.
+    """
+    steps = {f"{px}px" for px in TH.TYPE.values()}
+    strays = {role: size for role, (size, _w, _c, _e) in TH._LABEL_ROLES.items()
+              if size not in steps}
+    assert not strays, (
+        f"label role(s) off TH.TYPE {sorted(TH.TYPE.values())}: {strays}")
+
+
+def test_every_label_role_lands_on_the_weight_scale():
+    """The same guard one axis over, and wider than the heading-only one
+    in test_elevation: `500` and `400` written as strings are as unchosen
+    as `650` was, they just happen to be values TH.WEIGHT also names."""
+    weights = set(TH.WEIGHT.values())
+    strays = {role: weight
+              for role, (_s, weight, _c, _e) in TH._LABEL_ROLES.items()
+              if int(weight) not in weights}
+    assert not strays, (
+        f"label role(s) off TH.WEIGHT {sorted(TH.WEIGHT.values())}: {strays}")
+
+
+def test_no_label_role_is_unreachable():
+    """A ROLE NOTHING ASKS FOR IS NOT A ROLE — it is a third answer sitting
+    where two are needed, waiting to be picked by accident.
+
+    "version" was exactly that: 11px/500/text_faint with no call site
+    anywhere, which is `status` in a different ink and `caption` one step
+    up. It survived three passes that each added a nearby role rather than
+    noticing it — and one stale test kept reading it, so it measured a
+    constant while the line it stood for had moved to the status rail.
+    ("hero", "value" and "meta" were retired for the same reason in v10 —
+    the table has form.)
+
+    THE TWO CALL SHAPES ARE SPELLED OUT rather than searched for as a bare
+    quoted word, because a bare word is not a call site: "version" also
+    appears in widgets.py as a key on package metadata, which would have
+    reported the dead role as live and passed for entirely the wrong
+    reason.
+    """
+    sources = "\n".join(
+        open(os.path.join(_FRONTEND, module), encoding="utf-8").read()
+        for module in _TYPED_MODULES)
+    unused = []
+    for role in TH._LABEL_ROLES:
+        called = re.search(rf'label_qss\([^)]*?"{role}"', sources)
+        read = f'_LABEL_ROLES["{role}"]' in sources
+        if not (called or read):
+            unused.append(role)
+    assert not unused, (
+        f"label role(s) with no call site: {unused} — delete them or use "
+        f"them, but do not leave them for the next person to pick")
 
 
 # ============================================================
@@ -294,6 +363,52 @@ def test_every_padding_role_lands_on_the_spacing_scale():
     assert TH.PAD["sheet"] > TH.PAD["surface"], (
         "a floating sheet must carry MORE air than a card, or the two "
         "roles are one role with two names")
+
+
+def test_the_sidebar_gutter_is_a_spacing_step():
+    """The rail's left rule names a SPACE step; it does not invent one.
+
+    Same discipline PAD is held to above: a third vocabulary is allowed to
+    say WHICH step an alignment takes, never to open a scale beside the
+    first two.
+    """
+    steps = set(TH.SPACE.values())
+    assert TH.SIDEBAR_GUTTER in steps, (
+        f"SIDEBAR_GUTTER = {TH.SIDEBAR_GUTTER} is not a SPACE step "
+        f"{sorted(steps)}")
+
+
+def test_the_sidebar_leads_every_row_on_one_left_rule(window):
+    """MODULES, the search field's text and the nav entries' icon wells
+    all start at the SAME inset.
+
+    They did not. The two controls sat at 12 — the search field through
+    its own QSS padding, a nav entry through the x its plaque is painted
+    at — while the section label above them sat at 10, so the label naming
+    a column of 36px filled wells was two pixels adrift of the column. Two
+    pixels is under the threshold at which a difference reads as a
+    decision and above the one at which it reads as sloppiness, which is
+    the worst place for it, and it is visible in any screenshot of the
+    rail because the wells give the eye a hard vertical edge to compare
+    the label against.
+
+    Pinned across all three call sites rather than in one, because the
+    failure mode is precisely that they drift apart again.
+    """
+    gutter = TH.SIDEBAR_GUTTER
+    assert window._section.indent() == gutter, (
+        f"the MODULES label indents {window._section.indent()}px, not the "
+        f"rail's {gutter}px gutter")
+    assert NavButton._PLAQUE_X == gutter, (
+        f"a nav entry paints its well at x={NavButton._PLAQUE_X}, not at "
+        f"the rail's {gutter}px gutter")
+    assert f"padding: 0 {gutter}px" in TH.sidebar_search_qss(
+        TH.tokens("dark")), (
+        "the search doorway's text no longer starts on the rail's gutter")
+    # and the nav label still clears the well it is padded past
+    assert (f"padding-left: {gutter + TH.PLAQUE_SIZE + TH.SPACE['sm']}px"
+            in TH.nav_button_qss(TH.tokens("dark"))), (
+        "a nav entry's label is no longer derived from gutter + well + gap")
 
 
 @pytest.mark.parametrize("width", [1000, 1400, 2200])

@@ -605,7 +605,8 @@ class TestThemeSwitchCost:
 def test_the_title_bar_mark_and_wordmark_carry_the_chrome(window):
     """Icon, label, label — three sizes of quiet. The mark was 20px of
     glyph matched to the nav icons, and the wordmark was an 11px muted
-    caption at the same size as the version number beside it."""
+    caption at the same size as the version line it shared the chrome
+    with."""
     from frontend import theme as TH
     from frontend import widgets as W
 
@@ -618,9 +619,20 @@ def test_the_title_bar_mark_and_wordmark_carry_the_chrome(window):
     assert "font-size: 14px" in brand
     assert f"color: {window.theme.t['text']};" in brand, (
         "the wordmark is still painted in a secondary tone")
-    version = TH.label_qss(window.theme.t, "version")
-    assert "font-size: 11px" in version, (
-        "the version pill changed too — the point was to separate them")
+    # THE VERSION LINE, READ WHERE IT ACTUALLY RENDERS. This used to read
+    # a `version` LABEL ROLE — 11px/500/text_faint — which nothing in the
+    # app had styled anything with since v15 moved the line into the
+    # sidebar's status rail. So the assertion passed by measuring a
+    # constant, and would have kept passing if the real line had moved to
+    # 20px. sidebar_version_qss is the thing that renders it (deriving its
+    # size from the `caption` role rather than declaring one), and the
+    # dead role went with this change.
+    version = TH.sidebar_version_qss(window.theme.t)
+    assert f"font-size: {TH.TYPE['meta']}px" in version, (
+        "the version line changed too — the point was to separate them")
+    assert TH.TYPE["meta"] < TH.TYPE["brand"], (
+        "the wordmark no longer outsizes the version line beside it, which "
+        "is the separation this whole test exists to hold")
 
 
 # ============================================================
