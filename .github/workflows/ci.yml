@@ -165,14 +165,14 @@ jobs:
         run: python -m pip install --upgrade pip -r requirements-dev.txt
 
       # NOTE: QT_QPA_PLATFORM is deliberately NOT set to offscreen.
-      # 115 of the 838 collected tests are marked `native` — they hit-test
+      # 80 of the 991 collected tests are marked `native` — they hit-test
       # the non-client area, query DWM and pump real Win32 messages, none
       # of which exist on the offscreen platform plugin. GitHub's
       # windows-latest runners provide a real window station, so the full
       # suite runs here. conftest.pytest_collection_modifyitems skips the
       # native set automatically if this ever lands somewhere headless, so
-      # a desktop-less runner degrades to ~716 green tests instead of the
-      # full 838 — but that would be a silent loss of coverage, hence the
+      # a desktop-less runner degrades to 911 green tests instead of the
+      # full 991 — but that would be a silent loss of coverage, hence the
       # explicit floor asserted in the step below.
       #
       # There is no GPU path to cover any more: v10.6 deleted the ambient
@@ -258,14 +258,26 @@ jobs:
       # loses its desktop session, the suite would still be "green" while
       # silently testing a quarter of what it should. Fail loudly instead.
       #
-      # THE FLOOR HAS TO TRACK THE SUITE, and it had stopped: written when
-      # 713 tests collected and 106 were native, it stayed at 670 while the
-      # suite grew to 838 with 115 native. A headless runner would have run
-      # ~716 — comfortably OVER the old floor — so the guard would have
-      # passed while testing none of the Win32 behaviour it exists to
-      # protect. 780 sits above the headless figure and below the ~830 a
-      # healthy run executes (840 collected, 1 environment skip, and the
-      # 2 playbook tests that skip on an elevated runner by design).
+      # THE FLOOR HAS TO TRACK THE SUITE, and it does not do so by itself.
+      # It was written when 713 collected and 106 were native, then sat at
+      # 670 while the suite grew — a headless runner would have executed
+      # more than the floor demanded, so the guard would have passed while
+      # testing none of the Win32 behaviour it exists to protect. That is
+      # the failure this number keeps re-acquiring, and re-measuring it is
+      # the only fix; the figures below were counted, not adjusted.
+      #
+      # Today: 991 collected, 80 of them native (`pytest --collect-only
+      # -m native`). So a desktop-less runner executes 911, and a healthy
+      # one executes at least 988 — 991 less one environment skip
+      # (test_process_job's non-Windows degradation path) and the 2
+      # playbook tests that skip on an elevated runner by design.
+      #
+      # 950 sits between the two with room on both sides: 39 clear of the
+      # headless figure, 38 under the worst healthy run. Note the native
+      # subset SHRANK (115 -> 80) while the suite grew, largely with v10.6
+      # deleting the ambient field and its renderer, so the gap this guard
+      # watches is narrower than it used to be — do not raise the floor
+      # toward the healthy figure without re-counting both.
       - name: Assert the native tests actually ran
         shell: powershell
         run: |
@@ -275,8 +287,8 @@ jobs:
           $skipped = [int]$suite.skipped
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
-          if ($ran -lt 780) {
-            Write-Error "Only $ran test(s) executed - expected the full native suite (>=780). The runner is probably headless, or collection broke."
+          if ($ran -lt 950) {
+            Write-Error "Only $ran test(s) executed - expected the full native suite (>=950). The runner is probably headless, or collection broke."
             exit 1
           }
 
