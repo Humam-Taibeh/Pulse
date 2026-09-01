@@ -19,6 +19,70 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.9.3] — 2026-09-02
+
+The two themes stopped rendering as two different apps.
+
+Everything here came out of reading a light-mode and a dark-mode
+screenshot of the dashboard side by side. Three of the four defects are
+why the modes did not look like the same product, and none of them raises
+— the suite was green through all of them.
+
+### Fixed
+- **The sidebar drew four outlined boxes in light mode.** The nav rail was
+  the one place in the app painting a theme-agnostic edge: it took the
+  bevel painter's own defaults (0.14 white / 0.20 black) instead of the
+  theme's, and the two canvases receive that diagonal in opposite
+  directions. On obsidian both halves vanish into the panel, so dark got
+  the airy "ghost rail" the design specifies; on porcelain both land, so
+  every entry wore a closed grey rectangle — an outline around a row whose
+  fill is transparent. The weights come from the theme now, and are spent
+  only where a row actually has a surface: full when selected, ramping in
+  under the pointer.
+- **A health tile lost its severity colour on every theme switch.** ACTIONS
+  DUE is emerald at zero and amber above it — a state no threshold on the
+  number itself would express — but re-theming re-derived the tone from
+  the ratio and discarded the override. The same three overdue actions
+  therefore read amber in whichever mode the app started in and plain
+  indigo in the other. The override is stored as a token name now and
+  re-resolved against whichever palette is current.
+- **The search box led with a colour emoji**, the last one left in the
+  app's persistent chrome, sitting above four monochrome Fluent icons it
+  did not match. It is a real line icon now, rendered from the same glyph
+  table at the screen's device pixel ratio, with the emoji kept as the
+  fallback where Windows has no icon font.
+- **The MODULES label sat two pixels left of the column it names.** The
+  rail's left rule had three spellings; it has one, and the nav entries
+  read it rather than repeating it.
+
+### Changed
+- **The label roles are back on the type scale.** Eleven type decisions —
+  every card title, every dialog heading, the page header, the wordmark —
+  were bare strings outside `TYPE`, invisible to the test that exists to
+  catch exactly that. Three sizes that existed nowhere in the scale are
+  steps now, added with their reasons rather than snapped onto a
+  neighbour. No rendered size moves: verified by generating all 178 QSS
+  strings the app can build, in both themes, against the old tables.
+- **The icon plaque's retired material is gone.** Six tokens and helpers
+  described a halo, an outer hairline, a lit inner rim and an accent wash
+  that nothing has painted since 10.6, and the docs still described all of
+  it. The module-glyph contrast floor was being computed *through* that
+  dead wash — so it measured a surface the product no longer had, and
+  would have kept passing if the real well had been taken to an alpha that
+  swallowed the glyph. It now measures the neutral the app actually
+  paints, across five surfaces where it checked one, worst case 4.12:1
+  against a 3:1 floor.
+
+### Internal
+- CI's native-suite floor re-measured rather than adjusted: 991 collected,
+  80 native, so a desktop-less runner executes 911 and the floor moves
+  670 → 950. The native subset has *shrunk* (115 → 80) while the suite
+  grew, which the old figures had no way to show.
+- pytest 990 passed / 0 failed. Every new guard was confirmed to fail
+  against the shipped behaviour before it passed against the fix.
+
+---
+
 ## [10.9.2] — 2026-08-31
 
 A modern Setup wizard, and four defects that only a long session would
