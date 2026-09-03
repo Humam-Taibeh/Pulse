@@ -55,7 +55,7 @@ from frontend import menu_structure as MS
 # native (threading process ownership through main.py) would either block
 # the dialog's own loading UI or duplicate PowerShellTask's cancellation-
 # safe process/thread bookkeeping here.
-from utils import appicons, resources, updater  # noqa: E402
+from utils import appicons, datastore, resources, updater  # noqa: E402
 from utils.helpers import (  # noqa: E402
     PowerShellTask, SelfUpdateInstallWorker, TaskResult,
 )
@@ -3995,6 +3995,150 @@ class ConfirmDialog(PulseDialog):
     def _choose_preview(self):
         self.preview = True
         self.accept()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        _present_dialog(self)
+
+
+class DataHygieneDialog(PulseDialog):
+    """What Pulse is keeping on this machine, and the way to remove it.
+
+    THE PROMPT THAT PROMPTED THIS. The uninstaller offers to remove
+    "your theme, window position and per-task run history" — accurate
+    about what it deletes, and for that reason more misleading rather than
+    less: everything under LOCALAPPDATA\\PULSE stayed, which is where
+    the Edge bookmarks, the evacuated OneDrive files and the exported
+    driver packages actually are. This is the surface that makes those
+    visible and removable while Pulse is still installed.
+
+    EVERY ROW STATES WHAT LOSING IT COSTS, in the words needed to decide.
+    "Clear cache" is the wording that gets someone to delete their own
+    documents; datastore.CATEGORIES carries a real consequence per
+    category and the irreplaceable ones (Edge, OneDrive, Startup) confirm
+    through the destructive ConfirmDialog rather than purging on one
+    click.
+    """
+
+    def __init__(self, parent: QWidget, t: dict):
+        super().__init__(parent)
+        self._t = t
+        panel = _dialog_chrome(self, t, t["accent"], width=640)
+        lay = dialog_body(panel, "sm")
+
+        head = QLabel("🗂️  Data Pulse keeps on this PC")
+        head.setWordWrap(True)
+        head.setStyleSheet(TH.label_qss(t, "dialog"))
+        lay.addWidget(head)
+
+        self._summary = QLabel()
+        self._summary.setWordWrap(True)
+        self._summary.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._summary)
+
+        self._rows_host = QWidget()
+        self._rows = QVBoxLayout(self._rows_host)
+        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._rows.setSpacing(TH.SPACE["xs"])
+        lay.addWidget(self._rows_host)
+
+        close = QPushButton("Close")
+        close.setStyleSheet(TH.dialog_cancel_qss(t))
+        close.clicked.connect(self.accept)
+        dialog_footer(lay, close)
+
+        self._reload()
+
+    # -- rendering -------------------------------------------------
+    def _reload(self):
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        entries = datastore.scan()
+        total = sum(e["bytes"] for e in entries)
+        self._summary.setText(
+            f"{StorageAnalyzerDialog._human(total)} in total, across "
+            f"{len(entries)} categories. Nothing here is removed "
+            f"automatically except downloaded installers.")
+
+        for entry in entries:
+            self._rows.addWidget(self._build_row(entry))
+
+    def _build_row(self, entry: dict) -> QWidget:
+        t = self._t
+        row = QFrame()
+        row.setStyleSheet(TH.action_row_qss(t, t["accent"],
+                                            danger=not entry["reproducible"]))
+        outer = QVBoxLayout(row)
+        row_padding(outer)
+        outer.setSpacing(TH.SPACE["xxs"])
+
+        top = QHBoxLayout()
+        top.setSpacing(TH.SPACE["sm"])
+        title = QLabel(f"{entry['label']} — "
+                       f"{StorageAnalyzerDialog._human(entry['bytes'])}")
+        title.setStyleSheet(TH.label_qss(t, "card"))
+        top.addWidget(title)
+        top.addStretch()
+
+        purge = QPushButton("Remove")
+        purge.setEnabled(entry["bytes"] > 0)
+        purge.setStyleSheet(
+            TH.action_button_qss(t, t["accent"],
+                                 danger=not entry["reproducible"]))
+        purge.setAccessibleName(f"Remove {entry['label']}")
+        purge.clicked.connect(lambda _=False, e=entry: self._purge(e))
+        top.addWidget(purge)
+        outer.addLayout(top)
+
+        detail = QLabel(entry["consequence"])
+        detail.setWordWrap(True)
+        detail.setStyleSheet(TH.label_qss(t, "caption"))
+        outer.addWidget(detail)
+        return row
+
+    # -- removal ---------------------------------------------------
+    def _purge(self, entry: dict):
+        """Irreplaceable categories confirm; reproducible ones do not.
+
+        The distinction is the point of the whole dialog: a log and a
+        user's evacuated OneDrive files must not be one click apart with
+        the same weight behind them.
+        """
+        if not entry["reproducible"]:
+            confirm = ConfirmDialog(self, {
+                "icon": "⚠️",
+                "title": f"Remove {entry['label']}?",
+                "desc": entry["consequence"] + "  This cannot be undone.",
+                "task": "@data_purge",
+                "danger": True,
+            }, self._t)
+            try:
+                if confirm.exec() != QDialog.DialogCode.Accepted:
+                    return
+                if confirm.preview:
+                    return      # nothing to simulate; treat as "not now"
+            finally:
+                confirm.deleteLater()
+
+        files, freed = datastore.purge(entry["key"])
+        self._reload()
+        parent = self.parent()
+        if hasattr(parent, "toasts"):
+            if files:
+                parent.toasts.show(
+                    "success",
+                    f"Removed {files} item(s) — "
+                    f"{StorageAnalyzerDialog._human(freed)} freed.", 4000)
+            else:
+                parent.toasts.show(
+                    "info",
+                    f"Nothing was removed from {entry['label']} — the files "
+                    "may be in use.", 4000)
 
     def showEvent(self, e):
         super().showEvent(e)

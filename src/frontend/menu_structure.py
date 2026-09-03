@@ -836,6 +836,16 @@ CATEGORIES = [
                 {"icon": "📜", "title": "View Operation Log",
                  "desc": "Open the full Pulse operation log.",
                  "glyph": "log", "task": "@open_log"},
+                # The counterpart to every backup the app takes. Backups
+                # are written once and never expire — deliberately, since
+                # Backups\OneDrive holds files evacuated before the client
+                # was uninstalled and an age cap there would delete the
+                # user's only copy on a timer. So they are surfaced and
+                # removable by hand instead (see utils/datastore).
+                {"icon": "🗂️", "title": "Data & Storage",
+                 "desc": "See what Pulse keeps on this PC — logs, backups and "
+                         "rescued files — and remove any of it.",
+                 "glyph": "folder", "task": "@data_hygiene"},
             ]},
         ],
     },

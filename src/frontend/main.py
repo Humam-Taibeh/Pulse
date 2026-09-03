@@ -71,7 +71,8 @@ from frontend.menu_structure import (  # noqa: E402
 from frontend.widgets import (  # noqa: E402
     ActivationStatusDialog, ActivityDrawer,
     BrandMark,
-    CloseConfirmDialog, CommandPalette, ConfirmDialog, DepthCard,
+    CloseConfirmDialog,
+    DataHygieneDialog, CommandPalette, ConfirmDialog, DepthCard,
     ContextMenuDialog, DnsSwitcherDialog, ElidedCaption,
     BloatwarePurgeDialog,
     ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
@@ -3212,6 +3213,12 @@ class PulseApp(QMainWindow):
             return
         if task == "@restore_points":
             self._exec_dialog(RestorePointDialog(self, self.ps1_path, self.theme.t))
+            return
+        # Pure Python, no engine call: it reads and removes files under
+        # %LOCALAPPDATA%\PULSE, which the GUI owns and the backend has no
+        # part in.
+        if task == "@data_hygiene":
+            self._exec_dialog(DataHygieneDialog(self, self.theme.t))
             return
 
         desktop = resources.desktop_dir()

@@ -270,6 +270,7 @@ Type: dirifempty; Name: "{app}"
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Key: String;
+  DataDir: String;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
@@ -283,6 +284,39 @@ begin
                 'history. Choose No if you plan to reinstall.',
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
         RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, Key);
+    end;
+
+    { ------------------------------------------------------------
+      THE SECOND HALF, WHICH WAS MISSING. The prompt above is accurate
+      about what it deletes and for that reason was the more misleading
+      for it: a user reading "theme, window position and run history"
+      reasonably concludes that is everything, while %LOCALAPPDATA%\PULSE
+      stayed untouched — and that is where the material actually is.
+
+      NAMED, NOT SUMMARISED. "Also delete application data" invites Yes
+      from someone who would say No to "your rescued OneDrive files",
+      which is what is actually in there: Backup-OneDriveFiles evacuates
+      every local sync root before the client is uninstalled, so for
+      anything not synced elsewhere this folder is the only copy. The
+      wording has to carry that or the consent is not informed.
+
+      DEFAULT IS NO, and separate from the settings question above,
+      because the two have very different costs to get wrong: losing a
+      window position is an inconvenience and losing evacuated documents
+      is not recoverable.
+      ------------------------------------------------------------ }
+    DataDir := ExpandConstant('{localappdata}\PULSE');
+    if DirExists(DataDir) then
+    begin
+      if MsgBox('Also delete the files PULSE saved on this PC?' + #13#10#13#10 +
+                DataDir + #13#10#13#10 +
+                'This includes the operation log, your Edge bookmark backup, ' +
+                'any files rescued from OneDrive before it was removed, and ' +
+                'exported driver backups.' + #13#10#13#10 +
+                'For files rescued from OneDrive this may be the only copy. ' +
+                'Choose No to keep them.',
+                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        DelTree(DataDir, True, True, True);
     end;
   end;
 end;
