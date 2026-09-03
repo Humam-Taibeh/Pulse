@@ -19,6 +19,66 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.9.4] — 2026-09-03
+
+The live console finally says what colour the backend meant, the state
+pill keeps its own clock, and two numbers in the project's own docs
+stopped disagreeing with this changelog.
+
+### Added — console severity colour
+- **`LiveConsole` tints every line by the severity the backend actually
+  reported.** `Write-Success` / `Write-Warn` / `Write-ErrorX` colour their
+  PowerShell host output with `-ForegroundColor`, and that colour never
+  survives the pipe `Popen` reads from — `Console.Out` is not a console —
+  so a 500-line winget/DISM transcript put a real failure in the exact
+  same flat colour as routine progress noise, and the console had no way
+  to answer "did anything go wrong in here?" without reading every word.
+  `_console_line_tone()` recovers the severity from the TEXT these
+  helpers always emit — the `SUCCESS|`/`ERROR|` verdict line, the ✓/✗
+  marks, the `!` warn prefix — and applies it as a `QTextCharFormat`
+  overlay on the block just written; `toPlainText()` (what copy/export
+  read) is unaffected. `[DRY-RUN]`/`[WHATIF]` is checked first, so a
+  simulated run's own `SUCCESS|[DRY-RUN] ... simulated` verdict reads
+  amber, not green — it must not look like a real success in the one
+  place meant to show it wasn't.
+- **Auto-scroll now pauses for a reader who has scrolled up.** It
+  previously snapped to the newest line on every single append, so
+  scrolling up mid-task to re-read an error was undone by the very next
+  line of output. Both `append_line` and the carriage-return path
+  (`_replace_last_line` — winget/SFC/DISM progress) now check whether the
+  scrollbar was already at its maximum *before* the line arrived, and
+  only follow if it was.
+
+### Added — a clock on the state pill
+- **`StatePill` shows `RUNNING · 02:41` instead of a bare `RUNNING`.** The
+  per-task duration history recorded for a card's own "last run" line
+  (v10.1) made a *live* elapsed reading possible from data Pulse already
+  collects; nothing had wired it to the pill, which said RUNNING for the
+  full length of an eight-minute install with no sense of how long it had
+  already run. A 1-second `QTimer` owned by the pill itself starts on
+  `set_state("running")` and stops on any terminal state — no call site
+  elsewhere changed.
+
+### Fixed — the project's own docs disagreed with its own changelog
+- **`ROADMAP.md` opened with "Current release: v10.0 · 80-test regression
+  suite"** while the actual release was v10.9.3 at 991 collected tests —
+  a fact this very changelog's own 10.9.3 entry below states. `README.md`
+  carried two further stale counts (713 and 838) for the same suite,
+  disagreeing with each other as well as with reality. All three now read
+  the number this release measured directly (`pytest --collect-only`):
+  1,012.
+
+### Internal
+- 21 new tests across `tests/test_console_polish.py` and
+  `tests/test_state_pill_elapsed.py`, each written and confirmed failing
+  against the pre-fix code before the corresponding change made it pass —
+  the console's colour classification, the sticky-scroll rule, and the
+  pill's clock arithmetic (including the minute rollover) are all pinned
+  directly rather than by inspection.
+- pytest 1,012 collected / 1,011 passed / 1 skipped / 0 failed.
+
+---
+
 ## [10.9.3] — 2026-09-02
 
 The two themes stopped rendering as two different apps.
