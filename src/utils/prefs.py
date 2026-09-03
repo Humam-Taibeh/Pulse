@@ -48,6 +48,31 @@ HISTORY_LIMIT = 120
 # estimate.
 HISTORY_RUNS_WEIGHT = 5
 
+#: A duration above this did not happen, and is refused rather than
+#: averaged (see record_task_run).
+#:
+#: THE CASE IS A SUSPENDED MACHINE. A task in flight when the lid closes
+#: resumes with an elapsed time measured across the sleep, and that value
+#: goes into an exponential moving average which is PERSISTED - so one
+#: overnight suspend makes a card advertise a typical duration of several
+#: hours, and the EMA's memory keeps it advertising it for many runs
+#: after. The existing `duration_ms <= 0` guard covers a clock that went
+#: backwards; nothing covered one that jumped forward.
+#:
+#: DECIDABLE BECAUSE OF THE WATCHDOG: every task is killed at its own
+#: timeout (helpers.PowerShellTask), and the largest configured anywhere
+#: is 3600s, so no genuine run can exceed that. Two hours leaves a full
+#: hour of headroom above the longest possible task while still catching
+#: any suspend worth noticing.
+#:
+#: Deliberately phrased as "implausible", not "asleep": the same guard
+#: covers a VM snapshot restore, a hibernation and a debugger pause, and
+#: it needs to know which one happened no more than it needs to know what
+#: time.monotonic() does across S3 - which, resolving to
+#: QueryPerformanceCounter here, is not something the suite can test
+#: without suspending the machine running it.
+MAX_PLAUSIBLE_RUN_MS = 2 * 3600 * 1000
+
 
 def _settings() -> QSettings:
     return QSettings(_ORG, _APP)
@@ -149,6 +174,14 @@ def record_task_run(task: str, duration_ms: float, outcome: str):
     if not task or task.startswith("@"):
         return
     if duration_ms <= 0:
+        return
+    # Refused, not clamped. Clamping to the ceiling would still teach the
+    # average something that never happened - the point is that this
+    # sample carries no information about how long the task takes, so the
+    # honest thing is to keep the history it already had. The run count is
+    # left alone too: incrementing it would tighten the EMA weight on the
+    # strength of a measurement that was thrown away.
+    if duration_ms > MAX_PLAUSIBLE_RUN_MS:
         return
 
     history = task_history()
