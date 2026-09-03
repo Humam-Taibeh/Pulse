@@ -51,7 +51,9 @@ _SRC_DIR = os.path.dirname(_FRONTEND_DIR)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from utils import appicons, prefs, resources, updater, version  # noqa: E402
+from utils import (  # noqa: E402
+    appicons, crashlog, prefs, resources, updater, version,
+)
 from utils.helpers import (  # noqa: E402
     PowerShellTask, SelfUpdateCheckWorker, SystemPulseSampler, TaskResult,
     ToastManager, has_battery,
@@ -1684,6 +1686,9 @@ class PulseApp(QMainWindow):
         #: does not exist until the window is shown, so the connection is
         #: made in showEvent and this keeps it to exactly one.
         self._screen_hooked = False
+        #: True while a Win32 shutdown block is registered. Mirrors _busy()
+        #: through _sync_shutdown_block; see SHUTDOWN_BLOCK_REASON.
+        self._shutdown_blocked = False
 
         # v10: the chosen theme survives a restart (was hardcoded "dark",
         # so switching to light had to be redone on every launch).
@@ -2082,6 +2087,10 @@ class PulseApp(QMainWindow):
         """state: ready | busy | ok | err — colors come from live tokens.
         The dot itself breathes only while busy — see widgets.StatusDot."""
         self._status_state = state
+        # Every busy/idle transition in the app passes through here, which
+        # is why the shutdown block is driven from this line rather than
+        # from the four task/playbook entry points separately.
+        self._sync_shutdown_block()
         t = self.theme.t
         color = {"ready": t["ok"], "busy": t["warn"],
                  "ok": t["ok"], "err": t["err"]}[state]
@@ -3403,6 +3412,49 @@ class PulseApp(QMainWindow):
         if self._glass_applied:
             TH.apply_native_rounding(int(self.winId()), rounded=not flush)
 
+    #: What Windows shows beside Pulse on the "these apps are preventing
+    #: shutdown" screen. Names the consequence, not the app: the reader is
+    #: deciding whether to force it, and "applying changes" is the fact
+    #: that makes that decision differently.
+    SHUTDOWN_BLOCK_REASON = (
+        "Pulse is applying changes to this PC. Stopping now can leave them "
+        "half-applied.")
+
+    def _set_shutdown_block(self, reason: str | None):
+        """Claim or release the Win32 shutdown block. Isolated so the
+        decision above it can be tested without a Win32 call."""
+        if sys.platform != "win32":
+            return
+        try:
+            hwnd = ctypes.wintypes.HWND(int(self.winId()))
+            if reason:
+                ctypes.windll.user32.ShutdownBlockReasonCreate(
+                    hwnd, ctypes.c_wchar_p(reason))
+            else:
+                ctypes.windll.user32.ShutdownBlockReasonDestroy(hwnd)
+        except (OSError, AttributeError, RuntimeError, ValueError):
+            # A block reason is a courtesy to the shutdown UI. Failing to
+            # register one must never take down the task it describes.
+            pass
+
+    def _sync_shutdown_block(self):
+        """Hold a shutdown block exactly while the engine is mutating.
+
+        Called from _set_status, which every busy/idle transition already
+        goes through — so this follows the same signal the rest of the
+        chrome does rather than adding a fourth place to remember.
+
+        The guard is not just tidiness: _set_status fires several times
+        inside one task ("Executing: ...", each phase line, "Stopping
+        task..."), and re-registering per line would be invisible from the
+        UI and obvious to anyone watching the API.
+        """
+        busy = self._busy()
+        if busy == self._shutdown_blocked:
+            return
+        self._shutdown_blocked = busy
+        self._set_shutdown_block(self.SHUTDOWN_BLOCK_REASON if busy else None)
+
     def _on_screen_changed(self, _screen):
         """The window moved to another monitor — re-rasterise what was
         baked for the old one.
@@ -3633,6 +3685,9 @@ class PulseApp(QMainWindow):
     # Windows 11 Snap Layouts flyout.
     _HT_CAPTION = {"min": 8, "max": 9, "close": 20}
     _HTMAXBUTTON = 9
+    #: Windows asking whether the session may end (shutdown, restart,
+    #: log off). Answered in nativeEvent while the engine is busy.
+    _WM_QUERYENDSESSION = 0x0011
     _WM_NCHITTEST = 0x0084
     _WM_NCCALCSIZE = 0x0083
     _WM_NCLBUTTONDOWN = 0x00A1
@@ -3704,6 +3759,23 @@ class PulseApp(QMainWindow):
            custom-titlebar guidance prescribes).
         """
         if sys.platform == "win32" and eventType == b"windows_generic_MSG":
+            # 3. SESSION END, answered BEFORE the titlebar guard below:
+            #    shutdown does not need a title bar to exist, and refusing
+            #    to answer because the window is half-built would be the
+            #    one moment the answer mattered most.
+            #
+            #    closeEvent already refuses to close while the engine is
+            #    mutating this machine, for a reason it states plainly: a
+            #    half-applied purge is worse than either outcome. Windows
+            #    ending the session does not go through closeEvent at all,
+            #    so that policy had a hole exactly the shape of a Windows
+            #    Update reboot. Answering FALSE here closes it. Idle, the
+            #    message is left alone — an app that blocks shutdown with
+            #    nothing in flight is its own defect.
+            probe = ctypes.wintypes.MSG.from_address(int(message))
+            if probe.message == self._WM_QUERYENDSESSION and self._busy():
+                return True, 0
+
             # Native messages can arrive while the window is still being
             # constructed — before the title bar exists, fall through to Qt.
             titlebar = getattr(self, "titlebar", None)
@@ -3889,8 +3961,26 @@ def main() -> int:
     icon_path = _locate_icon()
     if icon_path:
         app.setWindowIcon(QIcon(icon_path))
-    window = PulseApp()
-    window.show()
+
+    # Installed AFTER the QApplication exists, because the handler's own
+    # notification needs one, and BEFORE the window is built, because
+    # construction is one of the two places this exists to cover. See
+    # utils/crashlog: a windowed build has no stderr, so without this an
+    # exception here ends the process with nothing shown and nothing
+    # written.
+    crashlog.install(APP_VERSION)
+
+    try:
+        window = PulseApp()
+        window.show()
+    except Exception:
+        # A failure here means no window will ever appear, so the generic
+        # "may not behave correctly until restarted" wording of the hook
+        # would be wrong - this IS the end of the run. Report it as such,
+        # then exit non-zero rather than falling into an event loop with
+        # nothing on screen.
+        crashlog.handle(*sys.exc_info())
+        return 1
     return app.exec()
 
 

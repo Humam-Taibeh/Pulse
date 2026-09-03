@@ -850,6 +850,13 @@ def test_the_elevated_surface_is_the_one_the_spec_names(mode):
 # ============================================================
 #  9. THE NAV RAIL'S EDGE
 # ============================================================
+# NATIVE: this renders a real nav row and reads the pixels back off its
+# four edges. Qt's offscreen platform composites differently enough that
+# the measurement does not hold there — the test failed on any headless
+# machine while claiming to be platform-independent, which made a green
+# local run mean less than it looked like it did. CI runs with a real
+# desktop, so this has always executed there and still does.
+@pytest.mark.native
 @pytest.mark.parametrize("mode", ["dark", "light"])
 def test_the_nav_rail_carries_no_edge_at_rest(mode, qapp):
     """A BEVEL IS AN EDGE ON A SURFACE, AND A RESTING NAV ROW IS NOT ONE.
