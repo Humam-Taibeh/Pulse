@@ -361,12 +361,51 @@ def test_uninstall_asks_before_deleting_preferences(iss):
     assert "MB_YESNO" in iss
 
 
-def test_signing_is_wired_but_inert(iss):
-    """Unsigned today (SmartScreen will warn); the hook exists so enabling
-    it is a one-line change rather than a new feature."""
-    assert "SignTool" in iss
-    assert re.search(r"^;\s*SignTool=", iss, re.MULTILINE), (
-        "SignTool is enabled but no certificate is configured")
+def test_unsigned_by_default_is_explained_in_the_installer_script(iss):
+    """pulse.iss itself is not where signing happens (see the build-script
+    tests below) — Inno refuses to compile at all if a script declares
+    SignTool without a matching /S<name>=... on the command line, which
+    would break every ordinary unsigned build rather than just skip signing
+    for it. What belongs here is the reader-facing explanation of why an
+    unsigned build trips SmartScreen, so a future edit that deletes it
+    doesn't also delete the reason nobody "fixed" this with a directive."""
+    assert "SMARTSCREEN" in iss
+    assert "SignTool" in iss, (
+        "the signing section no longer mentions build_release.ps1's "
+        "post-build mechanism — see test_signing_is_opt_in_and_off_by_default")
+
+
+def test_signing_is_opt_in_and_off_by_default(build_script):
+    """The actual signing hook: build_release.ps1 -SignThumbprint. Off by
+    default (an ordinary `.\\tools\\build_release.ps1` run with no
+    certificate configured must produce an unsigned build exactly as it
+    always has, not a warning nobody asked for and not a throw) — so the
+    default path is pinned as directly as the opt-in one."""
+    assert "[string]$SignThumbprint" in build_script
+    assert "$env:PULSE_SIGN_THUMBPRINT" in build_script
+    assert re.search(r"if\s*\(-not \$SignTool\)\s*\{\s*return\s*\}", build_script), (
+        "Sign-Artifact no longer no-ops when signing was never requested")
+
+
+def test_a_self_signed_certificate_is_flagged_not_trusted(build_script):
+    """A self-signed dev certificate (tools/create_dev_signing_cert.ps1)
+    produces a mechanically valid signature that satisfies nobody's trust
+    chain but the machine that made it — confirmed empirically: signtool
+    sign succeeds against one unconditionally, and signtool verify then
+    correctly reports the chain as untrusted. The build script has to say
+    so where a release engineer would actually see it, not just in the dev
+    certificate's own header comment."""
+    assert "self-signed" in build_script
+    assert "SmartScreen" in build_script and "Smart App Control" in build_script
+
+
+def test_a_signed_artifact_is_verified_before_it_ships(build_script):
+    """signtool sign succeeding is not the same claim as the signature
+    being valid — Sign-Artifact must check both, or a certificate/signing
+    problem ships silently as a build that merely LOOKS signed."""
+    assert "signtool sign failed" in build_script
+    assert "signtool verify failed" in build_script
+    assert re.search(r"&\s*\$SignTool\s+verify\s+/pa\s+/q", build_script)
 
 
 # ============================================================

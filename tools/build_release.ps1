@@ -34,7 +34,18 @@
 [CmdletBinding()]
 param(
     [switch]$SkipInstaller,
-    [switch]$KeepBuild
+    [switch]$KeepBuild,
+    # Authenticode-signs PULSE.exe and the compiled installer when set. A
+    # THUMBPRINT, not a PFX path/password: signtool looks the certificate up
+    # in the Windows certificate store, so no private-key material ever
+    # passes through this script's arguments, environment, or a build log.
+    # Defaults to $env:PULSE_SIGN_THUMBPRINT so CI can configure it without
+    # a script change. See tools/create_dev_signing_cert.ps1 for a TEST-ONLY
+    # certificate to exercise this path — it does not make a signed build
+    # trusted by anyone but the machine that made it; only a certificate
+    # chained to a CA in Microsoft's trust program does that (ROADMAP.md,
+    # "Code signing via Azure Trusted Signing").
+    [string]$SignThumbprint = $env:PULSE_SIGN_THUMBPRINT
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,6 +136,100 @@ if (-not $SkipInstaller) {
     Write-Detail "iscc            $Iscc"
 }
 
+# SIGNING IS OPT-IN AND OFF BY DEFAULT. No certificate is configured for
+# most runs of this script, and that must produce an ordinary unsigned
+# build exactly as it always has — not a warning nobody asked for, and
+# not a throw. It becomes mandatory-and-loud only once a caller HAS asked
+# for it: passing -SignThumbprint and then silently shipping unsigned
+# because signtool was missing would be worse than not offering signing
+# at all, because a "signed" build claim in the CI log would be a lie.
+$SignTool = $null
+$SigningCert = $null
+if ($SignThumbprint) {
+    # Same @() scalar hazard as the ISCC lookup above (Where-Object
+    # collapses a single surviving candidate to a bare string).
+    $SignToolCandidates = @(@(
+        (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+        # Windows Kits ships one signtool.exe per SDK version per
+        # architecture; take the newest SDK's x64 build. A hand-picked
+        # single path would break on the next SDK update.
+        (Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like '*\x64\*' } |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName)
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+    if (-not $SignToolCandidates) {
+        throw 'signtool.exe was not found. Install the Windows SDK (or Visual Studio''s "Windows 10/11 SDK" component), or omit -SignThumbprint to build unsigned.'
+    }
+    $SignTool = $SignToolCandidates[0]
+    Write-Detail "signtool        $SignTool"
+
+    # Fail before spending four minutes in PyInstaller, not after: a typo'd
+    # thumbprint or an expired dev cert should be a ten-second preflight
+    # error, not a surprise at the signing step with a finished bundle
+    # sitting there unsigned.
+    $SigningCert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+        Where-Object { $_.Thumbprint -eq $SignThumbprint } | Select-Object -First 1
+    if (-not $SigningCert) {
+        throw "No certificate with thumbprint $SignThumbprint was found in CurrentUser\My or LocalMachine\My. Run tools\create_dev_signing_cert.ps1 for a test certificate, or check the thumbprint against your real one."
+    }
+    if ($SigningCert.NotAfter -lt (Get-Date)) {
+        throw "The certificate $SignThumbprint expired on $($SigningCert.NotAfter.ToString('yyyy-MM-dd'))."
+    }
+    Write-Detail "sign cert       $($SigningCert.Subject) (expires $($SigningCert.NotAfter.ToString('yyyy-MM-dd')))"
+    # A self-signed dev certificate builds a mechanically valid signature
+    # that satisfies nobody's trust chain but this machine's. Said loudly
+    # here, not just in create_dev_signing_cert.ps1's header, because this
+    # is the point in the log a CI run or a teammate would actually see it.
+    if ($SigningCert.Issuer -eq $SigningCert.Subject) {
+        Write-Warning "Certificate $SignThumbprint is self-signed. The resulting build will NOT be trusted by SmartScreen or Smart App Control on any machine but this one — this proves the signing pipeline works, it does not ship a trusted release."
+    }
+}
+else {
+    Write-Detail 'signing         skipped (no -SignThumbprint / $env:PULSE_SIGN_THUMBPRINT)'
+}
+
+function Sign-Artifact([string]$Path) {
+    # No-op when signing was never requested — every call site calls this
+    # unconditionally so the "did we sign it" decision lives in ONE place.
+    if (-not $SignTool) { return }
+    Write-Detail "signing $(Split-Path -Leaf $Path)"
+    $Previous = $ErrorActionPreference     # see the PyInstaller/ISCC calls
+    $ErrorActionPreference = 'Continue'
+    try {
+        # RFC3161 timestamping (/tr + /td), not the legacy /t: a timestamped
+        # signature stays valid after the certificate itself expires, which
+        # matters most for exactly the 3-year dev certificate this script
+        # is likeliest to be pointed at. DigiCert's responder is public and
+        # free to query regardless of who issued the signing certificate.
+        & $SignTool sign /sha1 $SignThumbprint /fd sha256 `
+            /tr 'http://timestamp.digicert.com' /td sha256 `
+            /d 'PULSE' $Path
+    }
+    finally {
+        $ErrorActionPreference = $Previous
+    }
+    if ($LASTEXITCODE -ne 0) { throw "signtool sign failed ($LASTEXITCODE) on $Path." }
+
+    # Trust the exit code, not the eye: verify the signature signtool just
+    # produced actually validates before this artifact ships as "signed".
+    # Confirmed empirically: signtool sign succeeds unconditionally, even
+    # with a self-signed certificate nobody trusts — verify is the step
+    # that actually distinguishes "mechanically signed" from "trusted".
+    & $SignTool verify /pa /q $Path
+    if ($LASTEXITCODE -ne 0) {
+        $Hint = if ($SigningCert.Issuer -eq $SigningCert.Subject) {
+            ' This is the expected result for a self-signed certificate this ' +
+            'machine has not been told to trust — re-run ' +
+            'tools\create_dev_signing_cert.ps1 with -TrustLocally to make this ' +
+            'machine''s own verification pass, or treat this as confirmation ' +
+            'that the pipeline works rather than a build to ship.'
+        } else { '' }
+        throw "signtool verify failed on $Path — the signature it just wrote does not validate.$Hint"
+    }
+}
+
 # A dirty tree is not fatal — a technician may be testing an unreleased fix
 # — but a release built from uncommitted code that nobody can reproduce is
 # worth one line of warning.
@@ -202,6 +307,12 @@ if ($Stamped.Split('.')[0..2] -join '.' -ne $Version) {
     throw "PULSE.exe reports '$Stamped' but VERSION is '$Version'."
 }
 
+# Signed before the payload checks below, not after: if signing corrupts
+# the binary somehow, the checks that follow are the ones that would
+# actually notice, rather than shipping a broken exe that merely LOOKS
+# signed.
+Sign-Artifact $ExePath
+
 # Onedir means the payload is real files rather than an embedded archive.
 # PyInstaller 6.x puts all of it under _internal\, which IS _MEIPASS — so
 # resources.bundled_roots() resolves there, and core.ps1's "..\..\VERSION"
@@ -267,6 +378,9 @@ if (-not $SkipInstaller) {
     if (-not (Test-Path -LiteralPath $SetupPath)) {
         throw "Expected $SetupPath — OutputBaseFilename in pulse.iss no longer matches."
     }
+    # Signed before the size is reported, so the number printed is the one
+    # that actually ships — an Authenticode signature adds a few KB.
+    Sign-Artifact $SetupPath
     Write-Detail ("setup size      {0:N1} MB" -f ((Get-Item -LiteralPath $SetupPath).Length / 1MB))
 }
 
@@ -301,6 +415,14 @@ else {
 # ============================================================
 Write-Step 'Done'
 Write-Host "    PULSE $Version" -ForegroundColor Green
+if ($SignTool) {
+    $Tone = if ($SigningCert.Issuer -eq $SigningCert.Subject) { 'Yellow' } else { 'Green' }
+    $Note = if ($SigningCert.Issuer -eq $SigningCert.Subject) { ' (self-signed — see the preflight warning above)' } else { '' }
+    Write-Host "    signed    yes, by $($SigningCert.Subject)$Note" -ForegroundColor $Tone
+}
+else {
+    Write-Host "    signed    no — pass -SignThumbprint to sign this build" -ForegroundColor DarkGray
+}
 Write-Host "    bundle    $BundleDir"
 if (-not $SkipInstaller) {
     Write-Host "    installer $SetupPath"

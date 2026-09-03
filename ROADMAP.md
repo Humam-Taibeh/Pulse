@@ -158,11 +158,15 @@ being zeroed. Latent today because every current call site passes a default.
   task name it claims to describe. *(v10.1)*
 - [x] **Last run & typical duration on cards**, derived from a persisted
   per-task history. *(v10.1)*
-- [ ] **Elapsed time in the state pill** — `RUNNING · 02:41`. The per-task
-  duration history added in v10.1 makes a *remaining*-time estimate possible
-  too, for the long installs where it actually helps.
-- [ ] **Console polish** — colorized SUCCESS / ERROR / `[DRY-RUN]` lines, and
-  auto-scroll that pauses while the user is scrolled up.
+- [x] **Elapsed time in the state pill** — `RUNNING · 02:41`, driven by a
+  `QTimer` the pill owns itself. *(v10.9.4)*
+- [ ] A *remaining*-time estimate on top of it, using the per-task duration
+  history added in v10.1 — not attempted yet. Elapsed-only was the easier,
+  more honestly answerable half: a typical duration is a median, not a
+  promise, and a wrong ETA reads as worse than no ETA for the long installs
+  where it would matter most.
+- [x] **Console polish** — colorized SUCCESS / ERROR / `[DRY-RUN]` lines, and
+  auto-scroll that pauses while the user is scrolled up. *(v10.9.4)*
 
 ## Phase 4 · Orchestration — **shipped v10.3**
 

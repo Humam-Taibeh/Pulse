@@ -305,24 +305,27 @@ python src\frontend\main.py
 
 ### Option A — Install the release *(recommended for use)*
 
-Download `PULSE_Setup_v10.4.0.exe` and `SHA256SUMS` from
+Download the latest `PULSE_Setup_v<version>.exe` and `SHA256SUMS` from
 [Releases](https://github.com/Humam-Taibeh/Pulse/releases), verify the installer, then run it.
 
 ```powershell
-# the digest must match the line in SHA256SUMS
-Get-FileHash .\PULSE_Setup_v10.4.0.exe -Algorithm SHA256
+# the digest must match the line in SHA256SUMS for the version you downloaded
+Get-FileHash .\PULSE_Setup_v<version>.exe -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
-> **v10.4 is a pre-release beta.** It is **unsigned**, so SmartScreen will
-> warn on first run — a published checksum proves the file was not altered
-> in transit, it does not prove who built it. Code signing remains a
-> [roadmap](#-roadmap) item, not a current guarantee.
+> **Pulse is still a beta and its releases are unsigned**, so Windows
+> SmartScreen and Smart App Control will flag it — expected, not a defect;
+> see [SmartScreen and Smart App Control](#-smartscreen-and-smart-app-control)
+> below for what that means and how to get past it safely. A published
+> checksum proves the file was not altered in transit; it does not prove
+> who built it — that's what code signing (a [roadmap](#-roadmap) item)
+> is for.
 >
-> What did change in v10.4: the release is built by
-> `tools/build_release.ps1` and ships `SHA256SUMS`, so the in-app updater
-> can verify a download before executing it. Earlier releases published no
-> checksum file, and the updater declined them — silently and correctly.
+> The release is built by `tools/build_release.ps1` and ships
+> `SHA256SUMS`, so the in-app updater can verify a download before
+> executing it — a release published without that file is one the
+> updater declines, silently and correctly.
 
 ### Option B — Run from source *(development)*
 
@@ -366,6 +369,72 @@ powershell -ExecutionPolicy Bypass -File src\backend\core.ps1
 ```
 
 It self-elevates if needed and presents the full hierarchical menu in the terminal. Add `-WhatIf` for a complete dry-run simulation that changes nothing.
+
+---
+
+## 🛡️ SmartScreen and Smart App Control
+
+Pulse's releases are **unsigned** — no certificate chained to a Certificate
+Authority in Microsoft's trust program stands behind them yet (tracked in
+the [roadmap](#-roadmap): code signing via Azure Trusted Signing). Windows
+weighs two things when it decides whether to trust a downloaded executable:
+whether it is signed by a CA it recognises, and how much download/run
+history that exact file or publisher has built up. An unsigned beta with a
+small user base starts at zero on both counts — that is what you are
+seeing, not a sign that the download is unsafe. **Verify the checksum
+first, regardless of which of the two systems below you're dealing with**
+(see [Option A](#-quick-start) above); it is the trust anchor Pulse can
+actually offer today.
+
+### Windows SmartScreen ("Windows protected your PC")
+
+The dialog Explorer shows when you double-click a freshly downloaded,
+unrecognized `.exe`. It has an override:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+If your machine doesn't offer that second button, its SmartScreen policy
+has been configured to *block* rather than *warn* — common on
+managed/corporate devices — and only whoever manages that policy can
+change it; there's nothing to click around on the machine itself.
+
+### Smart App Control
+
+A stricter, OS-wide enforcement mode (Windows 11 22H2 and later) — not the
+same feature as SmartScreen above, and it behaves very differently:
+
+- **There is no per-app allow-list.** Smart App Control doesn't offer a
+  "trust this program" exception the way SmartScreen or Defender's
+  exclusion list do. An app it doesn't recognise is blocked, full stop.
+- **It is a one-way switch.** Once you turn Smart App Control **Off**, the
+  only way to turn it back **On** is a clean install of Windows — this is
+  Microsoft's own documented behaviour, not a Pulse limitation. Don't
+  disable it on a whim.
+- To check its state or turn it off: **Windows Security → App & browser
+  control → Smart App Control settings.** A machine that already has it
+  **Off** was never going to see this problem, and one running it in
+  **Evaluation** mode is still deciding based on the same signing/reputation
+  signals described above.
+
+Until Pulse ships signed with a certificate Smart App Control's evaluation
+recognises, running it on a machine with Smart App Control **On** means
+either turning that setting off (and accepting you can't easily turn it
+back on) or waiting for a signed release.
+
+### What "signing infrastructure" in this repo does and does not mean
+
+`tools/build_release.ps1` can Authenticode-sign both release artifacts
+(`-SignThumbprint`), and `tools/create_dev_signing_cert.ps1` can generate a
+certificate to test that pipeline with. **Using that on a local,
+self-signed certificate does not stop these warnings for anyone who
+downloads Pulse** — a self-signed certificate chains to nothing Windows
+already trusts, so it changes nothing for a machine that hasn't been
+individually told to trust that exact certificate. It exists so that the
+day a real certificate is available, plugging in its thumbprint is the
+only change needed — not so a build can be represented as "signed" when
+what backs the signature is a certificate nobody but its own creator has
+any reason to trust.
 
 ---
 
@@ -581,13 +650,13 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Onedir bundle and Inno Setup installer (see [Building](#-building) for a caveat on the current release asset)
 - [x] CI: parse, lint at zero, Pester, pytest with a coverage floor
 - [x] Self-updater wired into the GUI — background check on launch, sidebar-footer manual check, `SelfUpdateDialog` owning download/verify/apply (still needs `SHA256SUMS` published on a release to be usable end-to-end — see [Safety Model](#-safety-model))
+- [x] Elapsed time in the state pill (`RUNNING · 02:41`) and console polish — colorized `SUCCESS` / `ERROR` / `[DRY-RUN]` lines, auto-scroll that pauses while you're scrolled up *(v10.9.4)*
 
 **Planned**
 
-- [ ] **Code signing** via Azure Trusted Signing — the `.exe` *and* the `.ps1` modules, so `AllSigned` execution policies can run the engine
+- [ ] **Code signing** via Azure Trusted Signing — the `.exe` *and* the `.ps1` modules, so `AllSigned` execution policies can run the engine. The signing *infrastructure* (`tools/build_release.ps1 -SignThumbprint`) is in place; what's missing is a certificate from a CA Microsoft's trust program recognises — see [SmartScreen and Smart App Control](#-smartscreen-and-smart-app-control)
 - [ ] **CI release builds** with published `SHA256SUMS`, a pre-release VirusTotal scan, and proactive AV false-positive submission
-- [ ] **Elapsed & remaining time in the state pill** (`RUNNING · 02:41`), derived from the duration history
-- [ ] **Console polish** — colorized `SUCCESS` / `ERROR` / `[DRY-RUN]` lines, and auto-scroll that pauses while you are scrolled up
+- [ ] A *remaining*-time estimate on top of the state pill's elapsed clock, derived from the duration history
 - [ ] **Scheduled unattended maintenance** via Task Scheduler, summarized on the next launch
 - [ ] **Persistent runspace** — one long-lived PowerShell host fed queued tasks, eliminating the ~400 ms per-step module-load cost a playbook pays today
 

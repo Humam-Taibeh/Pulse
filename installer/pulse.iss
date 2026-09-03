@@ -170,13 +170,31 @@ CloseApplicationsFilter=*.exe,*.dll,*.ps1
 ; ------------------------------------------------------------
 ;  SIGNING
 ; ------------------------------------------------------------
-; Wired but inert until a certificate exists. UNSIGNED BUILDS WILL TRIP
-; SMARTSCREEN on every download — that is expected, not a defect. Once a
-; cert is available, define the `signtool` command in the IDE/CLI and
-; uncomment these; the updater's Authenticode check (see updater.verify)
-; starts enforcing a publisher match at the same moment.
-; SignTool=signtool
-; SignedUninstaller=yes
+; UNSIGNED BUILDS WILL TRIP SMARTSCREEN on every download — that is
+; expected, not a defect, until a real certificate (chained to a CA in
+; Microsoft's trust program — see ROADMAP.md, "Code signing via Azure
+; Trusted Signing") exists.
+;
+; Signing itself is NOT done here. tools\build_release.ps1's -SignThumbprint
+; runs signtool against PULSE.exe and the compiled Setup.exe as a POST-BUILD
+; step, rather than through this file's own SignTool directive — Inno
+; refuses to compile at all if a script declares SignTool without the
+; matching /S<name>=... on the command line, which would break every
+; ordinary unsigned build (i.e. everyone, today) rather than just skip
+; signing for them. A post-build pass keeps "no certificate configured" the
+; default, working, silent case.
+;
+; NOT COVERED BY THIS: the generated uninstaller (unins000.exe) — it is
+; written to the install directory at INSTALL time, carries no
+; Mark-of-the-Web, and was never the thing tripping a download-time
+; SmartScreen warning. Inno's own SignTool=/SignedUninstaller=yes directives
+; remain the way to sign it too, if that ever matters enough to solve the
+; ISCC /S argument problem above.
+;
+; The updater's Authenticode check (see updater.authenticode_publisher)
+; stays advisory until a real certificate's publisher name is worth
+; requiring a match against — a self-signed one proves nothing a match
+; check could act on.
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
