@@ -114,3 +114,9 @@ HTCoreArchitecture_Log.txt
 HTCore_OneDriveBackup/
 HTCore_EdgeBackup/
 HTCore_StartupBackup/
+# Module integrity manifest — a BUILD artifact written by
+# tools/build_release.ps1 into src/backend/modules/ so PyInstaller bundles
+# it with the tree it describes. Never committed: a checked-in manifest
+# would make every source edit an integrity mismatch, and the first fix
+# anyone reached for would be to delete the check.
+MANIFEST.sha256

@@ -265,6 +265,43 @@ if (-not $KeepBuild -and (Test-Path -LiteralPath $BuildDir)) {
 }
 
 # ============================================================
+#  MODULE MANIFEST
+# ============================================================
+# WRITTEN BEFORE PYINSTALLER, and that ordering is the whole delivery
+# mechanism: main.spec copies src/backend/modules wholesale, so a manifest
+# sitting inside that directory ships with the tree it describes and needs
+# no spec entry of its own. A separate datas line would be one more thing
+# to forget - which this project has done before, and shipped v10.9.0 with
+# no vendor artwork because of it.
+#
+# core.ps1 verifies against this before dot-sourcing anything (see its
+# INTEGRITY GATE): the loader globs *.ps1 and executes what it finds under
+# an Administrator token, so on any deployment where that folder is
+# user-writable - a source checkout, the planned portable ZIP - dropping a
+# file in was enough to get elevated execution.
+#
+# Regenerated every build rather than updated: it describes THIS bundle,
+# and a stale entry is indistinguishable from a tampered file to the check
+# that reads it.
+Write-Step 'Module manifest'
+$ModulesDir = Join-Path $RepoRoot 'src\backend\modules'
+$ManifestPath = Join-Path $ModulesDir 'MANIFEST.sha256'
+if (Test-Path -LiteralPath $ManifestPath) { Remove-Item -LiteralPath $ManifestPath -Force }
+$ManifestLines = @()
+foreach ($Module in (Get-ChildItem -LiteralPath $ModulesDir -Filter '*.ps1' -File | Sort-Object Name)) {
+    $Hash = (Get-FileHash -LiteralPath $Module.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ManifestLines += "$Hash  $($Module.Name)"
+}
+if ($ManifestLines.Count -eq 0) {
+    throw "No backend modules found in $ModulesDir - the manifest would disable the integrity gate it exists to arm."
+}
+# Same "<lowercase sha256>  <filename>" shape as SHA256SUMS, so there is
+# one format to recognise. UTF8 without BOM: core.ps1 reads it back with
+# Get-Content and a BOM would corrupt the first digest.
+[System.IO.File]::WriteAllLines($ManifestPath, $ManifestLines, (New-Object System.Text.UTF8Encoding($false)))
+Write-Detail "manifest        $($ManifestLines.Count) modules hashed"
+
+# ============================================================
 #  BUNDLE
 # ============================================================
 Write-Step 'PyInstaller (onedir)'

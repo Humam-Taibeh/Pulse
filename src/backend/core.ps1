@@ -240,9 +240,83 @@ $Script:DryRun = [bool]$WhatIf
 # ============================================================
 $Script:ModuleRoot = Join-Path $PSScriptRoot "modules"
 $LoadingModule = "(none)"
+$IntegrityError = $null
 try {
     $ModuleFiles = @(Get-ChildItem -Path $Script:ModuleRoot -Filter "*.ps1" -File -ErrorAction Stop | Sort-Object Name)
     if ($ModuleFiles.Count -eq 0) { throw "No backend modules found in '$Script:ModuleRoot'." }
+
+    # ============================================================
+    #  INTEGRITY GATE — only code the build produced gets executed
+    # ============================================================
+    # THE LOADER ABOVE TAKES WHATEVER IT FINDS. It globs *.ps1 and
+    # dot-sources each one into THIS scope, under an Administrator token
+    # (main.spec's uac_admin) with -ExecutionPolicy Bypass. So an attacker
+    # never needed to modify a file to get elevated execution here -
+    # dropping a new one into the folder was enough, and it would run on
+    # the next launch.
+    #
+    # On an INSTALLED build that is already closed, and deliberately:
+    # Program Files is not user-writable, which installer/pulse.iss
+    # documents as exactly this defence. The exposure is the other
+    # channels - the README's supported "run from source" mode, which
+    # lives in a user-writable directory, and the portable ZIP planned as
+    # a secondary distribution.
+    #
+    # THE MANIFEST IS OPTIONAL BY DESIGN. It is a build artifact written
+    # by tools/build_release.ps1 and gitignored, so a developer checkout
+    # has none and runs unverified. Refusing there would make this a guard
+    # people work around rather than one they keep; absence means
+    # "unverified", a mismatch means "wrong".
+    #
+    # THREE FAILURES, and only the first is tampering in the obvious sense:
+    #   MODIFIED  a listed module whose bytes changed
+    #   ADDED     a .ps1 the manifest does not list - THE ACTUAL ATTACK,
+    #             and the reason this checks the directory against the
+    #             manifest rather than only walking the manifest
+    #   MISSING   a listed module that is absent: a partial install, and
+    #             half an engine is no safer to run than a tampered one
+    #
+    # Cost: 20.2 ms median to hash all 19 modules (599 KB), measured -
+    # about 2% of the ~1s spawn this already pays per task.
+    $IntegrityError = $null
+    $ManifestPath = Join-Path $Script:ModuleRoot "MANIFEST.sha256"
+    if (Test-Path -LiteralPath $ManifestPath) {
+        $LoadingModule = "MANIFEST.sha256"
+        $Expected = @{}
+        foreach ($Line in @(Get-Content -LiteralPath $ManifestPath -ErrorAction Stop)) {
+            $Trimmed = $Line.Trim()
+            if (-not $Trimmed) { continue }
+            # "<64 hex>  <filename>" - sha256sum's format, the same one
+            # SHA256SUMS uses so there is one shape to recognise.
+            if ($Trimmed -notmatch '^([0-9a-fA-F]{64})\s+(.+)$') {
+                $IntegrityError = "the module manifest is corrupt (unreadable line: '$Trimmed')."; throw $IntegrityError
+            }
+            $Expected[$Matches[2].Trim()] = $Matches[1].ToLowerInvariant()
+        }
+        # A manifest that parses to nothing is corrupt, not permissive: an
+        # emptied file must never be a way to switch the gate off.
+        if ($Expected.Count -eq 0) {
+            $IntegrityError = "the module manifest is present but lists no modules."; throw $IntegrityError
+        }
+
+        foreach ($ModuleFile in $ModuleFiles) {
+            if (-not $Expected.ContainsKey($ModuleFile.Name)) {
+                $IntegrityError = "'$($ModuleFile.Name)' is not in the module manifest. The engine will not load code this build did not produce."; throw $IntegrityError
+            }
+        }
+        foreach ($Name in @($Expected.Keys)) {
+            $Candidate = Join-Path $Script:ModuleRoot $Name
+            if (-not (Test-Path -LiteralPath $Candidate)) {
+                $IntegrityError = "'$Name' is listed in the module manifest but missing from this install."; throw $IntegrityError
+            }
+            $ActualHash = (Get-FileHash -LiteralPath $Candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($ActualHash -ne $Expected[$Name]) {
+                $IntegrityError = "'$Name' does not match the module manifest - it has been modified since this build was made."; throw $IntegrityError
+            }
+        }
+        $LoadingModule = "(none)"
+    }
+
     foreach ($ModuleFile in $ModuleFiles) {
         $LoadingModule = $ModuleFile.Name
         . $ModuleFile.FullName
@@ -250,7 +324,15 @@ try {
 } catch {
     # A broken module must never produce silence: honor the GUI contract
     # even when the backend itself cannot come up.
-    $LoadError = "Backend module '$LoadingModule' failed to load: $($_.Exception.Message)"
+    # An integrity refusal is not a module that failed to EXECUTE, and
+    # saying so would send the reader looking for a syntax error in a file
+    # that is fine. The distinction is the actionable part: one means
+    # "reinstall", the other means "this build is not what it claims".
+    if ($IntegrityError) {
+        $LoadError = "Engine integrity check failed: $IntegrityError"
+    } else {
+        $LoadError = "Backend module '$LoadingModule' failed to load: $($_.Exception.Message)"
+    }
     if ($Task) {
         Write-Output "##PULSE##ERROR|$LoadError"
     } else {
