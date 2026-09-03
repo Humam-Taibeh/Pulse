@@ -1541,6 +1541,13 @@ class TitleBar(QWidget):
             b = QPushButton(self._icon(icon_key))
             b.setFixedSize(40, 30)
             b.setToolTip(tip)
+            # The label a screen reader announces. Qt builds a button's
+            # accessible NAME from its text, and this button's text is a
+            # Private Use Area codepoint - so without this the three
+            # controls every window must expose announce an unassigned
+            # character. setToolTip maps to the DESCRIPTION, not the name,
+            # so it cannot stand in for this.
+            b.setAccessibleName(tip)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             if self._icon_font is not None:
@@ -1623,8 +1630,13 @@ class TitleBar(QWidget):
 
     def _sync_max_glyph(self):
         maxed = self._window.isMaximized()
+        label = "Restore" if maxed else "Maximize"
         self.btn_max.setText(self._icon("restore" if maxed else "max"))
-        self.btn_max.setToolTip("Restore" if maxed else "Maximize")
+        self.btn_max.setToolTip(label)
+        # Renamed with the glyph, not fixed at construction: a name that
+        # said "Maximize" on an already-maximized window would describe
+        # the opposite of what pressing it does.
+        self.btn_max.setAccessibleName(label)
 
     def eventFilter(self, obj, event):
         if obj is self._window and event.type() == QEvent.Type.WindowStateChange:
@@ -3445,18 +3457,29 @@ class StatusRail(QFrame):
         if font is not None:
             self._state_btn.setFont(font)
         self._state_btn.setText(glyph or fallback)
+        # NAME AND DESCRIPTION SPLIT DELIBERATELY. The tooltip here is a
+        # sentence, and a sentence is the wrong thing for a screen reader
+        # to announce as a control's NAME — the reader says the name every
+        # time focus lands, so "Not elevated. Some system-level operations
+        # need Administrator rights - click to relaunch (a UAC prompt will
+        # appear)." would be read out in full on every pass. The short
+        # label is the name; the sentence stays the description, which a
+        # reader offers on request.
         if not self._engine_ok:
-            self._state_btn.setToolTip(
-                "The PowerShell engine is missing — Pulse can report but "
-                "cannot run operations.")
+            name = "Engine missing"
+            detail = ("The PowerShell engine is missing — Pulse can report "
+                      "but cannot run operations.")
         elif self._is_admin:
-            self._state_btn.setToolTip(
-                "Running as Administrator — every operation is available.")
+            name = "Running as Administrator"
+            detail = "Running as Administrator — every operation is available."
         else:
-            self._state_btn.setToolTip(
-                "Not elevated. Some system-level operations need "
-                "Administrator rights — click to relaunch (a UAC prompt "
-                "will appear).")
+            name = "Not elevated — relaunch as Administrator"
+            detail = ("Not elevated. Some system-level operations need "
+                      "Administrator rights — click to relaunch (a UAC "
+                      "prompt will appear).")
+        self._state_btn.setToolTip(detail)
+        self._state_btn.setAccessibleName(name)
+        self._state_btn.setAccessibleDescription(detail)
         self._state_btn.setEnabled(self.is_actionable())
         self._state_btn.setCursor(
             Qt.CursorShape.PointingHandCursor if self.is_actionable()
@@ -3477,9 +3500,13 @@ class StatusRail(QFrame):
         if font is not None:
             self._theme_btn.setFont(font)
         self._theme_btn.setText(glyph or fallback)
-        self._theme_btn.setToolTip(
-            "Switch to light theme" if t["name"] == "dark"
-            else "Switch to dark theme")
+        theme_label = ("Switch to light theme" if t["name"] == "dark"
+                       else "Switch to dark theme")
+        self._theme_btn.setToolTip(theme_label)
+        # Re-announced per theme, like the maximize button: the control
+        # names the theme it switches TO, so a fixed name would be wrong
+        # in one of the two states.
+        self._theme_btn.setAccessibleName(theme_label)
         self._sync_state()
 
 
@@ -6991,6 +7018,7 @@ class ActivityDrawer(QWidget):
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._toggle.setToolTip("Pin the live output open")
+        self._toggle.setAccessibleName("Pin the live output open")
         tf = TH.icon_font(TH.ICON["micro"]) if TH.glyph("chevron")[1] else None
         if tf is not None:
             self._toggle.setFont(tf)
@@ -7057,6 +7085,7 @@ class ActivityDrawer(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setToolTip(tip)
+            btn.setAccessibleName(tip)     # see TitleBar._mk
             font = TH.icon_font(TH.ICON["micro"]) if fluent else None
             if font is not None:
                 btn.setFont(font)
@@ -7217,8 +7246,9 @@ class ActivityDrawer(QWidget):
 
     def _on_toggle(self, checked: bool):
         self._pinned = checked
-        self._toggle.setToolTip(
-            "Unpin the live output" if checked else "Pin the live output open")
+        label = "Unpin the live output" if checked else "Pin the live output open"
+        self._toggle.setToolTip(label)
+        self._toggle.setAccessibleName(label)
         if checked:
             self._open()
         elif not self._active:

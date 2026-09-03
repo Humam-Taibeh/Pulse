@@ -139,6 +139,42 @@ if (-not $Task) {
 # The GUI's spawned subprocess already sets this (helpers.PowerShellTask
 # prepends the same line); this covers the interactive console, which
 # never got it and was the real "chaotic UI" culprit, not color choices.
+# ============================================================
+#  EVERY CIM QUERY FAILS RATHER THAN BLOCKS
+# ============================================================
+# Pulse is a repair tool, so its users are disproportionately on machines
+# that are already unwell - and a degraded or corrupt WMI repository is
+# one of the commonest ways a Windows box is unwell. Against a sick
+# repository Get-CimInstance does not error, it BLOCKS, and every system
+# probe in this engine is a Get-CimInstance.
+#
+# There was never a path to an infinite hang: the GUI's PowerShellTask
+# arms a watchdog that kills the whole process tree at the task's
+# deadline. But that deadline is 90s for the applied-state probe and 900s
+# by default, so on such a machine the user watches a spinner for a
+# minute and a half before being told anything - and Get-PulseSystemInfo
+# queries CIM at STARTUP, which puts it in front of every task rather
+# than only the reporting ones. A per-operation bound turns that into a
+# fast failure the surrounding -ErrorAction/try-catch already reports.
+#
+# ONE DEFAULT RATHER THAN NINETEEN EDITS: this covers every existing call
+# and every one added later, which a call-site sweep cannot promise, and
+# it cannot mis-edit the several invocations that use backtick
+# continuations. $Global: because the modules below are dot-sourced and
+# their functions run at whatever depth a task calls them from - a
+# script-scoped default would cover this file's own lines and quietly not
+# theirs. Set BEFORE the dot-source loop so a query run while a module
+# loads is covered too.
+#
+# 30s is chosen from measurement in both directions: a 1s bound made
+# Get-CimInstance Win32_Processor throw CimException on a HEALTHY machine,
+# so legitimate queries are not instant and the number has to clear real
+# work by a wide margin - while staying far under the smallest task
+# watchdog, or it would not be a fail-fast at all. An individual call that
+# needs longer can still pass -OperationTimeoutSec explicitly; an explicit
+# argument always beats the default.
+$Global:PSDefaultParameterValues['Get-CimInstance:OperationTimeoutSec'] = 30
+
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 } catch {
