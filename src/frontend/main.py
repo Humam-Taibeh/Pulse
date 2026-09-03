@@ -51,7 +51,7 @@ _SRC_DIR = os.path.dirname(_FRONTEND_DIR)
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from utils import prefs, resources, updater, version  # noqa: E402
+from utils import appicons, prefs, resources, updater, version  # noqa: E402
 from utils.helpers import (  # noqa: E402
     PowerShellTask, SelfUpdateCheckWorker, SystemPulseSampler, TaskResult,
     ToastManager, has_battery,
@@ -1680,6 +1680,10 @@ class PulseApp(QMainWindow):
         self._nav_buttons: list[NavButton] = []
         self._status_state = "ready"
         self._glass_applied = False
+        #: True once windowHandle().screenChanged is connected. The handle
+        #: does not exist until the window is shown, so the connection is
+        #: made in showEvent and this keeps it to exactly one.
+        self._screen_hooked = False
 
         # v10: the chosen theme survives a restart (was hardcoded "dark",
         # so switching to light had to be redone on every launch).
@@ -3315,6 +3319,18 @@ class PulseApp(QMainWindow):
         # refreshing its card badges and checking for updates would be a
         # worse bug than the abort the flag exists to prevent.
         self._shutting_down = False
+        # THE RATIO IS BAKED INTO TWO PIXMAPS AND NOTHING ASKED FOR THEM
+        # AGAIN. The sidebar's search glyph and every catalog row's app
+        # icon are rasterised at the screen's device-pixel ratio; moving
+        # the window to a monitor at a different scaling leaves both
+        # rendered for the old one, and Qt rescales them to fit. Connected
+        # here rather than in __init__ because windowHandle() is None until
+        # the window has been shown.
+        if not self._screen_hooked:
+            handle = self.windowHandle()
+            if handle is not None:
+                handle.screenChanged.connect(self._on_screen_changed)
+                self._screen_hooked = True
         if not self._glass_applied:
             self._glass_applied = True
             hwnd = int(self.winId())
@@ -3386,6 +3402,34 @@ class PulseApp(QMainWindow):
         # exactly like a native maximized window.
         if self._glass_applied:
             TH.apply_native_rounding(int(self.winId()), rounded=not flush)
+
+    def _on_screen_changed(self, _screen):
+        """The window moved to another monitor — re-rasterise what was
+        baked for the old one.
+
+        RE-APPLYING THE THEME IS THE WHOLE FIX, and deliberately so: both
+        ratio-baked pixmaps in the app (the sidebar search glyph via
+        theme.glyph_icon, every catalog row's mark via appicons.app_icon)
+        are already regenerated inside _apply_theme, because both also
+        depend on the palette. That path is exercised on every theme
+        toggle, so this reuses a well-travelled route rather than adding a
+        second, thinner one that would drift out of step with it the first
+        time a new icon was added.
+
+        The cache is dropped FIRST. It is keyed on the ratio, so a stale
+        entry could never be served to the new screen anyway — but without
+        the clear, a move back and forth would find the pre-move entry
+        still valid and skip the re-render this exists to force.
+
+        Cheap enough to do unconditionally: a screen change is a
+        user-scale event, not a per-frame one, and the alternative
+        (comparing ratios and skipping when equal) would miss a monitor
+        whose scaling was changed in Settings while Pulse sat on it.
+        """
+        if self._shutting_down or not self._ui_ready:
+            return
+        appicons.invalidate_cache()
+        self._apply_theme(self.theme.t)
 
     def changeEvent(self, event):
         super().changeEvent(event)

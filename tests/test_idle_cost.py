@@ -139,3 +139,103 @@ class TestStatusDotFollowsTheSameRule:
             floating.showNormal()
             dot.stop_pulse()
             qapp.processEvents()
+
+
+class TestTheElapsedClockFollowsTheSameRule:
+    """The state pill's RUNNING clock (v10.9.4) is a REPEATING 1Hz QTimer,
+    and it shipped without the visibility gate its neighbours have.
+
+    Animations were covered by Qt's own hideEvent delivery (see this
+    module's header). A QTimer is not: nothing stops it when the widget is
+    hidden, so a task left running behind a minimized window kept waking
+    the GUI thread once a second to setText() on a label nobody could see —
+    and each of those repaints a transparent ancestor chain, which is the
+    same cost the brand mark's breath was quantised down to avoid.
+
+    The clock must not LOSE time while paused: elapsed is recomputed from a
+    monotonic start, so the pill catches up in one tick on re-show rather
+    than resuming from where it stopped.
+    """
+
+    def test_the_clock_ticks_while_visible(self, floating, qapp):
+        """The drawer is opened FIRST, which is the order _start_task uses
+        (set_running(True), then set_state("running")) — and it matters,
+        because the pill lives in the drawer's body and the clock gates on
+        being on screen."""
+        floating.activity.set_running(True)
+        qapp.processEvents()
+        pill = floating.state_pill
+        pill.set_state("running")
+        qapp.processEvents()
+        try:
+            assert pill.isVisible(), "the drawer did not open; nothing to tick"
+            assert pill._timer.isActive(), "the clock is not running at all"
+        finally:
+            pill.set_state("idle")
+            floating.activity.set_running(False)
+            qapp.processEvents()
+
+    def test_minimizing_stops_the_clock(self, floating, qapp):
+        floating.activity.set_running(True)
+        qapp.processEvents()
+        pill = floating.state_pill
+        pill.set_state("running")
+        qapp.processEvents()
+        floating.showMinimized()
+        qapp.processEvents()
+        try:
+            assert not pill._timer.isActive(), (
+                "the elapsed clock kept firing once a second behind a "
+                "minimized window")
+        finally:
+            floating.showNormal()
+            qapp.processEvents()
+            pill.set_state("idle")
+            floating.activity.set_running(False)
+            qapp.processEvents()
+
+    def test_restoring_resumes_it_without_losing_time(self, floating, qapp):
+        """The clock reads from a monotonic start, so a pause must cost
+        nothing: the pill shows the true elapsed time on the first tick
+        after it comes back, not the time it had when it stopped."""
+        floating.activity.set_running(True)
+        qapp.processEvents()
+        pill = floating.state_pill
+        pill.set_state("running")
+        pill._started_at -= 120          # pretend the task has run 2 minutes
+        qapp.processEvents()
+        floating.showMinimized()
+        qapp.processEvents()
+        floating.showNormal()
+        qapp.processEvents()
+        try:
+            assert pill._timer.isActive(), "the clock never resumed"
+            assert pill.text() == "RUNNING · 02:00", (
+                f"the pill reads {pill.text()!r} — it lost the time it "
+                "spent minimized instead of recomputing from the start")
+        finally:
+            pill.set_state("idle")
+            floating.activity.set_running(False)
+            qapp.processEvents()
+
+    def test_a_finished_task_leaves_the_clock_stopped_on_re_show(
+            self, floating, qapp):
+        """The two conditions compose, as they do for the brand mark:
+        becoming visible again must not restart a clock for a task that
+        ended while the window was away."""
+        floating.activity.set_running(True)
+        qapp.processEvents()
+        pill = floating.state_pill
+        pill.set_state("running")
+        qapp.processEvents()
+        floating.showMinimized()
+        qapp.processEvents()
+        pill.set_state("ok")             # the task finished while minimized
+        floating.showNormal()
+        qapp.processEvents()
+
+        assert not pill._timer.isActive(), (
+            "re-showing restarted the clock for a task that had finished")
+        assert pill.text() == "SUCCESS"
+        floating.activity.set_running(False)
+        qapp.processEvents()

@@ -510,7 +510,21 @@ class PowerShellTask(QObject):
             being configured twice.
         """
         argv = [
-            _powershell_exe(), "-NoProfile", "-ExecutionPolicy", "Bypass",
+            # -NonInteractive is the one that is not about this process's
+            # own convenience: it makes PowerShell REFUSE to prompt rather
+            # than wait for an answer. Nothing here reads stdin, so a
+            # prompt reaching a cmdlet — a mandatory parameter the engine
+            # forgot to pass, a Read-Host behind a rarely-taken branch, a
+            # confirmation from a high-ConfirmImpact cmdlet — is a task
+            # that produces no more output and no verdict until the
+            # watchdog kills it minutes later. It could not be reproduced
+            # in the shipped build (PyInstaller's console=False leaves no
+            # interactive stdin to block on, so a prompt hits EOF and
+            # errors out) and is added because it costs nothing, closes the
+            # path anyway, and the updater's own spawn has always had it —
+            # the ELEVATED engine was the one place missing it.
+            _powershell_exe(), "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
             "-File", validate_backend_arg("The engine path", self.ps1_path),
             "-Task", validate_backend_arg("The task name", self.task_name),
         ]
@@ -689,6 +703,15 @@ class PowerShellTask(QObject):
             popen_kwargs = dict(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                # The process-layer half of -NonInteractive above. Left
+                # unset, the child INHERITS this process's stdin — which is
+                # a real terminal whenever Pulse is run from source (the
+                # README's Option B), so a prompt would block on input the
+                # user cannot see they are being asked for, behind a hidden
+                # window. DEVNULL means any read returns EOF immediately
+                # instead, and the engine never consumes input meant for
+                # the shell that launched it.
+                stdin=subprocess.DEVNULL,
                 # Pinned, never inherited: the backend launches winget and
                 # choco by bare name, and those lookups search the working
                 # directory first. Inheriting the GUI's — typically whatever

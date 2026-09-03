@@ -6560,15 +6560,55 @@ class StatePill(QLabel):
             # A fresh clock every time — set_state("running") only ever
             # marks the START of a run, never a mid-run refresh.
             self._started_at = time.monotonic()
-            self._timer.start()
-            self._update_running_text()
         else:
-            self._timer.stop()
             self._started_at = None
             self.setText(self.TEXTS.get(state, state.upper()))
+        self._sync_clock()
         self.setProperty("state", state)
         self.style().unpolish(self)
         self.style().polish(self)
+
+    # -- lifecycle: never tick at an invisible pill ---------------
+    # The same rule BrandMark and StatusDot follow, and this widget
+    # shipped (v10.9.4) without it. Their animations were covered anyway
+    # by Qt delivering hideEvent to the children of a minimized window; a
+    # QTimer is not, so a task left running behind a minimized window woke
+    # the GUI thread once a second to setText() on a label nobody could
+    # see — and a repaint here goes through every transparent ancestor up
+    # to the window, which is the cost the brand mark's breath was
+    # quantised down to avoid in the first place.
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._sync_clock()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._timer.stop()
+
+    def _sync_clock(self):
+        """Tick only while a run is in flight AND the pill is on screen.
+
+        isVisible() RATHER THAN A hideEvent FLAG, because the pill spends
+        most of its life inside a container that is hidden outright: the
+        Activity drawer collapses by hiding its BODY, and this pill lives
+        in that body. Measured on a running window with the drawer shut —
+        `pill.isVisible()` False, no hideEvent ever delivered to the pill
+        itself (its ancestor was the thing hidden), and the clock ticking
+        once a second regardless. A flag moved only by this widget's own
+        events cannot see that, and would have caught the minimized case
+        while missing the far more common one.
+
+        `_started_at` is monotonic and every reading is recomputed from it,
+        so stopping the timer pauses the DISPLAY and not the measurement:
+        the catch-up call below makes the pill correct the instant it comes
+        back — when the drawer opens for a task, or when the window is
+        restored — rather than resuming from the time it last showed.
+        """
+        if self._started_at is None or not self.isVisible():
+            self._timer.stop()
+            return
+        self._update_running_text()
+        self._timer.start()
 
     def _tick(self):
         if self._started_at is not None:

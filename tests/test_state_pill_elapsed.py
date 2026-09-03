@@ -14,41 +14,56 @@ from frontend import theme as TH
 from frontend.widgets import StatePill
 
 
+def _pill():
+    """A pill that is actually ON SCREEN.
+
+    The clock gates on isVisible() — it must not tick inside the collapsed
+    Activity drawer, which is where this widget spends most of its life
+    (see StatePill._sync_clock). A bare unparented pill is never visible,
+    so a test that skipped show() would be asserting against a state the
+    running app never puts it in, and would have passed for the wrong
+    reason once the gate existed.
+    """
+    pill = StatePill(TH.tokens("dark"))
+    pill.show()
+    return pill
+
+
 class TestElapsedClock:
     def test_running_shows_a_zero_clock_immediately(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         pill.set_state("running")
         assert pill.text() == "RUNNING · 00:00"
 
     def test_the_clock_advances_on_a_tick(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         pill.set_state("running")
         pill._started_at -= 41  # backdate rather than sleep the test
         pill._tick()
         assert pill.text() == "RUNNING · 00:41"
 
     def test_minutes_roll_over_past_sixty_seconds(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         pill.set_state("running")
         pill._started_at -= 125
         pill._tick()
         assert pill.text() == "RUNNING · 02:05"
 
     def test_the_timer_is_running_only_in_the_running_state(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         assert not pill._timer.isActive()
         pill.set_state("running")
         assert pill._timer.isActive()
 
     def test_a_terminal_state_drops_the_clock_and_stops_the_timer(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         pill.set_state("running")
         pill.set_state("ok")
         assert pill.text() == "SUCCESS"
         assert not pill._timer.isActive()
 
     def test_re_entering_running_resets_the_clock(self, qapp):
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         pill.set_state("running")
         pill._started_at -= 90
         pill.set_state("err")
@@ -58,7 +73,7 @@ class TestElapsedClock:
     def test_idle_and_stopped_text_is_unchanged(self, qapp):
         """The clock is additive to RUNNING only — every other label is the
         same literal it always was."""
-        pill = StatePill(TH.tokens("dark"))
+        pill = _pill()
         assert pill.text() == "IDLE"
         pill.set_state("stopped")
         assert pill.text() == "STOPPED"

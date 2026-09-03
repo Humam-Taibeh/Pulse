@@ -273,6 +273,23 @@ def _generic_shell_key(device_px: int) -> bytes | None:
     return key
 
 
+def invalidate_cache() -> None:
+    """Drop every rendered mark and shell-icon key.
+
+    Called when the window moves to a screen with a different ratio (see
+    PulseApp._on_screen_changed). The pixmap cache is keyed on the ratio,
+    so stale entries can never be SERVED to the new screen — but they are
+    dead weight for a ratio that may never come back, and clearing them is
+    what makes the re-skin that follows actually re-rasterise instead of
+    finding its own pre-move entry still valid.
+
+    _GENERIC_KEYS goes too: its keys are device sizes, which are a
+    function of the ratio, so the same reasoning applies.
+    """
+    _PIXMAP_CACHE.clear()
+    _GENERIC_KEYS.clear()
+
+
 def _screen_dpr() -> float:
     """The primary screen's device-pixel ratio, floored at 1.0.
 

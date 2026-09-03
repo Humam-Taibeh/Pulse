@@ -289,7 +289,12 @@ jobs:
       # as a literal in a way the execution floor was not: collection only
       # grows, so a number falling under it is a real failure (a broken
       # import taking a module's tests with it), and a growing suite can
-      # never make it pass when it should fail.
+      # never make it pass when it should fail. Its drift is therefore the
+      # harmless direction — it goes SLACK rather than blind — so it is
+      # tightened when the suite grows rather than re-derived. At 1049
+      # collected, 990 leaves 59 of headroom: enough that ordinary churn
+      # (a deleted test file) does not fail the build, tight enough that
+      # the largest single module going missing does.
       - name: Assert the native tests actually ran
         shell: powershell
         run: |
@@ -303,7 +308,7 @@ jobs:
             Write-Error "$skipped test(s) skipped - a healthy runner skips about 3. The native subset was almost certainly skipped wholesale, which means the runner has no desktop session and none of the Win32 behaviour was tested."
             exit 1
           }
-          if ($total -lt 900) {
+          if ($total -lt 990) {
             Write-Error "Only $total test(s) collected - collection broke (an import error takes a whole module's tests with it silently)."
             exit 1
           }
