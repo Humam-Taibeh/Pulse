@@ -932,6 +932,42 @@ class PowerShellTask(QObject):
                 self._job = None
             if job is not None:
                 job.close()
+            # GIVE BACK THE PROCESS AND PIPE HANDLES, DETERMINISTICALLY.
+            #
+            # Both used to be left to garbage collection of this worker,
+            # and that is not when it happens: main.py keeps `_worker`
+            # alive until the NEXT task replaces it, so the finished
+            # task's Popen - and with it the process handle and the read
+            # end of the stdout pipe - stayed open the whole time.
+            # Measured at +2 handles per run across five real runs, still
+            # +10 after dropping every reference and collecting. Slow, and
+            # unbounded in exactly the session that matters: a technician
+            # working through one machine, task after task.
+            # BROAD except ON BOTH, and not laziness: this is a `finally`
+            # that runs after the task's real outcome has already been
+            # decided and, on the failure paths, after `failed` has been
+            # emitted. An exception escaping here does not report a
+            # cleanup problem - it replaces the outcome the user was about
+            # to be given with a traceback about housekeeping. The handles
+            # are freed by the interpreter eventually in that case; the
+            # verdict is not recoverable.
+            if process is not None:
+                try:
+                    if process.stdout is not None:
+                        process.stdout.close()
+                except Exception:
+                    pass
+                # Reap it, so the process handle is not held by an
+                # unwaited child. Bounded because this runs on the worker
+                # thread at teardown: the tree has already been killed
+                # above, so anything still not exiting is not worth
+                # blocking the thread's own exit for.
+                try:
+                    process.wait(timeout=self.TASKKILL_TIMEOUT)
+                except Exception:
+                    pass
+            with self._proc_lock:
+                self._process = None
 
 
 # ============================================================

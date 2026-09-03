@@ -260,8 +260,16 @@ def test_a_successful_run_also_releases_the_job(monkeypatch, tmp_path):
         def poll(self):
             return 0
 
-        def wait(self):
+        # Faithful to subprocess.Popen's real signatures, because the
+        # teardown under test calls both: wait() takes a timeout, and the
+        # stdout pipe is closed explicitly so its handle is given back
+        # rather than left to garbage collection of the worker (which the
+        # app deliberately keeps alive until the next task).
+        def wait(self, timeout=None):
             return 0
+
+        def close(self):
+            self.closed = True
 
     monkeypatch.setattr(helpers, "ProcessJob", RecordingJob)
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProcess())
