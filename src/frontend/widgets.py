@@ -3916,8 +3916,27 @@ class ActionRow(QFrame):
 #  DIALOGS
 # ============================================================
 class ConfirmDialog(PulseDialog):
+    """"Are you sure?", with the option to be shown rather than told.
+
+    THE PREVIEW BUTTON IS THE POINT OF THIS DIALOG NOW. A confirmation can
+    describe INTENT — "Removes Edge and backs up its data first" — and
+    cannot describe EFFECT, which for the least reversible operations in
+    the app is the half the user actually needs. The engine has been able
+    to answer that since v6 ($Script:DryRun gates every mutation primitive
+    and Invoke-Mutation logs a "[WHATIF] Would ..." line for each write it
+    does not make); nothing in the GUI's single-task path ever asked it.
+
+    Preview ACCEPTS rather than taking a third result code: both buttons
+    start a run, and `preview` is what decides which kind. The caller
+    reads that attribute on the next line, which is the contract
+    _exec_dialog's deleteLater depends on.
+    """
+
     def __init__(self, parent: QWidget, item: dict, t: dict):
         super().__init__(parent)
+        #: True when the user asked to SEE the task rather than run it.
+        #: Read by main.request_task immediately after exec() returns.
+        self.preview = False
         danger = bool(item.get("danger"))
         accent = t["err"] if danger else t["accent"]
         panel = _dialog_chrome(self, t, accent, width=440)
@@ -3957,7 +3976,25 @@ class ConfirmDialog(PulseDialog):
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
 
-        dialog_footer(lay, cancel, go)
+        # Styled as a SECONDARY action, sharing the cancel treatment: it is
+        # the safe choice, and giving it the accent would put two primaries
+        # on one row and make the destructive one compete for the eye.
+        # dialog_footer right-aligns in the order given with the primary
+        # last, so this reads Cancel · Preview · Proceed — the commitment
+        # stays the final step rather than sitting between two safe ones.
+        preview = QPushButton("Preview")
+        preview.setStyleSheet(TH.dialog_cancel_qss(t))
+        preview.setToolTip(
+            "Run this task in simulation — it reports every change it "
+            "would make and makes none of them.")
+        preview.setAccessibleName("Preview this task without changing anything")
+        preview.clicked.connect(self._choose_preview)
+
+        dialog_footer(lay, cancel, preview, go)
+
+    def _choose_preview(self):
+        self.preview = True
+        self.accept()
 
     def showEvent(self, e):
         super().showEvent(e)

@@ -1689,6 +1689,11 @@ class PulseApp(QMainWindow):
         #: True while a Win32 shutdown block is registered. Mirrors _busy()
         #: through _sync_shutdown_block; see SHUTDOWN_BLOCK_REASON.
         self._shutdown_blocked = False
+        #: True while the run in flight is a Preview (-WhatIf). Read by
+        #: _finish_common to keep a simulated pass out of the duration
+        #: history, and reset there. Initialised here because
+        #: _finish_common can be reached without _start_task having set it.
+        self._running_dry_run = False
 
         # v10: the chosen theme survives a restart (was hardcoded "dark",
         # so switching to light had to be redone on every launch).
@@ -2787,6 +2792,11 @@ class PulseApp(QMainWindow):
             self._open_hub(item)
             return
         task = item["task"]
+        # Only the confirm branch below can turn this on. Declared here so
+        # every other path through this method — bulk deploy, the Office
+        # wizard, a local installer, a plain unconfirmed task — starts a
+        # real run without having to know the flag exists.
+        dry_run = False
 
         if task.startswith("@"):
             self._run_local_action(task)
@@ -2995,16 +3005,28 @@ class PulseApp(QMainWindow):
             dialog = ConfirmDialog(self, item, self.theme.t)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
+            # Read on the line after exec() returns, before the event loop
+            # turns — the contract _exec_dialog's deleteLater relies on.
+            # Preview and Proceed both accept; this is the only thing that
+            # separates them.
+            dry_run = dialog.preview
 
-        self._start_task(item, card, app_ids, office_paths, local_installer)
+        self._start_task(item, card, app_ids, office_paths, local_installer,
+                         dry_run=dry_run)
 
     def _start_task(self, item: dict, card: GlassCard | None,
                      app_ids: list[str] | None = None,
                      office_paths: tuple[str, str] | None = None,
-                     local_installer: tuple[str, str] | None = None):
+                     local_installer: tuple[str, str] | None = None,
+                     dry_run: bool = False):
         self._running_card = card
         # remembered so the run's history can be banked once it settles
         self._running_item = item
+        # A PREVIEW IS NOT A MEASUREMENT, and _finish_common reads this to
+        # keep it out of the duration average — a simulated pass is faster
+        # than the real one by exactly the work it skipped. Same reasoning
+        # the cancelled-run path already carries.
+        self._running_dry_run = dry_run
         # monotonic, not time.time(): this measures an ELAPSED interval, and
         # a wall clock can jump backwards mid-run (NTP correction, DST) and
         # bank a negative or wildly inflated duration into the average.
@@ -3015,18 +3037,24 @@ class PulseApp(QMainWindow):
         # Not actionable mid-run: _open_update_dialog refuses to install
         # while the engine is mutating the machine. See UpdateBadge.
         self.update_badge.set_busy(True)
-        self._set_status("busy", f"Executing: {item['title']} …")
+        verb = "Previewing" if dry_run else "Executing"
+        self._set_status("busy", f"{verb}: {item['title']} …")
         self.state_pill.set_state("running")
         self.stop_btn.setText("■  Stop Task")
         self.stop_btn.setEnabled(True)
         self.stop_btn.show()
         self.shimmer.start()
         self.console.clear_console()
-        self.toasts.show("info", f"Starting: {item['title']}", 2500)
+        self.toasts.show(
+            "info",
+            (f"Previewing: {item['title']} — nothing will be changed"
+             if dry_run else f"Starting: {item['title']}"),
+            3500 if dry_run else 2500)
 
         thread = QThread(self)
         worker = PowerShellTask(
             self.ps1_path, item["task"], timeout=item.get("timeout", DEFAULT_TIMEOUT),
+            dry_run=dry_run,
             app_ids=app_ids,
             office_setup=office_paths[0] if office_paths else None,
             office_config=office_paths[1] if office_paths else None,
@@ -3124,10 +3152,15 @@ class PulseApp(QMainWindow):
         # flash=None and is deliberately left out of the duration history:
         # a stopped task is a partial measurement that would drag every
         # "typically ~Ns" estimate downward.
-        if flash:
+        # `_running_dry_run` is the second half of the same rule the
+        # comment above states: a preview measured the simulation, not the
+        # task, and folding it in would make every "typically ~2m" hint
+        # describe a run that never happened.
+        if flash and not self._running_dry_run:
             self._record_task_history(flash)
         self._run_started_at = None
         self._running_item = None
+        self._running_dry_run = False
         # The phase chip reports something happening NOW; leaving the last
         # one on screen after the verdict would have it report a phase that
         # finished, next to a state pill saying the task is over.
