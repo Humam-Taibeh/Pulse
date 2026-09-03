@@ -433,7 +433,7 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 713-test regression suite |
+| `python -m pytest tests` | The full 1,012-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
 | `Invoke-Pester -Path tests\backend` | The 101-test Pester suite (backup/restore, startup, hardening) |
@@ -537,7 +537,7 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 838 collected tests
+python -m pytest tests -v          # 1,012 collected tests
 Invoke-Pester -Path tests\backend  # 126 tests
 ```
 

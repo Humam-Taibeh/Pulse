@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -27,7 +28,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QImage,
     QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
-    QTextCursor, QTextLayout, QTextOption,
+    QTextCharFormat, QTextCursor, QTextLayout, QTextOption,
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -6276,6 +6277,40 @@ class HubDialog(PulseDialog):
 # ============================================================
 #  LIVE CONSOLE — streams raw PowerShell stdout in real time
 # ============================================================
+#: A console line's leading "HH:MM:SS  " gutter (LiveConsole._stamp), so the
+#: severity classifier below can see past it to the text the backend wrote.
+_TIMESTAMP_PREFIX = re.compile(r"^\d{2}:\d{2}:\d{2}  ")
+
+#: (marker, tone) pairs, checked in order, that recover a line's severity
+#: from its TEXT — because Write-Host -ForegroundColor never survives the
+#: pipe Popen reads from (see helpers.PowerShellTask._apply), the console
+#: has always shown Write-Success/Write-Warn/Write-ErrorX output in one flat
+#: colour regardless of what the backend reported. DRY-RUN/WHATIF must be
+#: checked before SUCCESS|: a simulated run's own verdict line reads
+#: "SUCCESS|[DRY-RUN] ... simulated", and it must not look like a real
+#: success in the one place meant to show it wasn't.
+_CONSOLE_TONE_MARKERS = (
+    ("[DRY-RUN]", "warn"),
+    ("[WHATIF]", "warn"),
+    ("SUCCESS|", "ok"),
+    (chr(0x2713), "ok"),   # Write-Success's check mark ($Script:Check)
+    ("ERROR|", "err"),
+    (chr(0x2717), "err"),  # Write-ErrorX's cross ($Script:Cross)
+)
+
+
+def _console_line_tone(text: str) -> str | None:
+    """Classify one raw console line for LiveConsole's colour pass, or None
+    for the console's own default text colour."""
+    body = _TIMESTAMP_PREFIX.sub("", text, count=1)
+    for marker, tone in _CONSOLE_TONE_MARKERS:
+        if marker in body:
+            return tone
+    if body.strip().startswith("!  "):   # Write-Warn: "   !  $Text"
+        return "warn"
+    return None
+
+
 class LiveConsole(QPlainTextEdit):
     """Read-only micro-terminal. `put_line()` is the slot for
     PowerShellTask.output: it appends a line, or — when the backend used a
@@ -6304,6 +6339,12 @@ class LiveConsole(QPlainTextEdit):
         self.setStyleSheet(TH.console_qss(t))
         self._empty_accent = QColor(t["accent"])
         self._empty_text = QColor(t["text_faint"])
+        self._default_line_color = QColor(t["text_soft"])
+        self._tone_colors = {
+            "ok": QColor(t["ok"]),
+            "err": QColor(t["err"]),
+            "warn": QColor(t["warn"]),
+        }
 
     def set_timestamps(self, on: bool):
         """Toggle the HH:MM:SS gutter. Only affects lines written AFTER the
@@ -6349,7 +6390,10 @@ class LiveConsole(QPlainTextEdit):
 
     def append_line(self, text: str):
         self._protect_last = False
+        bar = self.verticalScrollBar()
+        follow = bar.value() >= bar.maximum()
         self.appendPlainText(self._stamp(text))
+        self._tint_last_block(text)
         if self.blockCount() > self.MAX_LINES:
             cursor = self.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -6359,13 +6403,15 @@ class LiveConsole(QPlainTextEdit):
                 self.blockCount() - self.MAX_LINES,
             )
             cursor.removeSelectedText()
-        bar = self.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        if follow:
+            bar.setValue(bar.maximum())
 
     def _replace_last_line(self, text: str):
         """In-place rewrite of the newest block — carriage-return progress.
         Never grows blockCount(), so the MAX_LINES trim in append_line()
         is unaffected."""
+        bar = self.verticalScrollBar()
+        follow = bar.value() >= bar.maximum()
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock,
@@ -6374,8 +6420,29 @@ class LiveConsole(QPlainTextEdit):
         # rewritten continuously, so the useful timestamp is the moment of
         # the LATEST update, not of the first one
         cursor.insertText(self._stamp(text))
-        bar = self.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        self._tint_last_block(text)
+        if follow:
+            bar.setValue(bar.maximum())
+
+    def _tint_last_block(self, source_text: str):
+        """Colour the block just written/rewritten by the severity recovered
+        from its raw text (see _console_line_tone) — Write-Host's
+        -ForegroundColor never survives the pipe Popen reads from, so this
+        is the only place that colour can come from. Always sets an
+        explicit format, including the plain default: `_replace_last_line`
+        reuses the same block across a whole progress sequence, and a line
+        that stops matching a marker must not keep a stale tint from an
+        earlier rewrite."""
+        tone = _console_line_tone(source_text)
+        color = self._tone_colors.get(tone, self._default_line_color)
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                            QTextCursor.MoveMode.KeepAnchor)
+        fmt = QTextCharFormat()
+        fmt.setForeground(color)
+        cursor.mergeCharFormat(fmt)
 
     # -- v10 output actions ------------------------------------
     def copy_all(self) -> int:
@@ -6454,7 +6521,13 @@ class StatePill(QLabel):
 
     Styled entirely by theme.state_pill_qss through the dynamic `state`
     property — the same repolish mechanic NavButton uses for `selected`,
-    so state flips never rebuild QSS."""
+    so state flips never rebuild QSS.
+
+    RUNNING additionally carries a live elapsed clock ("RUNNING · 02:41").
+    The per-task duration history recorded for a card's own "last run" line
+    (v10.1) made a running total possible from data Pulse already collects;
+    until now the pill just said RUNNING for the full length of an
+    eight-minute install with no sense of how long it had already run."""
 
     TEXTS = {
         "idle": "IDLE",
@@ -6464,22 +6537,46 @@ class StatePill(QLabel):
         "stopped": "STOPPED",
     }
 
+    TICK_MS = 1000
+
     def __init__(self, t: dict, parent: QWidget | None = None):
         super().__init__(self.TEXTS["idle"], parent)
         self.setObjectName("statePill")
         self.setProperty("state", "idle")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFixedHeight(22)
+        self._started_at: float | None = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.TICK_MS)
+        self._timer.timeout.connect(self._tick)
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
         self.setStyleSheet(TH.state_pill_qss(t))
 
     def set_state(self, state: str):
-        self.setText(self.TEXTS.get(state, state.upper()))
+        if state == "running":
+            # A fresh clock every time — set_state("running") only ever
+            # marks the START of a run, never a mid-run refresh.
+            self._started_at = time.monotonic()
+            self._timer.start()
+            self._update_running_text()
+        else:
+            self._timer.stop()
+            self._started_at = None
+            self.setText(self.TEXTS.get(state, state.upper()))
         self.setProperty("state", state)
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def _tick(self):
+        if self._started_at is not None:
+            self._update_running_text()
+
+    def _update_running_text(self):
+        elapsed = max(0, int(time.monotonic() - self._started_at))
+        minutes, seconds = divmod(elapsed, 60)
+        self.setText(f"{self.TEXTS['running']} · {minutes:02d}:{seconds:02d}")
 
 
 # ============================================================
