@@ -256,28 +256,40 @@ jobs:
 
       # Guard against the degradation described above: if the runner ever
       # loses its desktop session, the suite would still be "green" while
-      # silently testing a quarter of what it should. Fail loudly instead.
+      # silently testing none of the Win32 behaviour. Fail loudly instead.
       #
-      # THE FLOOR HAS TO TRACK THE SUITE, and it does not do so by itself.
-      # It was written when 713 collected and 106 were native, then sat at
-      # 670 while the suite grew — a headless runner would have executed
-      # more than the floor demanded, so the guard would have passed while
-      # testing none of the Win32 behaviour it exists to protect. That is
-      # the failure this number keeps re-acquiring, and re-measuring it is
-      # the only fix; the figures below were counted, not adjusted.
+      # THIS GUARD USED TO MEASURE THE WRONG QUANTITY, and that is why it
+      # kept going stale. It asserted a floor on the number of tests
+      # EXECUTED (`ran >= N`), which is a function of the whole suite's
+      # size — so every time the suite grew, a headless run executed more
+      # tests, drifted up through the floor, and the guard began passing
+      # while protecting nothing. It happened twice: written at 670 when
+      # 713 were collected, re-measured to 950 at 991 collected, and by
+      # 1031 collected a headless run executed 951 — clearing the floor by
+      # a single test. The number was always going to be overtaken by the
+      # suite it was measured against.
       #
-      # Today: 991 collected, 80 of them native (`pytest --collect-only
-      # -m native`). So a desktop-less runner executes 911, and a healthy
-      # one executes at least 988 — 991 less one environment skip
-      # (test_process_job's non-Windows degradation path) and the 2
-      # playbook tests that skip on an elevated runner by design.
+      # SKIPPED COUNT IS THE INVARIANT. A headless runner skips the whole
+      # native subset at once (80 tests as of this writing), while a
+      # healthy run skips only its environment cases: one non-Windows
+      # degradation path in test_process_job, plus the 2 playbook tests
+      # that skip on an elevated runner by design. That is ~3 against ~80,
+      # and — unlike the execution floor — the separation does not narrow
+      # as the suite grows. It WIDENS: more native tests means a bigger
+      # skip count on a headless runner, further from the threshold, while
+      # the healthy figure stays where it is. A suite that grows can no
+      # longer silently satisfy this.
       #
-      # 950 sits between the two with room on both sides: 39 clear of the
-      # headless figure, 38 under the worst healthy run. Note the native
-      # subset SHRANK (115 -> 80) while the suite grew, largely with v10.6
-      # deleting the ambient field and its renderer, so the gap this guard
-      # watches is narrower than it used to be — do not raise the floor
-      # toward the healthy figure without re-counting both.
+      # 20 sits an order of magnitude above the healthy figure and well
+      # under a headless one. Raising it is only ever correct alongside a
+      # real increase in environment-conditional skips — never to make a
+      # red build go green.
+      #
+      # The collected-count floor below is a DIFFERENT check and is safe
+      # as a literal in a way the execution floor was not: collection only
+      # grows, so a number falling under it is a real failure (a broken
+      # import taking a module's tests with it), and a growing suite can
+      # never make it pass when it should fail.
       - name: Assert the native tests actually ran
         shell: powershell
         run: |
@@ -287,8 +299,12 @@ jobs:
           $skipped = [int]$suite.skipped
           $ran = $total - $skipped
           Write-Output "collected=$total ran=$ran skipped=$skipped"
-          if ($ran -lt 950) {
-            Write-Error "Only $ran test(s) executed - expected the full native suite (>=950). The runner is probably headless, or collection broke."
+          if ($skipped -gt 20) {
+            Write-Error "$skipped test(s) skipped - a healthy runner skips about 3. The native subset was almost certainly skipped wholesale, which means the runner has no desktop session and none of the Win32 behaviour was tested."
+            exit 1
+          }
+          if ($total -lt 900) {
+            Write-Error "Only $total test(s) collected - collection broke (an import error takes a whole module's tests with it silently)."
             exit 1
           }
 
