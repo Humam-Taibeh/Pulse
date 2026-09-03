@@ -52,7 +52,7 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from utils import (  # noqa: E402
-    appicons, crashlog, prefs, resources, updater, version,
+    appicons, crashlog, prefs, resources, singleton, updater, version,
 )
 from utils.helpers import (  # noqa: E402
     PowerShellTask, SelfUpdateCheckWorker, SystemPulseSampler, TaskResult,
@@ -1768,10 +1768,20 @@ class PulseApp(QMainWindow):
         min_h = max(floor_h, min(min_h, avail.height() - 48))
         self.setMinimumSize(min_w, min_h)
 
-        # A remembered geometry wins, but only if Qt can still honour it —
-        # restoreGeometry() returns False when the saved screen is gone, in
-        # which case we fall through to the centred default rather than
-        # placing the window off-screen.
+        # A remembered geometry wins when Qt can parse it. What it returns
+        # False for is a blob it cannot READ — a corrupt preference, or one
+        # written by a different Qt — and that is the case this fall-through
+        # to the centred default exists for.
+        #
+        # IT DOES NOT RETURN FALSE FOR A MONITOR THAT IS GONE, which this
+        # comment claimed for several releases. Measured: a geometry saved
+        # at (4000, 1800) with no such display restores True and Qt itself
+        # repositions the window onto a real screen (867, 313). The outcome
+        # promised was the outcome delivered, which is why nothing ever
+        # noticed — but the mechanism named was not the one doing it, and
+        # a change written against that False would have been written
+        # against something that never happens. Both behaviours are pinned
+        # now: see tests/test_window_geometry.py.
         saved = prefs.window_geometry()
         if saved is not None and self.restoreGeometry(saved):
             return
@@ -3420,6 +3430,39 @@ class PulseApp(QMainWindow):
         "Pulse is applying changes to this PC. Stopping now can leave them "
         "half-applied.")
 
+    def raise_to_front(self):
+        """Come forward, whatever state the window is in.
+
+        Called when a SECOND launch of Pulse is refused (see
+        utils.singleton): the user asked for Pulse, so the honest response
+        is the window they meant rather than an error about one already
+        running.
+
+        THE ORDER MATTERS. showNormal() first, because raising a minimized
+        window raises it in the taskbar and answers nothing; then
+        activateWindow() for Qt's own focus bookkeeping. SetForegroundWindow
+        is called last and only on Windows, because Qt's activateWindow is
+        subject to the OS foreground lock — a process that has not had
+        recent input cannot steal focus, and the process with the right to
+        grant it here is the SECOND instance, which is why it calls
+        AllowSetForegroundWindow before signalling.
+        """
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.user32.SetForegroundWindow(
+                    ctypes.wintypes.HWND(int(self.winId())))
+            except (OSError, AttributeError, RuntimeError, ValueError):
+                # Cosmetic: the window is already restored and raised by
+                # the calls above, this only decides whether it also takes
+                # keyboard focus.
+                pass
+
     def _set_shutdown_block(self, reason: str | None):
         """Claim or release the Win32 shutdown block. Isolated so the
         decision above it can be tested without a Win32 call."""
@@ -3970,9 +4013,30 @@ def main() -> int:
     # written.
     crashlog.install(APP_VERSION)
 
+    # ONE PULSE PER SESSION, decided before any window is built. Two
+    # instances of this app is not an untidy desktop, it is two elevated
+    # engines writing HKLM with no knowledge of each other - see
+    # utils/singleton for what that costs the backup layer.
+    guard = singleton.SingleInstance()
+    if not guard.acquire():
+        # The user asked for Pulse; the honest answer is the window they
+        # meant. Only exit if the running instance actually ANSWERS -
+        # a mutex held by something hung or half-dead must not leave the
+        # user with no Pulse at all after they asked for one.
+        if singleton.request_activation():
+            return 0
+    # Held for the life of the process: letting `guard` fall out of scope
+    # would close the handle and re-open the door it exists to shut.
+
     try:
         window = PulseApp()
         window.show()
+        # Kept on the window so the listener outlives this frame; a
+        # QLocalServer that is garbage collected stops serving, and the
+        # symptom would be a second launch that exits without ever raising
+        # the first - the worst of both behaviours.
+        window._activation_server = singleton.listen_for_activation(
+            on_activate=window.raise_to_front)
     except Exception:
         # A failure here means no window will ever appear, so the generic
         # "may not behave correctly until restarted" wording of the hook
@@ -3980,8 +4044,16 @@ def main() -> int:
         # then exit non-zero rather than falling into an event loop with
         # nothing on screen.
         crashlog.handle(*sys.exc_info())
+        guard.release()
         return 1
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        # Windows frees the mutex when the process dies, so this is for
+        # the orderly exit rather than the crash: it makes an immediate
+        # relaunch work without depending on how fast the kernel reclaims
+        # the handle.
+        guard.release()
 
 
 if __name__ == "__main__":
