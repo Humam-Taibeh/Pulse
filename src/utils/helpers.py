@@ -547,6 +547,24 @@ class PowerShellTask(QObject):
             argv.append("-WhatIf")
         return argv
 
+    #: Seconds `taskkill` may take before the kill path stops waiting on it.
+    #:
+    #: THIS BOUNDS A FREEZE OF THE GUI THREAD, not a background wait.
+    #: cancel() is called directly from the GUI thread by design (the worker
+    #: is blocked on its stdout pipe and cannot service a queued call), so
+    #: every second spent here is a second the window does not repaint — the
+    #: Stop button cannot even paint its own "Stopping…" text until control
+    #: returns to the event loop. Unbounded, a taskkill that hangs on a
+    #: process stuck in an uninterruptible wait hangs the window with it,
+    #: and closeEvent's documented 3000ms thread-join grace is blown before
+    #: the join is even reached.
+    #:
+    #: 2s is loose enough that a genuinely large tree finishes inside it and
+    #: tight enough to stay under that grace. It is a fallback bound, not a
+    #: kill budget: the Job Object above has already terminated the tree by
+    #: the time this runs, on every machine where the job could be created.
+    TASKKILL_TIMEOUT = 2.0
+
     def _kill_process_tree(self, process: subprocess.Popen):
         """Terminate powershell.exe AND everything it spawned.
 
@@ -570,7 +588,18 @@ class PowerShellTask(QObject):
                     capture_output=True,
                     cwd=SAFE_CWD,
                     creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=self.TASKKILL_TIMEOUT,
                 )
+        except subprocess.TimeoutExpired:
+            # Bounding the wait is only half of it: TimeoutExpired is not an
+            # OSError, so without this clause the bound would have traded a
+            # frozen window for an exception raised inside closeEvent. The
+            # direct kill below still runs — a timed-out taskkill must not
+            # also mean a surviving process.
+            pass
+        except OSError:
+            pass
+        try:
             if process.poll() is None:
                 process.kill()
         except OSError:

@@ -32,7 +32,7 @@ if sys.platform == "win32":
     import ctypes.wintypes  # MSG / RECT for native window hit-testing
 
 from PySide6.QtCore import (
-    QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt,
+    QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt,
     QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
@@ -58,7 +58,8 @@ from utils.helpers import (  # noqa: E402
 )
 from frontend import theme as TH  # noqa: E402
 from frontend.animations import (  # noqa: E402
-    CASCADE_BUDGET_MS, CASCADE_MS, PAGE_FADE_MS, CascadeAnimator, PageFader,
+    CASCADE_BUDGET_MS, CASCADE_MS, EASE_INOUT, PAGE_FADE_MS, CascadeAnimator,
+    PageFader,
 )
 from frontend.menu_structure import (  # noqa: E402
     CATEGORIES, SOFTWARE_CATALOG, category_bands,
@@ -2069,7 +2070,7 @@ class PulseApp(QMainWindow):
         anim.setDuration(160)
         anim.setStartValue(1.0)
         anim.setEndValue(0.0)
-        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        anim.setEasingCurve(EASE_INOUT)
         anim.finished.connect(overlay.deleteLater)
         anim.start()
 

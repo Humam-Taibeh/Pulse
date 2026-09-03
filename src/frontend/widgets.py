@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDateTime, QEasingCurve, QEvent, QEventLoop, QPoint, QPointF, QProcess,
+    QDateTime, QEvent, QEventLoop, QPoint, QPointF, QProcess,
     QPropertyAnimation, QRect, QRectF, QSize, Qt, QThread, QTime, QTimer, QUrl,
     QVariantAnimation, Signal,
 )
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from frontend.animations import (
+    EASE_BREATHE, EASE_OUT,
     GlowController, RippleController, ShimmerBar, paint_accent_hairline,
     paint_aurora_edge, paint_bevel_frame, paint_drop_shadow, paint_glow_frame,
     paint_nav_indicator, paint_ripple_frame, paint_top_sheen, squircle_path,
@@ -1423,7 +1424,7 @@ def _present_dialog(dialog: PulseDialog, duration_ms: int = 130):
     anim.setDuration(duration_ms)
     anim.setStartValue(0.0)
     anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    anim.setEasingCurve(EASE_OUT)
     anim.start()
     dialog._entrance_anim = anim  # keep alive for the run
 
@@ -2564,7 +2565,7 @@ class GlassCard(QFrame):
         self._press_tint = 0.0
         self._press_anim = QVariantAnimation(self)
         self._press_anim.setDuration(90)
-        self._press_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._press_anim.setEasingCurve(EASE_OUT)
         self._press_anim.valueChanged.connect(self._on_press_frame)
 
         # v10 CARD ANATOMY — a header row (plaque + title) above a
@@ -3218,7 +3219,7 @@ class BrandMark(QWidget):
             self._anim.setStartValue(1.0)
             self._anim.setKeyValueAt(0.5, 0.0)   # exhale mid-loop
             self._anim.setEndValue(1.0)
-            self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+            self._anim.setEasingCurve(EASE_BREATHE)
             self._anim.setLoopCount(-1)
             self._anim.valueChanged.connect(self._on_frame)
 
@@ -6768,7 +6769,7 @@ class StatusDot(QLabel):
         self._font.setPixelSize(12)
 
         self._anim = QVariantAnimation(self)
-        self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._anim.setEasingCurve(EASE_BREATHE)
         self._anim.setLoopCount(-1)
         self._anim.valueChanged.connect(self._on_frame)
         self._apply_cadence(*self._IDLE)
@@ -7048,7 +7049,7 @@ class ActivityDrawer(QWidget):
 
         self._anim = QPropertyAnimation(self._body, b"maximumHeight", self)
         self._anim.setDuration(self.ANIM_MS)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setEasingCurve(EASE_OUT)
         self._anim.finished.connect(self._on_anim_done)
         self._anim.valueChanged.connect(lambda _v: self.height_changed.emit())
 
@@ -7283,7 +7284,7 @@ class ToggleSwitch(QWidget):
 
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(160)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setEasingCurve(EASE_OUT)
         self._anim.valueChanged.connect(self._on_frame)
 
         self._busy_anim = QVariantAnimation(self)
@@ -7291,7 +7292,7 @@ class ToggleSwitch(QWidget):
         self._busy_anim.setStartValue(0.35)
         self._busy_anim.setKeyValueAt(0.5, 1.0)
         self._busy_anim.setEndValue(0.35)
-        self._busy_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._busy_anim.setEasingCurve(EASE_BREATHE)
         self._busy_anim.setLoopCount(-1)
         self._busy_anim.valueChanged.connect(lambda _v: self.update())
 

@@ -1089,13 +1089,28 @@ class TestBrandMarks:
         assert round(appicons._WELL_RADIUS_RATIO * W.APP_ICON_PX) == 8
 
         t = window.theme.t
+        # The rasterisation ratio follows the SCREEN as of v10.9.5 (it was a
+        # hardcoded 2.0, which resampled on every display that was not
+        # exactly 200%). Uniformity is therefore asserted on the LOGICAL
+        # size — the one the layout lays out and the eye compares — with
+        # crispness asserted as "at least the logical size, at the screen's
+        # own ratio" rather than as one fixed multiple of it.
+        dpr = appicons._screen_dpr()
+        logical_sizes = set()
         for app_id, name in (("Google.Chrome", "Google Chrome"),
                              ("Valve.Steam", "Steam"),
                              ("NotAnApp.AtAll", "Nothing Like This")):
             pm = appicons.app_icon(name, W.APP_ICON_PX, t, app_id=app_id)
             assert not pm.isNull()
-            assert pm.size().width() == W.APP_ICON_PX * 2, (
-                "the pixmap is no longer rendered at 2x for crispness")
+            assert pm.devicePixelRatio() == pytest.approx(dpr), (
+                f"{app_id} was rasterised for a {pm.devicePixelRatio()} "
+                f"screen on a {dpr} one — Qt has to resample it")
+            assert pm.size().width() == round(W.APP_ICON_PX * dpr), (
+                "the pixmap no longer carries the screen's worth of detail")
+            logical_sizes.add(round(pm.size().width() / pm.devicePixelRatio()))
+        assert logical_sizes == {W.APP_ICON_PX}, (
+            f"the column renders at {logical_sizes} logical px — uniform "
+            "geometry is what makes a row of logos read as a set")
 
     def test_a_black_mark_is_rescued_on_the_dark_canvas(self, window, qapp):
         """Steam, Epic, Notion, Ollama and 7-Zip are all essentially

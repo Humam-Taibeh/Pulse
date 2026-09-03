@@ -68,8 +68,36 @@ CASCADE_BUDGET_MS = 190
 SHIMMER_MS    = 1200   # one full progress sweep (indeterminate loop, not a
                        # transition — left at its original pace on purpose)
 
+# ============================================================
+#  THE MOTION VOCABULARY
+# ============================================================
+# Three curves, and every animation in the app uses one of them BY NAME.
+# The durations above have always worked this way; the curves did not, and
+# eight call sites in widgets.py and main.py spelled Qt's enum longhand
+# instead — which meant "retune the app's motion" was a two-constant edit
+# that silently missed most of the app. Same defect the type scale had in
+# v10.9.3, one layer over.
+#
+# EASE_OUT decelerates into rest: the right shape for anything that STARTS
+# on an input and settles (hover glow, press, a card rising into place, a
+# panel arriving). It is the app's default and most animations are this.
+#
+# EASE_INOUT accelerates and decelerates symmetrically: for a transition
+# between two equally-valid states where neither end is "the input" — the
+# theme crossfade is the only one, and its symmetry is the point.
+#
+# EASE_BREATHE is sine, and it is here because three motions in the app
+# OSCILLATE or REVERSE rather than travelling once: the brand mark's
+# breath, the activity drawer's open/close, and the busy pulse. Sine is
+# the curve whose velocity is continuous across a reversal, so a loop
+# using it has no visible seam where it turns around — which the cubic
+# curves, whose endpoints have zero velocity, cannot give a repeating
+# animation without a hitch at every cycle. It was already in use for all
+# three; it simply was not declared, so the app looked like it had two
+# curves when it had three.
 EASE_OUT  = QEasingCurve.Type.OutCubic
 EASE_INOUT = QEasingCurve.Type.InOutQuad
+EASE_BREATHE = QEasingCurve.Type.InOutSine
 
 
 # ============================================================

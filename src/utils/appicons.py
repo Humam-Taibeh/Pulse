@@ -137,7 +137,18 @@ _MANIFEST: dict[str, dict] | None = None
 _PIXMAP_CACHE: dict[tuple, QPixmap] = {}
 _PROVIDER = None
 _UNSET = object()          # "not resolved yet", distinct from "resolved to None"
-_GENERIC_KEY: object | bytes | None = _UNSET
+
+#: Windows' generic document-icon bytes, PER DEVICE SIZE.
+#:
+#: One cached key for the first size ever asked for was survivable only
+#: while every caller asked for the same one. _shell_pixmap compares raw
+#: image bytes against this to reject the blank-page placeholder, and two
+#: different sizes can never compare equal — so a single shared key means
+#: the rejection silently stops working the moment a second size appears,
+#: and Windows' placeholder gets shown as though it were the app's own
+#: icon. Rendering at the screen's ratio introduces exactly that second
+#: size, so the key has to be per-size to keep the guard honest.
+_GENERIC_KEYS: dict[int, bytes | None] = {}
 
 _UNINSTALL_ROOTS = (
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -231,8 +242,8 @@ def _installed_icon_path(app_name: str) -> str | None:
     return None
 
 
-def _generic_shell_key(px: int) -> bytes | None:
-    """The raw bytes of Windows' GENERIC document icon at `px`.
+def _generic_shell_key(device_px: int) -> bytes | None:
+    """The raw bytes of Windows' GENERIC document icon at `device_px`.
 
     Windows' icon extraction never fails loudly: hand it a stale path, a
     container it cannot open, or a file type with nothing embedded, and it
@@ -240,21 +251,65 @@ def _generic_shell_key(px: int) -> bytes | None:
     Rendered into a row of real logos that reads as a broken image, so the
     placeholder is identified and rejected rather than shown. Comparing
     against the provider's own File icon is exact and needs no heuristics.
+
+    Takes the resolved DEVICE size, not the logical one, because the bytes
+    it returns are only comparable against a pixmap requested at the same
+    size — see _GENERIC_KEYS.
     """
-    global _GENERIC_KEY
-    if _GENERIC_KEY is _UNSET:
-        _GENERIC_KEY = None
-        try:
-            from PySide6.QtWidgets import QFileIconProvider
-            provider = _icon_provider()
-            pm = provider.icon(QFileIconProvider.IconType.File).pixmap(
-                QSize(px * 2, px * 2))
-            if not pm.isNull():
-                image = pm.toImage()
-                _GENERIC_KEY = bytes(image.constBits())
-        except Exception:
-            _GENERIC_KEY = None
-    return _GENERIC_KEY
+    if device_px in _GENERIC_KEYS:
+        return _GENERIC_KEYS[device_px]
+    key: bytes | None = None
+    try:
+        from PySide6.QtWidgets import QFileIconProvider
+        provider = _icon_provider()
+        pm = provider.icon(QFileIconProvider.IconType.File).pixmap(
+            QSize(device_px, device_px))
+        if not pm.isNull():
+            image = pm.toImage()
+            key = bytes(image.constBits())
+    except Exception:
+        key = None
+    _GENERIC_KEYS[device_px] = key
+    return key
+
+
+def _screen_dpr() -> float:
+    """The primary screen's device-pixel ratio, floored at 1.0.
+
+    Every mark here used to be rasterised at exactly px*2 and stamped
+    setDevicePixelRatio(2.0) regardless of the display. That is pixel-exact
+    on a 200% screen and resampled on every other one — including 125%,
+    150% and 175%, which is most Windows laptops. The marks are SVG, so
+    rendering at the real ratio is lossless and costs nothing; the fixed
+    2.0 was only ever a guess at the display.
+
+    theme.icon_pixmap already does exactly this for the search glyph (see
+    its "RENDERED AT THE SCREEN'S DEVICE PIXEL RATIO" note, v10.9.3). This
+    is the same fix for the 37 vendor marks the catalog draws.
+
+    Floored at 1.0 because a ratio below 1 would rasterise BELOW the
+    logical size and hand Qt an upscale — the one outcome worse than the
+    fixed 2.0 it replaces. None-safe for a headless/pre-QGuiApplication
+    call, which the icon tests make directly.
+    """
+    try:
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+    except Exception:
+        return 1.0
+    if screen is None:
+        return 1.0
+    try:
+        return max(1.0, float(screen.devicePixelRatio()))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _device_px(px: int) -> tuple[int, float]:
+    """(device pixels, ratio) for a logical size — the pair every renderer
+    below needs, resolved once so they cannot disagree."""
+    dpr = _screen_dpr()
+    return max(1, round(px * dpr)), dpr
 
 
 def _icon_provider():
@@ -274,7 +329,7 @@ def _in_well(mark: QPixmap, px: int, tone: QColor) -> QPixmap:
     different plate at a different size is the same "scavenged" reading the
     well exists to fix, and it is MORE obvious for the odd one out.
     """
-    size = px * 2
+    size, dpr = _device_px(px)
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -283,17 +338,18 @@ def _in_well(mark: QPixmap, px: int, tone: QColor) -> QPixmap:
     _paint_well(p, size, tone)
     p.drawPixmap(_mark_rect(size).toRect(), mark)
     p.end()
-    pm.setDevicePixelRatio(2.0)
+    pm.setDevicePixelRatio(dpr)
     return pm
 
 
 def _shell_pixmap(path: str, px: int) -> QPixmap | None:
-    """The file's own shell icon, DPR-doubled so it stays crisp on scaled
-    displays. Returns None when the extractor handed back its generic
-    placeholder — see _generic_shell_key."""
+    """The file's own shell icon, rasterised for the screen it will land on
+    so it stays crisp at any scaling. Returns None when the extractor
+    handed back its generic placeholder — see _generic_shell_key."""
     if not os.path.isfile(path):
         return None
     try:
+        size, dpr = _device_px(px)
         if path.lower().endswith(".ico"):
             from PySide6.QtGui import QIcon
             icon = QIcon(path)
@@ -301,17 +357,20 @@ def _shell_pixmap(path: str, px: int) -> QPixmap | None:
             icon = _icon_provider().icon(QFileInfo(path))
         if icon.isNull():
             return None
-        pm = icon.pixmap(QSize(px * 2, px * 2))
+        pm = icon.pixmap(QSize(size, size))
         if pm.isNull():
             return None
-        generic = _generic_shell_key(px)
+        # Compared against a placeholder requested at the SAME device size:
+        # these are raw image bytes, so a mismatched size never compares
+        # equal and the guard would silently pass everything through.
+        generic = _generic_shell_key(size)
         if generic is not None:
             try:
                 if bytes(pm.toImage().constBits()) == generic:
                     return None       # the blank-page placeholder
             except Exception:
                 pass
-        pm.setDevicePixelRatio(2.0)
+        pm.setDevicePixelRatio(dpr)
         return pm
     except Exception:
         return None
@@ -539,12 +598,12 @@ def _brand_pixmap(app_id: str, px: int, tone: QColor,
         renderer = QSvgRenderer(path)
         if not renderer.isValid():
             return None
-        # DEVICE pixels while painting; the 2x device-pixel-ratio is
-        # attached only AFTER the last stroke. Setting it first would halve
-        # the painter's logical coordinate space, so every rect below —
-        # sized in device pixels — would overflow it and the mark would be
-        # clipped to its top-left quadrant.
-        size = px * 2
+        # DEVICE pixels while painting; the device-pixel-ratio is attached
+        # only AFTER the last stroke. Setting it first would divide the
+        # painter's logical coordinate space, so every rect below — sized
+        # in device pixels — would overflow it and the mark would be
+        # clipped to its top-left corner.
+        size, dpr = _device_px(px)
         pm = QPixmap(size, size)
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
@@ -567,7 +626,7 @@ def _brand_pixmap(app_id: str, px: int, tone: QColor,
                 QPainter.CompositionMode.CompositionMode_SourceIn)
             p.fillRect(_mark_rect(size), tone)
         p.end()
-        pm.setDevicePixelRatio(2.0)
+        pm.setDevicePixelRatio(dpr)
         return pm
     except Exception:
         return None
@@ -654,7 +713,7 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
     that varies per app (the old letter monogram) reads as branding and
     invites the question "why is Epic Games a letter E?"."""
     # device pixels first, DPR attached last — see _brand_pixmap's note
-    size = px * 2
+    size, dpr = _device_px(px)
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -674,7 +733,7 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
     p.drawLine(int(box.left()), int(box.center().y()),
                int(box.right()), int(box.center().y()))
     p.end()
-    pm.setDevicePixelRatio(2.0)
+    pm.setDevicePixelRatio(dpr)
     return pm
 
 
@@ -684,14 +743,21 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
 def app_icon(app_name: str, px: int, t: dict, app_id: str = "") -> QPixmap:
     """The row icon for `app_name` (and `app_id`, when the caller has it).
 
-    Cached per (id, name, size, theme). The theme is part of the key
+    Cached per (id, name, size, theme, ratio). The theme is part of the key
     because both the brand recolour and the neutral glyph are solved
     against the current surface — see the contrast-guard note above.
+
+    THE RATIO IS PART OF IT for the same reason the marks now follow the
+    screen at all: a key without it hands a pixmap rasterised for the
+    previous monitor straight back after the window is dragged to one with
+    different scaling, and the whole catalog stays soft until the app is
+    restarted. Cheap to key on and impossible to notice when wrong, which
+    is the combination that argues for keying on it.
     """
     dark = t.get("name", "dark") == "dark"
     surface = _parse_color(t.get("dialog_bg", ""),
                            "#16181d" if dark else "#ffffff")
-    key = (app_id, app_name, px, "d" if dark else "l")
+    key = (app_id, app_name, px, "d" if dark else "l", _screen_dpr())
     cached = _PIXMAP_CACHE.get(key)
     if cached is not None:
         return cached
