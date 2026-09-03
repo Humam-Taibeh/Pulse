@@ -889,6 +889,25 @@ def test_the_nav_rail_carries_no_edge_at_rest(mode, qapp):
     lay.setContentsMargins(0, 0, 0, 0)
     button = NavButton("package", "Software Management", "software", t)
     button.set_selected(False)
+    # AT REST IS FOUR STATES, NOT THREE. Selection and hover were already
+    # controlled here; keyboard focus was not. Showing a window hands
+    # focus to its first focusable child — the only child, in this fixture
+    # — so this row arrived FOCUSED, and once NavButton gained a focus
+    # ring (v10.9.5, after the rail measured zero changed pixels on focus)
+    # the test read that ring as a bevel at rest: accent #8a9edb at alpha
+    # 242 on all four edges.
+    #
+    # A focused row is SUPPOSED to carry an edge; that ring is the fix,
+    # not the defect. Focus is switched OFF here rather than cleared after
+    # show, because clearing it does not hold: the activation event that
+    # arrives during settle() hands focus straight back, which is why the
+    # first attempt at this still failed.
+    #
+    # The guard is untouched by that. What it was written for is an
+    # UNCONDITIONAL bevel, which paints whether or not anything is
+    # focusable. The complementary fact — that a focused row DOES carry an
+    # edge — is pinned in tests/test_focus_visuals.py.
+    button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     lay.addWidget(button)
     host.resize(360, 46)
     host.show()

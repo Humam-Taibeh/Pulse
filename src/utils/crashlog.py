@@ -36,10 +36,27 @@ from datetime import datetime
 
 from utils import resources
 
-#: Appended to, never truncated. The FIRST crash in a session is usually
-#: the one that explains the rest, and a handler that starts a fresh file
-#: each time keeps only the last one - the least informative of the set.
+#: Appended to within one file, and rotated rather than truncated. The
+#: FIRST crash in a session is usually the one that explains the rest, so
+#: a handler that started a fresh file per crash would keep only the last
+#: one - the least informative of the set.
 CRASH_LOG = "crash.log"
+
+#: The previous generation, kept so a rotation cannot throw away the run
+#: that led up to the current one.
+CRASH_LOG_PREVIOUS = "crash.log.1"
+
+#: Rotate past this. THE UNBOUNDED VERSION WAS A REAL HAZARD, not a tidy-
+#: up: the realistic recurring exception is one inside a repainting slot,
+#: which fires every frame, and a handler written to make a crash
+#: diagnosable would have written tracebacks until the disk filled -
+#: turning one incident into two, the second worse than the first.
+#:
+#: 1MB against the engine's own 5MB log (00-Foundation.ps1 has rotated at
+#: that since v6.1). Deliberately the same order rather than the same
+#: number: this file holds tracebacks, not a transcript, and 1MB is
+#: several hundred of them - far more history than any diagnosis uses.
+MAX_LOG_BYTES = 1024 * 1024
 
 #: Pass-through, not crashes. Ctrl+C and sys.exit() are the program ending
 #: because it was asked to; recording them as defects would make an
@@ -62,6 +79,32 @@ def _log_dir() -> str:
     return os.path.join(resources.data_root(), "Logs")
 
 
+def _rotate_if_full(path: str) -> None:
+    """Move the log aside once it passes MAX_LOG_BYTES.
+
+    os.replace rather than os.rename: the destination usually exists by
+    the second rotation, and rename refuses that on Windows while replace
+    is atomic and overwrites.
+
+    NEVER RAISES, for the same reason nothing else here does - and the
+    likeliest failure is specific: an antivirus scanner holding a handle
+    on the file makes the replace fail with PermissionError. Letting the
+    log grow past its cap is the right answer to that, because the
+    alternative is losing the crash report entirely over a housekeeping
+    step.
+    """
+    try:
+        if os.path.getsize(path) < MAX_LOG_BYTES:
+            return
+    except OSError:
+        return          # no file yet, or it cannot be measured
+    try:
+        os.replace(path, os.path.join(os.path.dirname(path),
+                                      CRASH_LOG_PREVIOUS))
+    except OSError:
+        pass
+
+
 def _write(exc_type, exc_value, exc_tb) -> str | None:
     """Append one formatted crash. Returns the path, or None if it could
     not be written - a read-only profile, a full disk, a redirected
@@ -70,6 +113,7 @@ def _write(exc_type, exc_value, exc_tb) -> str | None:
         directory = _log_dir()
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, CRASH_LOG)
+        _rotate_if_full(path)
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         with open(path, "a", encoding="utf-8") as handle:

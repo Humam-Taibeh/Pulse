@@ -1933,6 +1933,25 @@ def sidebar_search_qss(t: dict) -> str:
             color: {t['text_muted']};
             background: {t['card_hover']};
         }}
+        /* KEYBOARD FOCUS. This is the FIRST control in the tab chain, so
+           it is where a keyboard user arrives and was the first chance to
+           lose them: measured at zero changed pixels on focus before this
+           rule existed. A 2px accent border, matching the ring GlassCard
+           and NavButton paint, so one ring means one thing throughout.
+
+           :focus, not :focus-visible — Qt's stylesheet engine does not
+           implement the latter, and this control is only ever reached by
+           Tab or by a click that immediately opens the palette, so there
+           is no lingering post-click ring to suppress.
+
+           The border REPLACES the 1px hairline rather than adding to it,
+           and the padding is reduced by the extra pixel it costs, so the
+           label does not shift by 1px as focus arrives. */
+        QPushButton:focus {{
+            border: 2px solid {alpha(t['accent'], 0.95)};
+            padding: 0 {SIDEBAR_GUTTER - 1}px;
+            color: {t['text_muted']};
+        }}
     """
 
 

@@ -1776,6 +1776,18 @@ class NavButton(QPushButton):
             self._ripple.trigger(e.position())
         super().mousePressEvent(e)
 
+    # A stylesheet that sets a border suppresses Qt's own focus rect, and
+    # with it the repaint Qt would have scheduled to draw one. The ring in
+    # paintEvent therefore has to ask for its own frame, or it appears
+    # only when something unrelated happens to repaint the row.
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self.update()
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.update()
+
     def _paint_plaque(self, p: QPainter):
         """The rail's icon well — the same micro-surface the cards wear.
 
@@ -1863,6 +1875,32 @@ class NavButton(QPushButton):
                          edge_alpha=self._glow.edge_alpha)
         if self.property("selected"):
             paint_nav_indicator(p, self.rect(), self._glow.color, self._accent2)
+        # KEYBOARD FOCUS RING. These four rows are second through fifth in
+        # the tab chain and had no focus affordance of any kind — no
+        # :focus rule in nav_button_qss and no branch here — so tabbing
+        # into the sidebar moved focus somewhere invisible. Measured at
+        # zero changed pixels before this existed, which is the whole
+        # defect: the v10 keyboard layer routes through these entries.
+        #
+        # Same treatment as GlassCard, deliberately, so one ring means one
+        # thing everywhere: a solid 2px accent stroke rather than Qt's
+        # dotted default (invisible on this material), painted LAST so it
+        # sits above the hover glow and stays unambiguous on a row the
+        # pointer is also over — hover and focus mean different things and
+        # a pointer resting elsewhere must not mask where the keyboard is.
+        #
+        # Inset by half the pen so the stroke lands INSIDE the row's own
+        # rect: at rect() the outer pixel of a 2px pen straddles the edge
+        # and bleeds over the neighbouring row, which on a 4px-spaced rail
+        # reads as one thick divider between two entries.
+        if self.hasFocus():
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            ring = QColor(self._glow.color)
+            ring.setAlphaF(0.95)
+            p.setPen(QPen(ring, 2.0))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1),
+                              radius - 1, radius - 1)
         p.end()
 
 
