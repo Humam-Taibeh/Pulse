@@ -502,6 +502,36 @@ def _readable_brand_color(brand: QColor, surface: QColor, dark: bool) -> QColor:
 #: Fixing the INNER box instead of the outer one is what makes them a set.
 _MARK_RATIO = 20.0 / 36.0
 
+
+def _keep_aspect(renderer: QSvgRenderer) -> None:
+    """Letterbox a mark inside its box instead of stretching it to fill.
+
+    QSvgRenderer.render(painter, rect) defaults to Qt.IgnoreAspectRatio: it
+    scales the viewBox to the rect on each axis INDEPENDENTLY. Every box
+    this module draws into is square (_mark_rect), and brand artwork is
+    not — so a mark whose viewBox is not 1:1 was being DISTORTED, silently,
+    on every paint.
+
+    Measured across the bundled set, seven marks were arriving deformed:
+    Java's cup at a 0.74 viewBox came out 35% too wide, Docker's whale at
+    1.38 came out 38% too tall, and Node, the C++ hexagon, Brave's lion,
+    Discord and Epic were all visibly off. That is the module's own rule —
+    a wrong logo is worse than no logo — being broken by the renderer
+    rather than by the source: the artwork committed to the repo is
+    correct, and only the drawing of it was not.
+
+    Setting the mode once here fixes every mark at once, including any
+    added later, and costs nothing: a square mark is unaffected, because
+    KeepAspectRatio and IgnoreAspectRatio agree when the ratios already
+    match.
+    """
+    try:
+        renderer.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
+    except AttributeError:
+        # Older Qt without the setter — stretching is what it did before,
+        # and a missing nicety must never stop the catalog from drawing.
+        pass
+
 #: Corner radius of the well, same fraction (8 in 36) — the squircle every
 #: app store and both desktop platforms present an app icon in.
 _WELL_RADIUS_RATIO = 8.0 / 36.0
@@ -583,6 +613,40 @@ def _mark_rect(size: int) -> QRectF:
     return QRectF(offset, offset, inner, inner)
 
 
+def _tinted_mark(renderer: QSvgRenderer, size: int, tone: QColor) -> QPixmap:
+    """A monochrome silhouette rendered and recoloured to `tone`, ON ITS
+    OWN transparent pixmap.
+
+    THE SEPARATE PIXMAP IS THE WHOLE POINT. CompositionMode_SourceIn keeps
+    the DESTINATION's alpha and takes the source's colour — so a fill
+    composited straight onto the icon painted the WELL as well, because the
+    well is opaque everywhere under the mark's box. Every monochrome mark
+    therefore rendered as a solid tinted SQUARE rather than as its own
+    shape: Cursor shipped that way, and it is exactly the "generic
+    placeholder" reading this module exists to prevent.
+
+    Clipping to the mark's box does not help and was what the code tried:
+    the box is precisely the region the well fills. Recolouring somewhere
+    the well has not been drawn does help, and costs one small pixmap.
+
+    `size` is in DEVICE pixels; the returned pixmap is the mark's INNER box
+    (see _MARK_RATIO), ready to be drawn into _mark_rect.
+    """
+    box = _mark_rect(size).toRect()
+    mark = QPixmap(max(1, box.width()), max(1, box.height()))
+    mark.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(mark)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    renderer.render(painter, QRectF(0, 0, mark.width(), mark.height()))
+    # Now the only non-transparent pixels ARE the silhouette, so SourceIn
+    # tints the shape and nothing else.
+    painter.setCompositionMode(
+        QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(mark.rect(), tone)
+    painter.end()
+    return mark
+
+
 def _brand_pixmap(app_id: str, px: int, tone: QColor,
                   surface: QColor | None = None,
                   dark: bool = True) -> QPixmap | None:
@@ -615,6 +679,7 @@ def _brand_pixmap(app_id: str, px: int, tone: QColor,
         renderer = QSvgRenderer(path)
         if not renderer.isValid():
             return None
+        _keep_aspect(renderer)
         # DEVICE pixels while painting; the device-pixel-ratio is attached
         # only AFTER the last stroke. Setting it first would divide the
         # painter's logical coordinate space, so every rect below — sized
@@ -632,16 +697,21 @@ def _brand_pixmap(app_id: str, px: int, tone: QColor,
         # measured TONE is the only arrangement that satisfies both
         # "present every icon identically" and "a black mark must stay
         # visible on a black canvas".
-        _paint_well(p, size, _rescue_well(renderer, size, surface, dark))
-        renderer.render(p, _mark_rect(size))
-        if not full_colour:
-            # SourceIn would take the well with it — it replaces the alpha
-            # of everything already on the pixmap. Clip to the mark's own
-            # box so the recolour reaches the silhouette and stops there.
-            p.setClipRect(_mark_rect(size))
-            p.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_SourceIn)
-            p.fillRect(_mark_rect(size), tone)
+        #
+        # WHICH well depends on which kind of mark, and the two must not be
+        # swapped. Full-colour artwork keeps its own colours, so the SURFACE
+        # has to move to rescue it (_rescue_well measures whether it needs
+        # to). A monochrome silhouette is recoloured through the contrast
+        # guard instead, which has ALREADY solved it against the resting
+        # well — handing that one a rescue plate would put a near-white
+        # mark on a near-white tile.
+        if full_colour:
+            _paint_well(p, size, _rescue_well(renderer, size, surface, dark))
+            renderer.render(p, _mark_rect(size))
+        else:
+            _paint_well(p, size, _well_color(surface, dark))
+            p.drawPixmap(_mark_rect(size).toRect(),
+                         _tinted_mark(renderer, size, tone))
         p.end()
         pm.setDevicePixelRatio(dpr)
         return pm
