@@ -931,10 +931,14 @@ _CHIP_H = TH.CONTROL_H
 #: row overflowed — and the bar then rendered hard against the pill edges,
 #: reading as an underline drawn across the tab bar.
 #:
-#: DERIVED from the scrollbar's own geometry rather than written out, so
+#: DERIVED from the strip bar's own geometry rather than written out, so
 #: the lane and the bar are one number by construction — they used to be
 #: two literals (10 here, 10 in chip_strip_qss) that agreed only by luck.
-_CHIP_LANE = TH.scrollbar_lane()
+#:
+#: chip_strip_lane(), NOT scrollbar_lane(): the main bar's lane grew to
+#: 14px to give the pointer something to hit on a long list, and the pill
+#: strip deliberately did not follow it — see TH.chip_strip_qss.
+_CHIP_LANE = TH.chip_strip_lane()
 
 
 def _chip_strip(t: dict,
@@ -1379,6 +1383,41 @@ def scroll_host_layout(host: QWidget, spacing: str = "sm") -> QVBoxLayout:
     return lay
 
 
+def _host_body_rect(host) -> QRect:
+    """The host window's BODY in its own coordinates — everything below the
+    custom title bar. The one place that decides where a sheet belongs, so
+    a refit and a re-anchor can never disagree about it."""
+    titlebar_h = getattr(getattr(host, "titlebar", None), "height", lambda: 0)()
+    return QRect(0, titlebar_h, host.width(), host.height() - titlebar_h)
+
+
+def reanchor_dialog(dialog: PulseDialog):
+    """Keep `dialog` glued to its host's body while the WINDOW MOVES.
+
+    A Pulse sheet is a frameless TOP-LEVEL window positioned in screen
+    coordinates (see refit_dialog), not a child widget — which is what lets
+    it paint its own scrim and leave the title bar live. The cost is that
+    nothing moves it when the shell moves: drag the window and the sheet
+    stayed nailed to the screen coordinates it opened at, sliding out of
+    its own app. The command palette made this most obvious because it is
+    the surface most likely to be open while the window is being placed,
+    but every sheet had it.
+
+    A MOVE, NOT A REFIT, and deliberately so. A window drag emits these
+    continuously, and refit_dialog also re-derives the panel's responsive
+    size and re-asserts the scrim — real layout work, per mouse step, none
+    of which a translation can change. Only the top-left moves here.
+
+    The frost is left alone for the same reason: it is a capture of the
+    HOST's own pixels, and those travel with the window, so a move leaves
+    it exactly as valid as it was.
+    """
+    host = _resolve_host_window(dialog)
+    if host is None:
+        return
+    dialog.move(host.mapToGlobal(_host_body_rect(host).topLeft()))
+
+
 def refit_dialog(dialog: PulseDialog):
     """Resize `dialog` to exactly cover its host window's BODY — always
     fully below the title bar, so minimize/maximize/close stay visible
@@ -1386,11 +1425,13 @@ def refit_dialog(dialog: PulseDialog):
     the now square-and-opaque shell. Called from showEvent and again whenever the
     host resizes while a dialog is open — which is also what keeps a
     responsive selector panel (see _dialog_chrome) sized to the window
-    live, instead of freezing at its opening-time dimensions."""
+    live, instead of freezing at its opening-time dimensions.
+
+    A host MOVE goes to reanchor_dialog instead — same anchor, none of the
+    resize work."""
     host = _resolve_host_window(dialog)
     if host is not None:
-        titlebar_h = getattr(getattr(host, "titlebar", None), "height", lambda: 0)()
-        body = QRect(0, titlebar_h, host.width(), host.height() - titlebar_h)
+        body = _host_body_rect(host)
         dialog.setGeometry(QRect(host.mapToGlobal(body.topLeft()), body.size()))
         theme_mgr = getattr(host, "theme", None)
         if theme_mgr is not None:
@@ -7692,15 +7733,52 @@ class ToggleSwitch(QWidget):
 # ============================================================
 #  APP SELECTOR DIALOG — unified with the Dev Hub pattern
 # ============================================================
-class SoftwareCatalogDialog(PulseDialog):
-    """THE unified software hub — every installable app Pulse offers, in
-    one scrollable list, filtered in place by a sub-category tab bar.
+def _plain_tab_label(text: str) -> str:
+    """A group/section title with any leading emoji stripped, for a tab.
 
-    This replaced AppSelectorDialog and DevHubSelectorDialog, which were
-    two dialogs over four separate cards (Essential Apps, Dev Hub, Gaming,
-    Diagnostics). That layout meant a user who wanted VLC, Docker and Steam
-    ran three deploys from three places, and it gave "where do I get X?"
-    four possible answers. One catalog, one deploy, one answer.
+    Group titles lead with an emoji ("🧩 Languages & Compilers") because a
+    section header in a scrolling list benefits from one. A TAB does not:
+    the pills sit in a fixed-width scrolling strip, and every glyph is
+    ~18px that pushes the last tab under the scrollbar. The emoji still
+    leads the group header a few pixels below, which is where the
+    tab/content association actually gets made.
+
+    Splits on the first space rather than pattern-matching emoji ranges:
+    the titles are ours, the convention is one leading glyph, and a
+    codepoint-range test would still be wrong for the next flag or ZWJ
+    sequence someone uses.
+    """
+    head, _, rest = text.partition(" ")
+    return rest.strip() if rest and not head.isascii() else text
+
+
+class SoftwareCatalogDialog(PulseDialog):
+    """A catalog surface: one scrollable list of installable apps,
+    filtered in place by a tab bar.
+
+    ONE DIALOG, THREE SURFACES. Software Management offers three catalog
+    cards — Essential Daily Software, Developer/AI/Engineering, and
+    Runtimes & Hardware Drivers — and each opens THIS dialog scoped to its
+    own pillar (main.py passes a one-element `sections`). The pillars are
+    genuinely different errands: setting up a new machine, setting up a
+    toolchain, and fixing a missing DLL share almost no audience, urgency
+    or vocabulary, and a user chasing the third should not have to scroll
+    past Spotify to reach it.
+
+    THE TAB BAR RE-AIMS ITSELF at whatever the next level of subdivision
+    is. Given all three pillars it filters BY PILLAR; given one it filters
+    by that pillar's GROUPS ("Browsers & Communication", "IDEs & Code
+    Editors"). Same control, same code path, one level down — which is
+    what lets three scoped surfaces and one combined one be the same
+    dialog rather than a family of near-copies.
+
+    This lineage matters because the previous shape was the opposite
+    mistake: AppSelectorDialog and DevHubSelectorDialog were two dialogs
+    over four cards (Essential Apps, Dev Hub, Gaming, Diagnostics), so
+    "where do I get X?" had four answers and a mixed selection needed
+    three deploys. The fix then was to collapse to one card; the fix now
+    is to split by PURPOSE rather than by product type, with one list
+    underneath so a selection still deploys in a single pass.
 
     THE TABS FILTER; THEY DO NOT PAGE. Every row is built once and merely
     hidden, so a tick survives a tab change and "Deploy Selected" can span
@@ -7752,14 +7830,21 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         self.local_installer: tuple[str, str] | None = None
         self._rows: dict[str, DevHubRow] = {}
         self._tool_meta: dict[str, tuple[str, str]] = {}   # id -> (name, url)
-        self._row_section: dict[str, str] = {}             # id -> section key
+        self._row_tab: dict[str, str] = {}                 # id -> its tab key
         self._row_haystack: dict[str, str] = {}            # id -> searchable text
         self._dependents: dict[str, list[str]] = {}        # requires_id -> [ids]
-        self._headers: list[tuple[QWidget, str, list[str]]] = []  # (w, section, ids)
+        self._headers: list[tuple[QWidget, str, list[str]]] = []  # (w, tab, ids)
         self._tab_buttons: dict[str, QPushButton] = {}
         self._active_tab = self.ALL_KEY
         self._query = ""
         accent = t["accent"]
+
+        # SCOPED TO ONE PILLAR when the caller passes a single section —
+        # which the three Software Management catalog cards all do. The
+        # tab bar then subdivides by that pillar's GROUPS instead of by
+        # pillar; see the class docstring.
+        self._scoped = len(sections) == 1
+        section = sections[0] if self._scoped else None
 
         panel = _dialog_chrome(self, t, accent, responsive=True)
         lay = dialog_body(panel, "sm")
@@ -7771,7 +7856,12 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
+        # The pillar speaks for itself when there is one; the combined view
+        # has to explain that it is a combined view.
         self._blurb = QLabel(
+            f"{section['blurb']} Nothing is pre-selected — tick what you "
+            f"want, then deploy all {total} in one pass."
+            if self._scoped else
             f"All {total} apps in one place. Nothing is pre-selected — tick "
             "what you want, filter by sub-category, then deploy in one pass.")
         self._blurb.setWordWrap(True)
@@ -7815,19 +7905,29 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         # nothing, because each section's icon still leads its group header
         # a few pixels below, which is where the tab/content association
         # actually gets made.
-        tab_strip, tab_lay = _chip_strip(t, _CHIP_H)
-        for key, label in ([(self.ALL_KEY, f"All ({total})")] +
-                           [(s["key"], f"{s['title']}"
-                             f" ({sum(len(x) for _g, x in s['groups'])})")
-                            for s in sections]):
-            btn = QPushButton(label.replace("&", "&&"))
-            btn.setFixedHeight(_CHIP_H)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _c=False, k=key: self._set_tab(k))
-            self._tab_buttons[key] = btn
-            tab_lay.addWidget(btn)
-        tab_lay.addStretch()
-        lay.addWidget(tab_strip)
+        # ONE LEVEL DOWN WHEN SCOPED. Given every pillar the tabs are the
+        # pillars; given one they are that pillar's groups. A scoped pillar
+        # whose groups are all unnamed gets no strip at all rather than a
+        # lone "All" pill that filters nothing.
+        if self._scoped:
+            tab_defs = [(title, title, len(tools))
+                        for title, tools in section["groups"] if title]
+        else:
+            tab_defs = [(sec["key"], sec["title"],
+                         sum(len(x) for _g, x in sec["groups"]))
+                        for sec in sections]
+        if tab_defs:
+            tab_strip, tab_lay = _chip_strip(t, _CHIP_H)
+            for key, label, count in ([(self.ALL_KEY, "All", total)] + tab_defs):
+                btn = QPushButton(
+                    f"{_plain_tab_label(label)} ({count})".replace("&", "&&"))
+                btn.setFixedHeight(_CHIP_H)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _c=False, k=key: self._set_tab(k))
+                self._tab_buttons[key] = btn
+                tab_lay.addWidget(btn)
+            tab_lay.addStretch()
+            lay.addWidget(tab_strip)
 
         # -- select-all / select-none + live counter -------------
         toolbar = QHBoxLayout()
@@ -7843,6 +7943,24 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         self._none_btn.setStyleSheet(TH.link_button_qss(t, accent))
         self._none_btn.clicked.connect(lambda: self._set_visible_checked(False))
         toolbar.addWidget(self._none_btn)
+
+        # THE ONE-CLICK PASS, and it TICKS rather than deploys. A button
+        # that went straight to a silent install of five runtime packages
+        # would be the one control in the app whose effect you cannot see
+        # before it happens; ticking the rows instead puts the same
+        # convenience one keystroke away from a user who can now read
+        # exactly what is queued. `Select All` cannot stand in for it —
+        # that is scoped to the visible tab, so on "All" it would also
+        # queue the diagnostics tools nobody asked for.
+        self._bulk = (section or {}).get("bulk") if self._scoped else None
+        if self._bulk:
+            self._bulk_btn = QPushButton(self._bulk["label"])
+            self._bulk_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._bulk_btn.setStyleSheet(TH.link_button_qss(t, accent))
+            self._bulk_btn.setToolTip(self._bulk["hint"])
+            self._bulk_btn.clicked.connect(self._select_bulk_group)
+            toolbar.addWidget(self._bulk_btn)
+
         toolbar.addStretch()
 
         self._count_label = QLabel("0 selected")
@@ -7858,16 +7976,20 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         host.setStyleSheet("background: transparent;")
         host_lay = scroll_host_layout(host, "sm")
 
-        for section in sections:
-            for group_title, tools in section["groups"]:
+        for sec in sections:
+            for group_title, tools in sec["groups"]:
                 ids = [tool[0] for tool in tools]
+                # The row's tab key is whatever the strip above filters by
+                # — the group when scoped to one pillar, the pillar when
+                # showing them all.
+                tab_key = group_title if self._scoped else sec["key"]
                 # A group header is shown when the group names itself;
                 # otherwise the SECTION's own title stands in, so the "All"
                 # tab never presents a wall of rows with no dividers.
-                header = QLabel(group_title or f"{section['icon']}  {section['title']}")
+                header = QLabel(group_title or f"{sec['icon']}  {sec['title']}")
                 header.setStyleSheet(TH.label_qss(t, "section"))
                 host_lay.addWidget(header)
-                self._headers.append((header, section["key"], ids))
+                self._headers.append((header, tab_key, ids))
                 for app_id, name, desc, url, req_id, req_name in tools:
                     row = DevHubRow(app_id, name, desc, req_id, req_name, t)
                     row.checkbox.toggled.connect(
@@ -7875,7 +7997,7 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
                     row.options_requested.connect(self._open_tool_wizard)
                     self._rows[app_id] = row
                     self._tool_meta[app_id] = (name, url)
-                    self._row_section[app_id] = section["key"]
+                    self._row_tab[app_id] = tab_key
                     self._row_haystack[app_id] = f"{name} {desc} {app_id}".lower()
                     if req_id:
                         self._dependents.setdefault(req_id, []).append(app_id)
@@ -7893,6 +8015,18 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
 
         scroll.setWidget(host)
         lay.addWidget(scroll, 1)
+
+        # A pillar may end with a standing clarification — Pillar 3 uses it
+        # to say that OpenGL and Vulkan are absent because the display
+        # driver already provides them. Below the list rather than in the
+        # blurb: it answers "why is X not here?", which is a question you
+        # only have after reading the list.
+        footnote = (section or {}).get("footnote") if self._scoped else ""
+        if footnote:
+            note = QLabel(footnote)
+            note.setWordWrap(True)
+            note.setStyleSheet(TH.label_qss(t, "caption"))
+            lay.addWidget(note)
 
         lay.addSpacing(TH.SPACE["xs"])
         footer = QHBoxLayout()
@@ -7926,7 +8060,7 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         self._apply_filter()
 
     def _row_matches(self, app_id: str) -> bool:
-        if self._active_tab and self._row_section.get(app_id) != self._active_tab:
+        if self._active_tab and self._row_tab.get(app_id) != self._active_tab:
             return False
         return not self._query or self._query in self._row_haystack.get(app_id, "")
 
@@ -7955,6 +8089,29 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         """Scoped to what is on screen — see the class docstring."""
         for app_id in self._visible_ids():
             self._rows[app_id].checkbox.setChecked(checked)
+
+    def bulk_group_ids(self) -> list[str]:
+        """AppIds the pillar's one-click action ticks, or []. Reads the
+        SAME `bulk.group` the section declares, so this and
+        menu_structure.catalog_bulk_ids cannot name different sets."""
+        if not self._bulk:
+            return []
+        wanted = self._bulk["group"]
+        return [aid for aid, tab in self._row_tab.items() if tab == wanted]
+
+    def _select_bulk_group(self):
+        """Tick the pillar's essential group and show it.
+
+        THE TAB MOVES TOO, and that is the point rather than a flourish:
+        ticking five rows the user cannot see is indistinguishable from
+        ticking nothing, and the button's whole promise is that they can
+        check what it queued before pressing Deploy."""
+        for app_id in self.bulk_group_ids():
+            row = self._rows.get(app_id)
+            if row is not None:
+                row.checkbox.setChecked(True)
+        if self._bulk["group"] in self._tab_buttons:
+            self._set_tab(self._bulk["group"])
 
     def _refresh_runtime_suggestion(self, runtime_id: str):
         """Recompute a runtime row's highlight from scratch: on whenever it

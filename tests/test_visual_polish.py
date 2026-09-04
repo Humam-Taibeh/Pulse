@@ -155,10 +155,22 @@ def test_every_scrolling_surface_composes_the_shared_scrollbar():
 def test_the_pill_strip_lane_is_derived_from_the_scrollbar():
     """Two literals that agreed only by luck. When they disagreed the
     handle resolved to zero pixels: a strip that scrolls with no visible
-    scrollbar."""
-    assert _CHIP_LANE == TH.scrollbar_lane()
-    assert f"height: {TH.scrollbar_lane()}px" in TH.chip_strip_qss(
+    scrollbar.
+
+    The strip derives from chip_strip_lane(), NOT scrollbar_lane(): the
+    main bar's lane was widened to give the pointer something to hit, and
+    the pill strip deliberately kept its own shorter one."""
+    assert _CHIP_LANE == TH.chip_strip_lane()
+    assert f"height: {TH.chip_strip_lane()}px" in TH.chip_strip_qss(
         TH.tokens("dark"))
+
+
+def test_the_pill_strip_stayed_out_of_the_wider_lane():
+    """The strip's bar sits under a 30px row of tabs, where the main bar's
+    grab lane would read as a slab drawn across the tab bar rather than as
+    a scrollbar. Pinned because the obvious "tidy-up" is to collapse the
+    two lanes back into one number."""
+    assert TH.chip_strip_lane() < TH.scrollbar_lane()
 
 
 @pytest.mark.parametrize("mode", ["dark", "light"])
@@ -167,6 +179,124 @@ def test_the_scrollbar_acknowledges_a_drag(mode):
     qss = TH.scrollbar_qss(t)
     assert "QScrollBar::handle:vertical:pressed" in qss
     assert "QScrollBar::handle:horizontal:pressed" in qss
+
+
+# ============================================================
+#  2b. SCROLLBAR GEOMETRY — RENDERED AND COUNTED, NOT DECLARED
+#
+#  The bar was reported as "too narrow to easily grab", and measuring it
+#  found something worse than the report: `width: 6px` with `margin: 2px`
+#  left a TWO-PIXEL groove, so both the painted thumb and — the part that
+#  actually matters — the slider's hit rect were 2px wide. Qt derives the
+#  drag target from that rect, so the bar was a 2px moving target.
+#
+#  These render a real QScrollBar and count pixels rather than asserting
+#  on the stylesheet text, because the stylesheet is exactly what was
+#  wrong: every rule in it was present, spelled correctly, and combined
+#  into a control nobody could hit.
+# ============================================================
+def _render_bar(qss: str, lane: int):
+    """(painted thumb px, slider hit-rect px) for a bar wearing `qss`."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider
+
+    bar = QScrollBar(Qt.Orientation.Vertical)
+    bar.setStyleSheet(qss)
+    # A page step well inside the range puts a real handle mid-groove, so
+    # the widest opaque run below crosses its BODY rather than a rounded
+    # end cap (which is what made an earlier version of this measurement
+    # report 2px for a 6px thumb).
+    bar.setRange(0, 100)
+    bar.setPageStep(20)
+    bar.setValue(40)
+    bar.resize(lane, 300)
+
+    image = QImage(bar.size(), QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    bar.render(painter, QPoint())
+    painter.end()
+
+    # The thumb is the widest run of pixels clearly above the track: the
+    # track itself is drawn now, so a bare "alpha > 0" would measure the
+    # whole lane.
+    thumb = 0
+    for y in range(image.height()):
+        lit = sum(1 for x in range(image.width())
+                  if image.pixelColor(x, y).alpha() > 40)
+        thumb = max(thumb, lit)
+
+    option = QStyleOptionSlider()
+    bar.initStyleOption(option)
+    hit = bar.style().subControlRect(
+        QStyle.ComplexControl.CC_ScrollBar, option,
+        QStyle.SubControl.SC_ScrollBarSlider, bar)
+    return thumb, hit.width()
+
+
+def _hover_sheet(qss: str) -> str:
+    """`qss` with the handle's :hover rules promoted to the resting state.
+
+    Qt only applies :hover to a sub-control the pointer is actually over,
+    and an offscreen render has no pointer. Promoting the rule is honest
+    because the hover block is declared AFTER the base one at equal
+    specificity, so this is the same cascade Qt itself resolves — it just
+    reaches the answer without a mouse."""
+    return qss.replace("::handle:vertical:hover", "::handle:vertical")
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_scrollbar_thumb_is_within_the_fluent_band(mode, qapp):
+    """6-8px of painted thumb — Windows 11's own resting/hover pair."""
+    thumb, _hit = _render_bar(TH.scrollbar_qss(TH.tokens(mode)),
+                              TH.scrollbar_lane())
+    assert thumb == TH.SCROLLBAR["thumb"], (
+        f"resting thumb rendered {thumb}px, not "
+        f"{TH.SCROLLBAR['thumb']}px")
+    assert 6 <= thumb <= 8, f"{thumb}px is outside the 6-8px Fluent band"
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_thumb_grows_under_the_pointer(mode, qapp):
+    """The expand affordance. A thumb that only changes COLOUR on hover
+    still leaves the user aiming at the same hairline."""
+    t = TH.tokens(mode)
+    resting, _ = _render_bar(TH.scrollbar_qss(t), TH.scrollbar_lane())
+    hovered, _ = _render_bar(_hover_sheet(TH.scrollbar_qss(t)),
+                             TH.scrollbar_lane())
+    assert hovered > resting, (
+        f"the thumb does not grow on hover ({resting}px -> {hovered}px)")
+    assert hovered == TH.SCROLLBAR["thumb_hover"]
+    assert 6 <= hovered <= 8, f"{hovered}px is outside the 6-8px Fluent band"
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_grab_target_is_far_wider_than_the_thumb(mode, qapp):
+    """THE ACTUAL DEFECT. Qt hit-tests a drag against
+    subControlRect(SC_ScrollBarSlider); the old sheet left that rect 2px
+    wide, so the bar was a two-pixel moving target however it looked.
+
+    The lane is the target and the thumb is only what is drawn inside it,
+    which is why the inset is a MARGIN on the handle rather than a smaller
+    bar: a margin shrinks the paint and leaves the rect alone."""
+    thumb, hit = _render_bar(TH.scrollbar_qss(TH.tokens(mode)),
+                             TH.scrollbar_lane())
+    assert hit == TH.scrollbar_lane(), (
+        f"the slider's hit rect is {hit}px, not the full "
+        f"{TH.scrollbar_lane()}px lane — the inset is shrinking the TARGET, "
+        "not just the paint")
+    assert hit >= 12, f"a {hit}px grab target is still a hard one to hit"
+    assert hit > thumb, "the lane gives the pointer nothing over the thumb"
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_the_scrollbar_track_is_visible(mode):
+    """A lane you cannot see is a lane you cannot aim into. `transparent`
+    was the old value for both bars."""
+    t = TH.tokens(mode)
+    assert t["scroll_track"] != "transparent"
+    assert f"background: {t['scroll_track']}" in TH.scrollbar_qss(t)
 
 
 @pytest.mark.parametrize("mode", ["dark", "light"])

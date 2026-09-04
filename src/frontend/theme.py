@@ -847,6 +847,26 @@ GLYPHS: dict[str, tuple[str, str]] = {
     'lock':          ("\uE72E", "\U0001f512"),    # Lock — admin-gated affordance
     # --- modules (sidebar) ---
     'package':       ("\uE7B8", "\U0001f4e6"),    # Software Management
+    # FOUR MARKS FOR THE THREE PILLARS AND THEIR ONE-CLICK PASS. Two are
+    # REINSTATEMENTS rather than new picks: 'code' and 'puzzle' were
+    # retired for having no call site, and their original comments read
+    # "Developer & University Hub" and "Core API Runtimes" - precisely the
+    # two surfaces the pillar split brings back. The codepoints are the
+    # ones they carried, recovered from git history rather than re-chosen,
+    # so the marks are literally the same ones.
+    #
+    # All four were verified by the advance-width test this table's header
+    # documents, and that test earned its keep: U+E9D9 ("Processor")
+    # looked like the obvious answer for the runtimes card and turns out
+    # to be byte-identical to 'pulse' - the exact silent duplication the
+    # escaped-literal convention exists to expose.
+    'code':          ("\uE943", "\U0001f9d1"),    # Developer, AI & Engineering
+    'puzzle':        ("\uEA86", "\U0001f9e9"),    # Runtimes & Hardware Drivers
+    'download':      ("\uE896", "\u2b07\ufe0f"),  # Install All Essential Dependencies
+    # DISTINCT FROM 'network' (U+E839, an Ethernet plug), which the ping
+    # optimizer owns. A tower is the right mark for the broader
+    # connectivity hub: adapters, drivers and the stack itself.
+    'networktower':  ("\uEDA3", "\U0001f5fc"),    # Network & Connectivity
     'bolt':          ("\uE945", "\u26a1"),        # System Optimization / power
     'repair':        ("\uE90F", "\U0001f527"),    # Maintenance / repair (wrench)
     'info':          ("\uE946", "\U0001f4ca"),    # Information & Utilities
@@ -1295,8 +1315,14 @@ _DARK = {
     "danger_line": "rgba(222, 105, 95, 0.30)",
 
     # chrome
-    "scroll":      "rgba(255, 255, 255, 0.14)",
-    "scroll_hov":  "rgba(138, 158, 219, 0.50)",
+    # 0.14 -> 0.32. At 0.14 the resting thumb measured 1.15:1 against the
+    # obsidian canvas: technically drawn, and genuinely hard to FIND before
+    # you could aim at it. A scrollbar is a control, not a decoration, so
+    # it gets a control's legibility. The track is drawn now too — a lane
+    # you can see is a lane you can aim the pointer into.
+    "scroll":      "rgba(255, 255, 255, 0.32)",
+    "scroll_hov":  "rgba(148, 170, 235, 0.72)",
+    "scroll_track": "rgba(255, 255, 255, 0.04)",
     "shimmer_track": (255, 255, 255, 12),      # QColor args for painted widgets
     "titlebar_hover": "rgba(255, 255, 255, 0.06)",
     "close_hover":    "#c42b1c",               # native Win11 caption red
@@ -1471,8 +1497,11 @@ _LIGHT = {
     "err":         "#b34341",
     "danger_line": "rgba(179, 67, 65, 0.35)",
 
-    "scroll":      "rgba(60, 60, 67, 0.20)",
-    "scroll_hov":  "rgba(88, 102, 169, 0.55)",
+    # Light's mirror of the dark bump above — 0.20 was the same "drawn but
+    # unfindable" thumb on porcelain.
+    "scroll":      "rgba(60, 60, 67, 0.40)",
+    "scroll_hov":  "rgba(78, 92, 160, 0.75)",
+    "scroll_track": "rgba(60, 60, 67, 0.05)",
     "shimmer_track": (60, 60, 67, 18),
     "titlebar_hover": "rgba(60, 60, 67, 0.08)",
     "close_hover":    "#c42b1c",               # native Win11 caption red
@@ -2244,25 +2273,60 @@ FIELD = {
 }
 
 
-#: The scrollbar's lane and handle geometry. `_CHIP_LANE` in widgets.py
-#: reserves exactly SCROLLBAR["lane"] for a horizontal bar under a pill
-#: strip, so the two numbers are one number — see the strip's contract test.
+#: The scrollbar's lane and handle geometry.
+#:
+#: THE LANE AND THE THUMB ARE DIFFERENT NUMBERS, and separating them is the
+#: whole fix. The bar used to be 6px wide with a 2px margin, which made the
+#: THUMB 6px and the GRAB TARGET 6px as well — a 6px-wide moving target is
+#: genuinely hard to hit with a mouse, and that is what the catalog's long
+#: lists were reported as. Windows 11 solves it by making the bar's lane
+#: much wider than the mark drawn inside it: the pointer only has to land
+#: in the lane, while the resting mark stays a quiet hairline.
+#:
+#: So `lane` is the QScrollBar widget's own extent — the hit target, since
+#: Qt derives the slider's hit rect from it — and `thumb` / `thumb_hover`
+#: are how much of that lane is actually painted. The inset that produces
+#: them is a MARGIN on the handle, not a border: measured against both,
+#: margin is the one whose painted width stays exactly (lane - 2*inset)
+#: at every corner radius, and — the load-bearing part — leaves
+#: subControlRect(SC_ScrollBarSlider) reporting the FULL lane, so widening
+#: the hitbox costs the thumb nothing. tests/test_visual_polish.py renders
+#: a real QScrollBar and counts both, so these stay honest.
 SCROLLBAR = {
-    "thickness": 6,    # the bar's own width/height
-    "margin":    2,    # inset from the viewport edge
-    "min_grip":  30,   # shortest a handle may get on a long list
+    "lane":        14,   # the bar widget's extent — THE GRAB TARGET
+    "thumb":        6,   # painted thickness at rest
+    "thumb_hover":  8,   # painted thickness under the pointer
+    "min_grip":    30,   # shortest a handle may get on a long list
+    #: The pill strip's own, deliberately quieter lane — see chip_strip_qss.
+    #: NOT the main lane: a 14px bar under a 30px row of tabs reads as a
+    #: slab drawn across the tab bar rather than as a scrollbar, and the
+    #: strip has no long list to drag through anyway.
+    "chip_lane":   10,
+    "chip_thumb":   4,
 }
 
 
 def scrollbar_lane() -> int:
-    """Total vertical space a horizontal scrollbar takes out of a viewport.
+    """The scrollbar's full extent — the width of the invisible lane the
+    pointer has to land in, not the width of the mark drawn inside it."""
+    return SCROLLBAR["lane"]
+
+
+def chip_strip_lane() -> int:
+    """Total vertical space a horizontal scrollbar takes out of a PILL
+    STRIP viewport.
 
     widgets._CHIP_LANE is this number, and the Software Catalog's tab strip
     reserves exactly it. Derived rather than written twice: when the two
     disagreed, either the pills floated above their own lane or the handle
     resolved to zero pixels — a strip that scrolls with no visible
     scrollbar, which shipped once."""
-    return SCROLLBAR["thickness"] + SCROLLBAR["margin"] * 2
+    return SCROLLBAR["chip_lane"]
+
+
+def _thumb_inset(lane: int, thumb: int) -> int:
+    """Margin per side that leaves exactly `thumb` px of `lane` painted."""
+    return max(0, (lane - thumb) // 2)
 
 
 def scrollbar_qss(t: dict) -> str:
@@ -2275,38 +2339,59 @@ def scrollbar_qss(t: dict) -> str:
     `command_list_qss` were already composing the shared rules, which is
     exactly what made the console's private duplicate easy to miss.
 
-    Minimal by construction: no arrow buttons, no trough, a rounded grip
-    that only tints on hover — and now a `:pressed` step, so dragging the
-    bar acknowledges the drag instead of looking identical to hovering it.
+    Minimal by construction: no arrow buttons, a track that is present
+    rather than invisible, and a rounded grip that GROWS as well as tints
+    when the pointer reaches it — the Fluent affordance that says "this is
+    the thing you can drag" before the drag starts. `:pressed` holds the
+    grown size, so the bar does not shrink out from under a drag that has
+    already begun.
+
     The corner square where two bars meet is explicitly cleared; unstyled
     it renders as a small platform-grey tile in the bottom-right of any
     surface that can scroll both ways.
     """
-    thick = SCROLLBAR["thickness"]
-    margin = SCROLLBAR["margin"]
+    lane = SCROLLBAR["lane"]
     grip = SCROLLBAR["min_grip"]
-    radius = thick / 2.0
+    rest = _thumb_inset(lane, SCROLLBAR["thumb"])
+    hover = _thumb_inset(lane, SCROLLBAR["thumb_hover"])
+    rest_r = SCROLLBAR["thumb"] / 2.0
+    hover_r = SCROLLBAR["thumb_hover"] / 2.0
+    press = alpha(t['accent'], 0.75)
     return f"""
         QScrollBar:vertical {{
-            background: transparent; width: {thick}px; margin: {margin}px;
+            background: {t['scroll_track']}; width: {lane}px; margin: 0px;
+            border: none;
         }}
         QScrollBar::handle:vertical {{
-            background: {t['scroll']}; border-radius: {radius}px;
-            min-height: {grip}px;
+            background: {t['scroll']}; border-radius: {rest_r}px;
+            min-height: {grip}px; margin: 0px {rest}px;
         }}
-        QScrollBar::handle:vertical:hover {{ background: {t['scroll_hov']}; }}
-        QScrollBar::handle:vertical:pressed {{ background: {alpha(t['accent'], 0.55)}; }}
+        QScrollBar::handle:vertical:hover {{
+            background: {t['scroll_hov']}; border-radius: {hover_r}px;
+            margin: 0px {hover}px;
+        }}
+        QScrollBar::handle:vertical:pressed {{
+            background: {press}; border-radius: {hover_r}px;
+            margin: 0px {hover}px;
+        }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
         QScrollBar:horizontal {{
-            background: transparent; height: {thick}px; margin: {margin}px;
+            background: {t['scroll_track']}; height: {lane}px; margin: 0px;
+            border: none;
         }}
         QScrollBar::handle:horizontal {{
-            background: {t['scroll']}; border-radius: {radius}px;
-            min-width: {grip}px;
+            background: {t['scroll']}; border-radius: {rest_r}px;
+            min-width: {grip}px; margin: {rest}px 0px;
         }}
-        QScrollBar::handle:horizontal:hover {{ background: {t['scroll_hov']}; }}
-        QScrollBar::handle:horizontal:pressed {{ background: {alpha(t['accent'], 0.55)}; }}
+        QScrollBar::handle:horizontal:hover {{
+            background: {t['scroll_hov']}; border-radius: {hover_r}px;
+            margin: {hover}px 0px;
+        }}
+        QScrollBar::handle:horizontal:pressed {{
+            background: {press}; border-radius: {hover_r}px;
+            margin: {hover}px 0px;
+        }}
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: transparent; }}
         QAbstractScrollArea::corner {{ background: transparent; border: none; }}
@@ -2339,13 +2424,14 @@ def chip_strip_qss(t: dict) -> str:
     """scroll_area_qss with a quieter horizontal bar, for a single-line row
     of pills (widgets._chip_strip).
 
-    The shared bar is 6px with a 2px margin all round, which is right
-    inside a tall list and wrong under a pill row: sitting 2px under a
-    30px pill, a full-width 6px bar reads as an UNDERLINE drawn across the
-    tab bar rather than as a scrollbar — it was the most eye-catching line
-    in the Software Catalog. Here the bar keeps the FULL lane height and
-    spends most of it on margin, so the visible handle is 4px sitting
-    clear of the pills above it.
+    The shared bar is a 14px lane carrying a 6px thumb, which is right
+    inside a tall list and wrong under a pill row: sitting under a 30px
+    pill, a bar that wide reads as a SLAB drawn across the tab bar rather
+    than as a scrollbar — it was the most eye-catching line in the Software
+    Catalog. Here the bar keeps its own shorter lane and spends most of it
+    on margin, so the visible handle is 4px sitting clear of the pills
+    above it. The strip is one row of tabs, not a long list, so it needs
+    none of the grab-target width the main bar exists to provide.
 
     `height` is the widget, not the handle: it must equal
     widgets._CHIP_LANE, or the lane the strip reserves and the space Qt
@@ -2354,12 +2440,24 @@ def chip_strip_qss(t: dict) -> str:
     leave a handle of zero pixels — a scrollable strip with no visible
     scrollbar at all, which is how this shipped for one revision).
     """
+    lane = chip_strip_lane()
+    thumb = SCROLLBAR["chip_thumb"]
+    # 4px of air above the handle, the remainder below — the handle sits
+    # clear of the pills rather than hard against them.
+    top = 4
+    bottom = max(0, lane - thumb - top)
     return scroll_area_qss(t) + f"""
         QScrollBar:horizontal {{
-            height: {scrollbar_lane()}px; margin: 4px 0 2px 0;
+            background: transparent;
+            height: {lane}px; margin: 0px;
         }}
         QScrollBar::handle:horizontal {{
-            background: {t['scroll']}; border-radius: 2px; min-width: 48px;
+            background: {t['scroll']}; border-radius: {thumb / 2.0}px;
+            min-width: 48px; margin: {top}px 0px {bottom}px 0px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background: {t['scroll_hov']};
+            margin: {top}px 0px {bottom}px 0px;
         }}
     """
 
