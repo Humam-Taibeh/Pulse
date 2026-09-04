@@ -638,6 +638,31 @@ def test_the_title_bar_mark_and_wordmark_carry_the_chrome(window):
 # ============================================================
 #  ZERO CONSOLE WINDOWS
 # ============================================================
+def _brackets_open(text: str) -> bool:
+    """True while `text` has an unclosed ( or @( — i.e. PowerShell would
+    read the next line as a continuation of this statement.
+
+    Quote-aware, because an argument list is full of strings and a lone
+    "(" inside one would otherwise wedge the scan open to end of file.
+    Comments are not stripped: a # inside these calls only ever appears
+    inside a quoted path, which the quote tracking already covers.
+    """
+    depth = 0
+    quote = ""
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "\"'":
+            quote = ch
+        elif ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+    return depth > 0
+
+
 class TestSilentExecution:
     """Pulse spawns PowerShell for every task, and PowerShell is a CONSOLE
     program. Windows gives a console program a console window unless it is
@@ -756,7 +781,25 @@ class TestSilentExecution:
             if stripped.startswith("#") or "Start-Process" not in line:
                 continue
             call, cursor = line, index
-            while call.rstrip().endswith("`") and cursor + 1 < len(lines):
+            # TWO WAYS A POWERSHELL CALL CONTINUES, and folding only the
+            # first left a hole this guard could be walked straight
+            # through. A trailing backtick is the explicit continuation;
+            # an UNCLOSED BRACKET is the implicit one, and an argument
+            # list written as
+            #
+            #     Start-Process -FilePath x `
+            #         -ArgumentList @("a",
+            #                         "b") `
+            #         -NoNewWindow
+            #
+            # stops the backtick-only scan dead at the comma on line 2 —
+            # so every switch after it, -NoNewWindow included, was
+            # invisible. The call read as unsilenced when it was silenced,
+            # which is the harmless direction; the same blind spot hides a
+            # genuinely unsilenced call written the same way, which is not.
+            while cursor + 1 < len(lines) and (
+                    call.rstrip().endswith("`")
+                    or _brackets_open(call)):
                 cursor += 1
                 call += " " + lines[cursor].strip()
             yield index + 1, call
@@ -978,13 +1021,70 @@ class TestBrandMarks:
                   encoding="utf-8") as handle:
             return json.load(handle)
 
+    #: Marks that are legitimately MONOCHROME, with the reason each one is.
+    #: A silhouette is authentic in shape and wrong in every other respect,
+    #: so the bar for staying on this list is that no colour artwork exists
+    #: — not that none was looked for.
+    MONOCHROME_BY_DESIGN = {
+        # Cursor's own brand cube IS monochrome; a "colour" version would
+        # be an invention.
+        "Anysphere.Cursor",
+        # Antigravity's arch is likewise drawn in one ink. The colour
+        # renditions on offer are Google's four-colour blobs, which are the
+        # COMPANY's mark rather than this product's.
+        "Google.Antigravity",
+        # NVIDIA's eye, from Simple Icons, carrying the brand green
+        # (#76B900) through the contrast guard. The full-colour `logos`
+        # entry is the eye PLUS the wordmark at a 512x98 viewBox, which
+        # letterboxes into a 20px square about four pixels tall — so the
+        # square silhouette is genuinely the better artwork here.
+        "XP8CLZL93F5Z4P",
+    }
+
     def test_almost_every_bundled_mark_is_full_colour(self):
+        """A recoloured silhouette is the fallback, not the target — see
+        the module note in src/utils/appicons.py on why the split used to
+        run 34:2 the wrong way."""
         manifest = self._manifest()
-        mono = sorted(k for k, v in manifest.items() if not v.get("color"))
-        # Cursor is the exception and stays one: its own brand cube is a
-        # monochrome mark, so a "colour" version would be an invention.
-        assert mono == ["Anysphere.Cursor"], (
-            f"marks still rendering as recoloured silhouettes: {mono}")
+        mono = {k for k, v in manifest.items() if not v.get("color")}
+        assert mono == self.MONOCHROME_BY_DESIGN, (
+            "monochrome mark set changed.\n"
+            f"  newly monochrome (is there really no colour artwork?): "
+            f"{sorted(mono - self.MONOCHROME_BY_DESIGN)}\n"
+            f"  no longer monochrome (update MONOCHROME_BY_DESIGN): "
+            f"{sorted(self.MONOCHROME_BY_DESIGN - mono)}")
+
+    def test_a_monochrome_mark_renders_as_its_shape_not_a_block(self, qapp):
+        """THE BUG THIS CATCHES SHIPPED. The recolour composited SourceIn
+        straight onto the icon, and SourceIn keeps the DESTINATION's alpha
+        — which under the mark is the WELL, and the well is opaque. So
+        every monochrome mark painted a solid tinted SQUARE instead of its
+        own silhouette. Cursor shipped that way; measured at 95% of the
+        pixmap near-opaque, against ~23% for a real full-colour logo.
+
+        Asserted by COUNTING PIXELS rather than by reading the code,
+        because the code looked right: the clip that was supposed to
+        contain the fill was clipping to exactly the region the well
+        fills."""
+        from frontend import theme as TH
+        from utils import appicons
+
+        for mode in ("dark", "light"):
+            t = TH.tokens(mode)
+            for app_id in sorted(self.MONOCHROME_BY_DESIGN):
+                appicons.invalidate_cache()
+                pixmap = appicons.app_icon(app_id, 44, t, app_id)
+                image = pixmap.toImage()
+                side = image.width()
+                opaque = sum(
+                    1
+                    for y in range(side)
+                    for x in range(side)
+                    if image.pixelColor(x, y).alpha() > 200)
+                filled = opaque / float(side * side)
+                assert filled < 0.5, (
+                    f"{app_id} ({mode}) fills {filled:.0%} of its box — it is "
+                    "painting a solid block, not a silhouette")
 
     def test_the_named_brands_carry_their_real_artwork(self):
         """The specific ones the sprint called out, each checked by AppId
@@ -994,7 +1094,15 @@ class TestBrandMarks:
         for app_id in ("Google.Chrome", "Valve.Steam",
                        "EpicGames.EpicGamesLauncher",
                        "RockstarGames.Launcher",
-                       "Oracle.JavaRuntimeEnvironment",
+                       # Temurin replaced Oracle's JRE in the catalog, and
+                       # its mark was WRONG rather than missing: it pointed
+                       # at logos:eclipse-icon, the Eclipse IDE's circle —
+                       # a different product from the same foundation.
+                       "EclipseAdoptium.Temurin.21.JDK",
+                       # Likewise MSYS2, which carried the GNU project's
+                       # gnu head: 18KB of line art that resolved to a grey
+                       # smudge at 20px.
+                       "MSYS2.MSYS2",
                        "Microsoft.DotNet.DesktopRuntime.8",
                        "Guru3D.Afterburner"):
             entry = manifest.get(app_id)
@@ -1018,10 +1126,37 @@ class TestBrandMarks:
     #: The catalog apps that have no authentic logo in any open,
     #: permissively-licensed set. A CLOSED list, so the two tests below can
     #: fail in BOTH directions rather than only the one anyone thought of.
+    #: Catalog rows with no bundled mark, and the REASON each is a gap.
+    #: Three distinct reasons, which is why this is a list rather than a
+    #: count — a gap that could be closed tomorrow is different from one
+    #: that never can:
+    #:
+    #:   NO MARK EXISTS in any open set — measured against the full Simple
+    #:   Icons index, the whole `logos` collection, thesvg-color, devicon
+    #:   and Iconify's federated search:
+    #:       BlueStacks, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo, DirectX
+    #:   The traps are close and the search finds them: "hwmonitor"
+    #:   returns `campaignmonitor`, "crystaldiskinfo" returns `crystal`
+    #:   (the programming language), "cpu z" returns an Android launcher
+    #:   icon. A lookalike is worse than nothing.
+    #:
+    #:   THE MARK EXISTS BUT THE LICENCE DOES NOT FIT — WinRAR. Its real
+    #:   stacked-books logo is in OpenMoji (CC BY-SA 4.0); taking it would
+    #:   put a copyleft obligation on an MIT app for one row. The only
+    #:   permissive "winrar" is a generic archive pictogram wearing the
+    #:   name, which is the same wrong-logo failure by another route.
+    #:
+    #:   THE MARK EXISTS BUT THE GEOMETRY DOES NOT — OpenAL. Every
+    #:   published mark is a WORDMARK at roughly 128x24; the runtime draws
+    #:   into a 20px square (see appicons._MARK_RATIO), where a wordmark
+    #:   is an illegible smear. This one closes the day a square mark
+    #:   exists, and is worth distinguishing from "none exists" for that
+    #:   reason.
     NO_AUTHENTIC_MARK = frozenset({
         "BlueStacks.BlueStacks", "CPUID.CPU-Z", "CPUID.HWMonitor",
         "CrystalDewWorld.CrystalDiskInfo", "Microsoft.DirectX",
         "TechPowerUp.GPU-Z",
+        "RARLab.WinRAR", "CreativeTechnology.OpenAL",
     })
 
     def test_every_catalog_app_has_a_mark_or_is_a_known_exception(self):
@@ -1066,13 +1201,11 @@ class TestBrandMarks:
         picked by keyword — `campaignmonitor` for HWMonitor, `crystal` (the
         programming language) for CrystalDiskInfo — is worse than none."""
         manifest = self._manifest()
-        for app_id in ("CPUID.CPU-Z", "CPUID.HWMonitor",
-                       "CrystalDewWorld.CrystalDiskInfo",
-                       "TechPowerUp.GPU-Z", "BlueStacks.BlueStacks",
-                       "Microsoft.DirectX"):
+        for app_id in sorted(self.NO_AUTHENTIC_MARK):
             assert app_id not in manifest, (
                 f"{app_id} acquired a mark — check it is really that "
-                "vendor's logo and not a keyword lookalike")
+                "vendor's logo and not a keyword lookalike, and that its "
+                "licence is CC0/MIT rather than copyleft")
 
     def test_every_icon_is_one_size_in_one_well(self, window, qapp):
         """Uniform GEOMETRY is what makes a column of logos read as a set.
@@ -1224,7 +1357,7 @@ class TestPaletteSearch:
         cases = {
             "\u062a\u062d\u062f\u064a\u062b": "Check for Updates",     # تحديث
             "\u062a\u0646\u0638\u064a\u0641": "Aggressive Cache Clean",  # تنظيف
-            "\u0628\u0631\u0627\u0645\u062c": "Software Catalog",      # برامج
+            "\u0628\u0631\u0627\u0645\u062c": "Essential Daily Software",      # برامج
         }
         for query, expected in cases.items():
             top = self._top(query)
@@ -1252,12 +1385,51 @@ class TestPaletteSearch:
         assert W._MATCH_TYPO_TITLE < W._MATCH_FUZZY_TITLE < W._MATCH_ALIAS
         assert W._MATCH_ALIAS < W._MATCH_CONTENT_EXACT
 
-    def test_the_existing_ranking_is_unharmed(self, qapp):
-        """The structured matcher's own regression cases, re-run: adding
-        translation and typo tolerance must not disturb what already
-        worked."""
-        assert self._top("spotify", 1) == ["Software Catalog"]
-        assert self._top("docker", 1) == ["Software Catalog"]
+    def test_an_app_name_finds_the_pillar_that_installs_it(self, qapp):
+        """The structured matcher's own regression cases, re-run — and
+        TIGHTENED by the pillar split.
+
+        These used to assert that an app name reached "Software Catalog",
+        the single card that installed everything. With three catalog
+        cards the question gets a sharper answer: the top hit has to be
+        the pillar that ACTUALLY CONTAINS the app, because the other two
+        cannot install it.
+
+        That is not automatic, and the split broke it first. Every catalog
+        card carried the whole catalog in its search contents, so all three
+        scored identically on "spotify" and the alphabetical tiebreak put
+        Developer first — a card that does not install Spotify. See
+        menu_structure.search_contents.
+        """
+        assert self._top("spotify", 1) == ["Essential Daily Software"]
+        assert self._top("winrar", 1) == ["Essential Daily Software"]
+        assert self._top("docker", 1) == ["Developer, AI & Engineering"]
+        assert self._top("antigravity", 1) == ["Developer, AI & Engineering"]
+        assert self._top("directx", 1) == ["Runtimes & Hardware Drivers"]
+        assert self._top("crystaldiskinfo", 1) == ["Runtimes & Hardware Drivers"]
+
+    def test_no_pillar_claims_an_app_it_cannot_install(self, qapp):
+        """The general form of the case above, over every catalog row.
+
+        A pillar that lists an app it does not contain sends the user to a
+        surface where the app is not there — and the palette gives no hint
+        that the list it opened was the wrong one."""
+        from frontend import menu_structure as MS
+        wrong = []
+        for category in MS.CATEGORIES:
+            for item in MS.category_items(category):
+                key = item.get("catalog_section")
+                if not item.get("catalog") or not key:
+                    continue
+                own = {tool[1] for tool in MS.catalog_tools(key)}
+                claimed = set(MS.search_contents(item))
+                titles = {section["title"] for section in MS.SOFTWARE_CATALOG}
+                stray = claimed - own - titles - {MS.catalog_section(key)["title"]}
+                if stray:
+                    wrong.append(f"{item['title']} also claims {sorted(stray)[:4]}")
+        assert not wrong, (
+            "catalog card(s) naming apps they do not open:\n  "
+            + "\n  ".join(wrong))
 
     def test_a_group_heading_is_grouped_with_its_own_rows(self, qapp):
         """Padding above, tight below — the heading has to belong to what

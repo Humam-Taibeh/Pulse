@@ -66,14 +66,20 @@ function Complete-GuiTask {
 }
 
 function Invoke-GuiBulkDeploy {
-    <# Silent bulk winget deployment for one app category, plus an
-       optional hardware-matched extra app (GPU / motherboard suite).
+    <# Silent bulk winget deployment for one app category.
        $SelectedIds: when non-empty, only $AppList entries whose AppId
        is in this set are queued - this is how the GUI's checkbox
        multi-selector overlay narrows a category down to exactly the
        apps the user ticked. Empty means "deploy the whole category"
-       (back-compat with any caller that doesn't pass a selection). #>
-    param($AppList, [string]$CategoryName, [string]$ExtraAppId = "", [string]$ExtraAppName = "", [string[]]$SelectedIds = @())
+       (which is what the one-click Essential Dependencies pass uses).
+
+       THE -ExtraAppId/-ExtraAppName PAIR IS GONE. It let a deploy append
+       a hardware-matched GPU or motherboard suite that was never on
+       screen; six of the seven ids it could append no longer exist in
+       winget, so it mostly did nothing and occasionally installed
+       something unasked-for. See Hardware-Check in 04-SoftwareEngine.ps1.
+       What deploys is now exactly what the user ticked. #>
+    param($AppList, [string]$CategoryName, [string[]]$SelectedIds = @())
     if (-not $Script:DryRun) {
         if (-not (Ensure-Winget)) {
             Write-Output "##PULSE##ERROR|winget is unavailable and could not be bootstrapped. Install 'App Installer' from the Microsoft Store, then retry."
@@ -81,12 +87,14 @@ function Invoke-GuiBulkDeploy {
         }
     }
     $ok = 0; $current = 0; $failed = 0; $skipped = 0
+    # Read BEFORE the run so a restart already pending from an earlier task
+    # in the same session is not re-attributed to this deploy.
+    $RestartWasPending = $Script:PendingRestart
     $Queue = @()
     foreach ($App in $AppList) {
         if ($SelectedIds.Count -gt 0 -and -not ($SelectedIds -contains $App[0])) { continue }
         $Queue += ,@($App[0], $App[1])
     }
-    if ($ExtraAppId) { $Queue += ,@($ExtraAppId, $ExtraAppName) }
 
     if ($Queue.Count -eq 0) {
         Write-Output "##PULSE##ERROR|No applications were selected for $CategoryName."
@@ -119,9 +127,16 @@ function Invoke-GuiBulkDeploy {
     if ($skipped) { $Parts += "$skipped skipped" }
     if ($Parts.Count -eq 0) { $Parts += "nothing to do" }
     $Summary = $Parts -join ', '
+    # EXIT CODE 3010 SAID SO, and until now nothing repeated it. An
+    # installer that returns 3010/1641 has succeeded and needs a restart to
+    # finish; Resolve-WingetExitCode put that in one app's message, which a
+    # bulk run then discarded in favour of its own count. Reported once,
+    # here, and only when THIS deploy is what raised it.
+    $NeedsRestart = $Script:PendingRestart -and -not $RestartWasPending
+    $RestartNote = if ($NeedsRestart) { " Restart Windows to finish." } else { "" }
     if ($failed -eq 0) {
-        Write-Log "GUI-TASK RESULT [SUCCESS]: $CategoryName — $Summary."
-        Write-Output "##PULSE##SUCCESS|$Prefix$CategoryName — $Summary."
+        Write-Log "GUI-TASK RESULT [SUCCESS]: $CategoryName — $Summary.$RestartNote"
+        Write-Output "##PULSE##SUCCESS|$Prefix$CategoryName — $Summary.$RestartNote"
     } else {
         Write-Log "GUI-TASK RESULT [ERROR]: $CategoryName — $failed failed, $Summary."
         Write-Output "##PULSE##ERROR|$CategoryName — $failed failed, $Summary. See the Pulse log (Information > View Operation Log)."
@@ -195,21 +210,27 @@ function Invoke-GuiTask {
             # consent is gone, so each extra is appended only when the
             # selection actually reaches into the list that promised it.
             "InstallCatalogApps" {
-                $HW = Hardware-Check
-                $Picked = $Script:SelectedAppIds
-                $WantsGaming = ($Picked.Count -eq 0) -or (@($Picked | Where-Object { $Script:CatalogGpuExtraTriggerIds  -contains $_ }).Count -gt 0)
-                $WantsDiag   = ($Picked.Count -eq 0) -or (@($Picked | Where-Object { $Script:CatalogMoboExtraTriggerIds -contains $_ }).Count -gt 0)
-                # At most ONE extra per run: Invoke-GuiBulkDeploy takes a
-                # single -ExtraAppId pair, and a selection spanning both
-                # gaming and diagnostics is the uncommon case. GPU wins -
-                # it is the one users notice missing.
-                if ($WantsGaming -and $HW.GPUApp) {
-                    Invoke-GuiBulkDeploy $Apps_CatalogAll "Software Catalog" -ExtraAppId $HW.GPUApp -ExtraAppName "GPU Software ($($HW.GPUName))" -SelectedIds $Picked
-                } elseif ($WantsDiag -and $HW.MoboApp) {
-                    Invoke-GuiBulkDeploy $Apps_CatalogAll "Software Catalog" -ExtraAppId $HW.MoboApp -ExtraAppName "Motherboard Suite ($($HW.MoboName))" -SelectedIds $Picked
-                } else {
-                    Invoke-GuiBulkDeploy $Apps_CatalogAll "Software Catalog" -SelectedIds $Picked
-                }
+                # NOTHING IS APPENDED ANY MORE. This case used to add a
+                # hardware-matched GPU or motherboard suite whenever the
+                # selection touched the gaming or diagnostics lists. Six of
+                # the seven package ids it could append no longer exist in
+                # winget (see Hardware-Check), so it silently did nothing
+                # on virtually every machine - and on the rest it installed
+                # something the user had not ticked, which is the worse
+                # outcome of the two.
+                #
+                # Pillar 3 now carries an explicit NVIDIA App row, so what
+                # deploys is exactly what was on screen and ticked.
+                Invoke-GuiBulkDeploy $Apps_CatalogAll "Software Catalog" -SelectedIds $Script:SelectedAppIds
+                break
+            }
+            # THE ONE-CLICK DEPENDENCY PASS. Deploys $Runtimes - the
+            # foundational layer of Pillar 3 - and nothing else. Distinct
+            # from InstallCatalogApps rather than a preset selection of it
+            # because it answers a different question ("just make the DLL
+            # errors stop") and needs no dialog to ask anything first.
+            "InstallEssentialRuntimes" {
+                Invoke-GuiBulkDeploy $Runtimes "Essential Dependencies" -SelectedIds @()
                 break
             }
             "InstallLocalFile" {
@@ -912,6 +933,40 @@ function Invoke-GuiTask {
                     [void](Restore-PulseDnsDefaults -AdapterName $AdapterName)
                 } -SuccessMessage "'$AdapterName' is back on automatic (DHCP-provided) DNS." `
                   -FailureMessage "DNS could not be reset on '$AdapterName'."
+                break
+            }
+
+            # ============ NETWORK & CONNECTIVITY (Pillar 3) ==============
+            # Three depths of the same complaint - "my connection is
+            # wrong". Two read, one writes; only the writer is admin-gated
+            # (see the note in $Script:AdminRequiredTasks).
+            "NetworkAdapterReport" {
+                Write-Log "GUI-TASK: network adapter diagnostics (read-only)."
+                $Connected = Show-PulseAdapterDiagnostics
+                if ($Connected) {
+                    Write-Output "##PULSE##SUCCESS|Adapter diagnostics complete. Full detail is in the log."
+                } else {
+                    # NOT an ERROR verdict: the task did exactly what it
+                    # was asked to and found a real answer. Reporting "no
+                    # adapter connected" as a failed task would blame Pulse
+                    # for the finding it was run to produce.
+                    Write-Output "##PULSE##SUCCESS|No network adapter is currently connected — see the report above."
+                }
+                break
+            }
+            "NetworkDriverCheck" {
+                Write-Log "GUI-TASK: network driver check (read-only)."
+                Complete-GuiTask -Action {
+                    [void](Show-PulseNetworkDriverCheck)
+                } -SuccessMessage "Network driver check complete — vendor download pages are in the log." `
+                  -FailureMessage "No network adapters could be inspected on this PC."
+                break
+            }
+            "NetworkStackReset" {
+                Complete-GuiTask -Action {
+                    [void](Reset-PulseNetworkStack)
+                } -SuccessMessage "Network stack rebuilt. RESTART WINDOWS to finish — Winsock and TCP/IP stay half-applied until you do." `
+                  -FailureMessage "The network stack reset did not complete. See the Pulse log (Utilities > View Operation Log)."
                 break
             }
             "StorageScan" {

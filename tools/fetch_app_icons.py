@@ -68,57 +68,70 @@ ICON_URL = "https://cdn.jsdelivr.net/npm/simple-icons@13/icons/{slug}.svg"
 #: fallback for anything with no colour source, and the record of which
 #: Simple Icons slug was verified for each app.
 ICON_MAP: dict[str, str | None] = {
-    # -- browsers, chat, media, productivity ------------------------
+    # -- PILLAR 1: essential daily & system software ----------------
     "Google.Chrome": "googlechrome",
     "Brave.Brave": "brave",
-    "Mozilla.Firefox": "firefoxbrowser",
-    "Microsoft.Edge": None,
     "Telegram.TelegramDesktop": "telegram",
-    "Spotify.Spotify": "spotify",
-    "Discord.Discord": "discord",
     "9NKSQCEZVDDB": "whatsapp",
-    "9PKTQ5699M62": "icloud",
-    "Apple.iTunes": "itunes",
-    "7zip.7zip": "7zip",
+    "Discord.Discord": "discord",
+    "Spotify.Spotify": "spotify",
     "VideoLAN.VLC": "vlcmediaplayer",
-    "TheDocumentFoundation.LibreOffice": "libreoffice",
     "Notion.Notion": "notion",
-    # -- runtimes ---------------------------------------------------
-    "Microsoft.DirectX": None,
-    # the C++ language mark, not a Microsoft one — accurate for a C++
-    # redistributable and unencumbered
-    "Microsoft.VCRedist.2015+.x64": "cplusplus",
-    "Microsoft.DotNet.DesktopRuntime.8": "dotnet",
-    # Oracle's own mark: this entry is Oracle's JRE, NOT OpenJDK
-    "Oracle.JavaRuntimeEnvironment": "oracle",
-    # -- gaming -----------------------------------------------------
+    "7zip.7zip": "7zip",
+    # WinRAR's own mark (the stacked books) exists ONLY in sets Pulse
+    # cannot take it from. "reicon:winrar" is a generic archive pictogram
+    # wearing the name - the "mark that describes software is still not
+    # that software's logo" case - and the one faithful rendition is in
+    # OpenMoji, which is CC BY-SA 4.0: a copyleft obligation this MIT app
+    # is not going to acquire for one row.
+    "RARLab.WinRAR": None,
+    "AnyDesk.AnyDesk": "anydesk",
+    "Oracle.VirtualBox": "virtualbox",
+    "Apple.iTunes": "itunes",
+    "BlueStacks.BlueStacks": None,
     "Valve.Steam": "steam",
     "EpicGames.EpicGamesLauncher": "epicgames",
     "RockstarGames.Launcher": "rockstargames",
-    "BlueStacks.BlueStacks": None,
-    # -- diagnostics ------------------------------------------------
-    "CPUID.CPU-Z": None,
-    "CPUID.HWMonitor": None,
-    "CrystalDewWorld.CrystalDiskInfo": None,
-    "TechPowerUp.GPU-Z": None,
-    "Guru3D.Afterburner": "msi",        # MSI Afterburner is MSI's product
-    # -- dev hub ----------------------------------------------------
+    # -- PILLAR 2: developer, AI & engineering ----------------------
     "Python.Python.3.12": "python",
     "EclipseAdoptium.Temurin.21.JDK": "eclipseadoptium",
     "OpenJS.NodeJS.LTS": "nodedotjs",
+    "MSYS2.MSYS2": "mingww64",          # the toolchain's own mark
     "Git.Git": "git",
-    "MSYS2.MSYS2": "gnu",               # GCC/MinGW toolchain = the GNU mark
     "Microsoft.VisualStudioCode": None,
     "Anysphere.Cursor": None,
+    # Antigravity shipped in late 2025; Simple Icons has no entry, and its
+    # arch mark is picked up from BoxIcons Logos by LOGO_MAP below.
+    "Google.Antigravity": None,
+    "Apache.NetBeans": "apachenetbeanside",
     "JetBrains.PyCharm.Community": "pycharm",
     "JetBrains.IntelliJIDEA.Community": "intellijidea",
-    "Apache.NetBeans": "apachenetbeanside",
     "Ollama.Ollama": "ollama",
     "OpenWebUI.OpenWebUI": None,
-    "DBeaver.DBeaver.Community": "dbeaver",
-    "Postman.Postman": "postman",
-    "Bruno.Bruno": "bruno",
     "Docker.DockerDesktop": "docker",
+    "Postman.Postman": "postman",
+    # -- PILLAR 3: runtimes, drivers & diagnostics ------------------
+    # The C++ language mark, not a Microsoft one - accurate for a C++
+    # redistributable set and unencumbered.
+    "Pulse.VCRedistAIO": "cplusplus",
+    "Microsoft.DirectX": None,
+    "Microsoft.DotNet.DesktopRuntime.8": "dotnet",
+    "Pulse.DotNetFx35": "dotnet",
+    # OpenAL publishes only WORDMARKS - "OpenAL" beside a speaker, at a
+    # 128x24-ish aspect. Every mark here is drawn into a 20px SQUARE box,
+    # where a wordmark is an illegible smear. A gap for a GEOMETRY reason
+    # rather than a licensing one, which is worth distinguishing: a square
+    # OpenAL mark would be usable the day one exists.
+    "CreativeTechnology.OpenAL": None,
+    # NVIDIA's eye, square and CC0. Deliberately NOT "logos:nvidia", which
+    # is the eye PLUS the wordmark at a 512x98 viewBox - letterboxed into
+    # a 20px square that renders about four pixels tall.
+    "XP8CLZL93F5Z4P": "nvidia",
+    "Guru3D.Afterburner": "msi",        # MSI Afterburner is MSI's product
+    "CPUID.CPU-Z": None,
+    "TechPowerUp.GPU-Z": None,
+    "CrystalDewWorld.CrystalDiskInfo": None,
+    "CPUID.HWMonitor": None,
 }
 
 
@@ -175,29 +188,19 @@ ICON_MAP: dict[str, str | None] = {
 #: seven, drop a genuine `<AppId>.svg` into assets/appicons/ and add it
 #: here — the loader already prefers a file on disk.
 LOGO_MAP: dict[str, str] = {
-    # -- browsers, chat, media, productivity ------------------------
+    # -- PILLAR 1: essential daily & system software ----------------
     "Google.Chrome": "logos:chrome",
     "Brave.Brave": "logos:brave",
-    "Mozilla.Firefox": "logos:firefox",
-    "Microsoft.Edge": "logos:microsoft-edge",
     "Telegram.TelegramDesktop": "logos:telegram",
-    "Spotify.Spotify": "logos:spotify-icon",
-    "Discord.Discord": "logos:discord-icon",
     "9NKSQCEZVDDB": "logos:whatsapp-icon",
-    "9PKTQ5699M62": "thesvg-color:icloud",
-    "Apple.iTunes": "thesvg-color:itunes",
-    "7zip.7zip": "thesvg-color:7zip",
+    "Discord.Discord": "logos:discord-icon",
+    "Spotify.Spotify": "logos:spotify-icon",
     "VideoLAN.VLC": "thesvg-color:vlc-media-player",
-    "TheDocumentFoundation.LibreOffice": "thesvg-color:libreoffice",
     "Notion.Notion": "logos:notion-icon",
-    # -- runtimes ---------------------------------------------------
-    # the C++ language mark, not a Microsoft one — accurate for a C++
-    # redistributable and unencumbered
-    "Microsoft.VCRedist.2015+.x64": "logos:c-plusplus",
-    "Microsoft.DotNet.DesktopRuntime.8": "logos:dotnet",
-    # Oracle's own mark: this entry is Oracle's JRE, NOT OpenJDK
-    "Oracle.JavaRuntimeEnvironment": "logos:java",
-    # -- gaming -----------------------------------------------------
+    "7zip.7zip": "thesvg-color:7zip",
+    "AnyDesk.AnyDesk": "thesvg-color:anydesk",
+    "Oracle.VirtualBox": "thesvg-color:virtualbox",
+    "Apple.iTunes": "thesvg-color:itunes",
     "Valve.Steam": "logos:steam",
     # "-light" is the DARK-INK variant (the one drawn for light
     # backgrounds), which is the better of the two here: on the light
@@ -206,30 +209,47 @@ LOGO_MAP: dict[str, str] = {
     # would (see _backing_plaque in src/utils/appicons.py).
     "EpicGames.EpicGamesLauncher": "thesvg-color:epic-games-light",
     "RockstarGames.Launcher": "thesvg-color:rockstar-games",
-    # -- diagnostics ------------------------------------------------
-    # MSI Afterburner is MSI's product, so MSI's mark identifies it
-    "Guru3D.Afterburner": "thesvg-color:msi",
-    # -- dev hub ----------------------------------------------------
+    # -- PILLAR 2: developer, AI & engineering ----------------------
     "Python.Python.3.12": "logos:python",
-    "EclipseAdoptium.Temurin.21.JDK": "logos:eclipse-icon",
+    # ADOPTIUM'S OWN MARK, and this is a CORRECTION. It was
+    # "logos:eclipse-icon" - the Eclipse IDE's purple circle, a different
+    # product from the same foundation. A Java JDK row showing the logo of
+    # an IDE nobody is installing is exactly the "wrong logo" this file's
+    # own rule forbids, and it was reported as a placeholder because in
+    # context it was unrecognisable.
+    "EclipseAdoptium.Temurin.21.JDK": "thesvg-color:eclipse-adoptium",
     "OpenJS.NodeJS.LTS": "logos:nodejs-icon",
+    # ALSO A CORRECTION. This was "logos:gnu" - the GNU project's gnu
+    # head, defensible for a GCC toolchain and 18KB of detailed line art
+    # that resolves to a grey smudge at 20px. MinGW-w64 publishes its own
+    # mark; it names the toolchain actually being installed, and it
+    # survives being small.
+    "MSYS2.MSYS2": "thesvg-color:mingw-w64",
     "Git.Git": "logos:git-icon",
-    "MSYS2.MSYS2": "logos:gnu",           # GCC/MinGW toolchain = the GNU mark
     "Microsoft.VisualStudioCode": "logos:visual-studio-code",
-    "JetBrains.PyCharm.Community": "logos:pycharm",
-    "JetBrains.IntelliJIDEA.Community": "logos:intellij-idea",
-    "Apache.NetBeans": "logos:netbeans",
-    "Ollama.Ollama": "devicon:ollama",
-    "OpenWebUI.OpenWebUI": "thesvg-color:openwebui",
-    "DBeaver.DBeaver.Community": "devicon:dbeaver",
-    "Postman.Postman": "logos:postman-icon",
-    "Bruno.Bruno": "devicon:bruno",
-    "Docker.DockerDesktop": "logos:docker-icon",
-    # BoxIcons Logos' rendition of Cursor's cube mark — a curated
+    # BoxIcons Logos' rendition of Cursor's cube mark - a curated
     # brand-logo set, not a lookalike picked by keyword. STILL THE
     # MONOCHROME ONE: Cursor's mark has no full-colour version in any
     # permissive set, and its own brand cube is monochrome anyway.
     "Anysphere.Cursor": "bxl:cursor-ai",
+    # Antigravity's arch, from the same MIT collection, and monochrome for
+    # a related reason: the colour renditions on offer are Google's
+    # four-colour blobs, which are the COMPANY's mark rather than this
+    # product's.
+    "Google.Antigravity": "bxl:google-antigravity",
+    "Apache.NetBeans": "logos:netbeans",
+    "JetBrains.PyCharm.Community": "logos:pycharm",
+    "JetBrains.IntelliJIDEA.Community": "logos:intellij-idea",
+    "Ollama.Ollama": "devicon:ollama",
+    "OpenWebUI.OpenWebUI": "thesvg-color:openwebui",
+    "Docker.DockerDesktop": "logos:docker-icon",
+    "Postman.Postman": "logos:postman-icon",
+    # -- PILLAR 3: runtimes, drivers & diagnostics ------------------
+    "Pulse.VCRedistAIO": "logos:c-plusplus",
+    "Microsoft.DotNet.DesktopRuntime.8": "logos:dotnet",
+    "Pulse.DotNetFx35": "logos:dotnet",
+    # MSI Afterburner is MSI's product, so MSI's mark identifies it
+    "Guru3D.Afterburner": "thesvg-color:msi",
 }
 
 ICONIFY_SVG = "https://api.iconify.design/{prefix}/{name}.svg"
@@ -243,6 +263,11 @@ MONOCHROME_LOGO_HEX: dict[str, str] = {
     # and the guard lifts it off obsidian exactly as it does for Steam,
     # Notion and 7-Zip, which are all #000000 too.
     "Anysphere.Cursor": "#000000",
+    # Antigravity's arch is drawn in one ink and shown white on dark in
+    # Google's own material. #000000 lets the contrast guard do exactly
+    # that on obsidian and invert it on porcelain - which is what the
+    # brand's own dark-mode guidance specifies anyway.
+    "Google.Antigravity": "#000000",
 }
 
 
@@ -362,14 +387,15 @@ def main() -> int:
         manifest[app_id] = record
         unmapped = [a for a in unmapped if a != app_id]
 
-    # newline="
-": .gitattributes pins *.json to LF, and text mode on
-    # Windows would write CRLF for every line of a file the repo tracks.
-    with open(MANIFEST, "w", encoding="utf-8", newline="
-") as handle:
+    # newline="\n": .gitattributes pins *.json to LF, and text mode
+    # on Windows would write CRLF for every line of a file the repo
+    # tracks. THE ESCAPES ARE LOAD-BEARING and were literal newlines
+    # here until v1.1: the file was a syntax error, so the fetcher
+    # could not run at all. Nothing imports a tool, so nothing noticed
+    # — see tests/test_packaging.py::test_every_repo_tool_is_valid_python.
+    with open(MANIFEST, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(manifest, handle, indent=1, sort_keys=True)
-        handle.write("
-")
+        handle.write("\n")
 
     colour = sum(1 for entry in manifest.values() if entry.get("color"))
     print(f"\nfetched {fetched}, already present {skipped}")

@@ -21,8 +21,41 @@
 #  STORE APP DETECTION
 # ============================================================
 function Is-StoreApp {
+    <# A Microsoft Store product id rather than a winget package id.
+
+       TWELVE OR FOURTEEN CHARACTERS, not twelve. The pattern was '^\w{12}$',
+       which matched every Store id the catalog happened to contain
+       (9NKSQCEZVDDB, 9PKTQ5699M62) and none of the fourteen-character ones
+       the Store has issued since - XP8CLZL93F5Z4P, the NVIDIA App, is one.
+       A fourteen-character id fell through to the WIN32 path, where winget
+       would be asked to install it from the default source and answer that
+       no such package exists.
+
+       Uppercase alphanumerics only, and that is what keeps this from
+       over-matching: every winget id is Publisher.Package and contains a
+       dot, so no real one can collide. '\w' also admitted the underscore
+       and lower case for no reason. #>
     param([string]$AppId)
-    return $AppId -match '^\w{12}$'
+    return $AppId -cmatch '^[A-Z0-9]{12}$|^[A-Z0-9]{14}$'
+}
+
+# ============================================================
+#  COMPOSITE AND WINDOWS-FEATURE CATALOG ENTRIES
+# ============================================================
+function Is-CompositeApp {
+    <# A catalog row that expands into several real winget packages -
+       see $Script:CompositeRuntimePackages in 01-Catalogs.ps1. #>
+    param([string]$AppId)
+    return ($null -ne $Script:CompositeRuntimePackages) -and
+           $Script:CompositeRuntimePackages.ContainsKey($AppId)
+}
+
+function Is-WindowsFeatureApp {
+    <# A catalog row that is an optional Windows FEATURE (DISM), not a
+       download - see $Script:WindowsFeaturePackages in 01-Catalogs.ps1. #>
+    param([string]$AppId)
+    return ($null -ne $Script:WindowsFeaturePackages) -and
+           $Script:WindowsFeaturePackages.ContainsKey($AppId)
 }
 
 # ============================================================
@@ -1163,7 +1196,16 @@ function Resolve-WingetExitCode {
     param([int]$Code)
     switch ($Code) {
         0            { return @{ Success = $true;  AlreadyCurrent = $false; Message = "Completed successfully." } }
-        3010         { return @{ Success = $true;  AlreadyCurrent = $false; Message = "Completed successfully. A reboot is recommended." } }
+        # ERROR_SUCCESS_REBOOT_REQUIRED. A SUCCESS that the caller has to
+        # act on: RebootRequired is what carries it up to the deploy
+        # summary, so a fourteen-app run says "restart to finish" ONCE at
+        # the end instead of burying it in one app's line - or, as before,
+        # recording it in a message string nothing read.
+        3010         { return @{ Success = $true;  AlreadyCurrent = $false; RebootRequired = $true; Message = "Completed successfully. A reboot is required to finish." } }
+        # ERROR_SUCCESS_REBOOT_INITIATED - same family, and previously
+        # unhandled: it fell to `default` and was reported as "Unhandled
+        # exit code (1641)", turning a successful install into a failure.
+        1641         { return @{ Success = $true;  AlreadyCurrent = $false; RebootRequired = $true; Message = "Completed successfully. A restart has been initiated." } }
         # 0x8A150014 NO_APPLICATIONS_FOUND - `winget upgrade --id X --exact`
         # searches the AVAILABLE-UPGRADES list; an up-to-date package isn't
         # in it, so the id lookup finds nothing. The common real-world
@@ -1305,6 +1347,178 @@ function Invoke-GuiLocalInstall {
 }
 
 # ============================================================
+#  COMPOSITE RUNTIME DEPLOY (one catalog row, many packages)
+# ============================================================
+function Install-CompositeRuntime {
+    <#
+    .SYNOPSIS
+        Deploy every winget package behind a composite catalog id (see
+        $Script:CompositeRuntimePackages) and fold the results into ONE
+        verdict for the row the user actually ticked.
+
+    .DESCRIPTION
+        PARTIAL SUCCESS IS THE NORMAL CASE, not an error, and that is the
+        whole reason this needs its own aggregation rather than a bare
+        loop. On any given machine several Visual C++ versions are already
+        present, and some are delivered by Windows itself and cannot be
+        reinstalled - so a run where four packages install, six report
+        "already up to date" and two are refused is a COMPLETE SUCCESS
+        from the user's point of view: nothing is missing afterwards.
+
+        So the row succeeds when every member either installed or was
+        already current, and fails only when a member genuinely failed.
+        A reboot requested by ANY member (exit code 3010) is carried up to
+        the row, because the user needs to hear it once rather than not at
+        all.
+    #>
+    param(
+        [string]$AppId,
+        [string]$AppName,
+        [switch]$Bulk,
+        [ValidateSet('auto','manual')]
+        [string]$BulkMethod
+    )
+
+    $Members = $Script:CompositeRuntimePackages[$AppId]
+    Write-Host ""
+    Write-StatusPanel -Label "RUNTIME SET" -Text "$AppName ($($Members.Count) packages)"
+
+    if ($Bulk -and $BulkMethod -eq 'manual') {
+        Open-FallbackUrl $AppId $AppName
+        return @{Status='Success'; Message='Manual URL (bulk)'}
+    }
+
+    $Installed = 0; $Current = 0; $Failed = @(); $Index = 0
+    foreach ($Member in $Members) {
+        $Index++
+        Write-GuiStage "$AppName - $($Member[1]) ($Index of $($Members.Count))..."
+        # -Bulk with 'auto' unconditionally: a composite row is ONE user
+        # decision already made. Prompting per member would ask the same
+        # question twelve times, and in GUI mode there is nobody to ask.
+        $Result = Smart-Deploy -AppId $Member[0] -AppName $Member[1] -Bulk -BulkMethod 'auto'
+        switch ($Result.Status) {
+            'Success' { if ($Result.AlreadyCurrent) { $Current++ } else { $Installed++ } }
+            'Skipped' { $Current++ }        # refused/unavailable, nothing missing
+            default   { $Failed += $Member[1] }
+        }
+    }
+
+    if ($Failed.Count -eq 0) {
+        $Message = "$Installed installed, $Current already present."
+        if ($Script:PendingRestart) { $Message += " A reboot is recommended." }
+        Write-Success "$AppName -> $Message"
+        return @{Status='Success'; AlreadyCurrent=($Installed -eq 0); Message=$Message}
+    }
+    $Message = "$Installed installed, $Current already present, $($Failed.Count) failed: $($Failed -join ', ')."
+    Write-ErrorX "$AppName -> $Message"
+    return @{Status='Failed'; Message=$Message}
+}
+
+# ============================================================
+#  OPTIONAL WINDOWS FEATURE DEPLOY (DISM, not a download)
+# ============================================================
+function Enable-WindowsFeaturePackage {
+    <#
+    .SYNOPSIS
+        Turn on an optional Windows feature that the catalog presents as an
+        installable row - .NET Framework 3.5 being the only one today.
+
+    .DESCRIPTION
+        DISM RATHER THAN A DOWNLOAD. .NET Framework 3.5 (which also
+        provides 2.0 and 3.0) ships inside Windows as a disabled feature;
+        there is no winget package for it, and the standalone installer
+        Microsoft publishes just calls this same code path. Enabling it
+        pulls the payload from Windows Update, which is why it can take
+        minutes and why the stage line says so.
+
+        NOT ELEVATED IS A SKIP, NOT A FAILURE. Catalog installs are
+        deliberately not admin-gated as a whole (winget handles its own
+        elevation, and blanket-gating breaks user-scope packages like
+        Spotify), so this single row has to report the requirement for
+        itself - and it must not fail a twelve-app deploy because one row
+        needed rights the other eleven did not.
+
+        Exit code 3010 means "done, reboot to finish", which is the
+        COMMON outcome here rather than an edge case: the feature is
+        registered but not fully serviceable until the restart.
+    #>
+    param([string]$AppId, [string]$AppName)
+
+    $Feature = $Script:WindowsFeaturePackages[$AppId]
+    $Name    = $Feature.FeatureName
+    Write-Host ""
+    Write-StatusPanel -Label "WINDOWS FEATURE" -Text $AppName
+
+    # Already on? Ask before doing anything - this is cheap and makes the
+    # common re-run a clean instant skip instead of a multi-minute no-op.
+    try {
+        $State = (Get-WindowsOptionalFeature -Online -FeatureName $Name -ErrorAction Stop).State
+        if ($State -eq 'Enabled') {
+            Write-AlreadyOK "$AppName -> already enabled - skipped."
+            return @{Status='Success'; AlreadyCurrent=$true; Message='Already enabled'}
+        }
+    } catch {
+        # Get-WindowsOptionalFeature itself needs elevation on some builds;
+        # fall through and let the enable attempt report the real reason.
+        Write-Log "Feature state probe for '$Name' failed: $($_.Exception.Message)"
+    }
+
+    if ($Script:DryRun) {
+        if (Test-DryRun "DISM /Online /Enable-Feature /FeatureName:$Name /All ($AppName)") { }
+        return @{Status='Success'; Message='Dry-run (no change)'}
+    }
+
+    if (-not $Script:IsAdminSession) {
+        Write-Warn "$AppName needs Administrator rights to enable - skipped."
+        return @{Status='Skipped'
+                 Message='Needs Administrator. Relaunch Pulse elevated and run this again.'}
+    }
+
+    Write-GuiStage "Enabling $AppName - $($Feature.Note)"
+    Write-Info "Enabling Windows feature '$Name' (payload comes from Windows Update)..."
+    try {
+        # dism.exe rather than Enable-WindowsOptionalFeature: the cmdlet
+        # returns a RestartNeeded object but swallows the exit code, and
+        # 3010 is exactly the value that has to reach the caller here.
+        # THE ARGUMENT LIST STAYS ON ONE LINE. Wrapping it inside the
+        # parentheses is legal PowerShell and unreadable in review: the
+        # continuation is implied by an unclosed bracket rather than
+        # stated, so -NoNewWindow ends up four lines below the call it
+        # belongs to. It also defeated the silent-execution guard's own
+        # scanner, which is the more useful signal of the two.
+        $ArgList = @("/Online", "/Enable-Feature", "/FeatureName:$Name", "/All", "/NoRestart", "/Quiet")
+        # -NoNewWindow: a GUI task's engine has no console of its own, so
+        # Start-Process would ALLOCATE one for dism and throw a black box
+        # over the UI for the several minutes this takes.
+        $Proc = Start-Process -FilePath "$env:SystemRoot\System32\dism.exe" -ArgumentList $ArgList -NoNewWindow -Wait -PassThru
+        $Code = $Proc.ExitCode
+    } catch {
+        Write-ErrorX "$AppName failed: $($_.Exception.Message)"
+        return @{Status='Failed'; Message=$_.Exception.Message}
+    }
+
+    if ($Code -eq 0) {
+        Write-Success "$AppName -> enabled."
+        return @{Status='Success'; Message='Enabled.'}
+    }
+    if ($Code -eq 3010 -or $Code -eq 1641) {
+        $Script:PendingRestart = $true
+        Write-Success "$AppName -> enabled. A reboot is required to finish."
+        return @{Status='Success'; Message='Enabled. A reboot is required to finish.'}
+    }
+    # 0x800F081F - the payload could not be found and Windows Update is
+    # unreachable or blocked by policy. By far the most common real
+    # failure, and it is fixable, so it is named rather than numbered.
+    if ($Code -eq -2146498555 -or $Code -eq 2149842967) {
+        $Message = "Windows could not download the feature payload. Check your internet connection, or enable it from Windows Features."
+        Write-ErrorX "$AppName failed: $Message"
+        return @{Status='Failed'; Message=$Message}
+    }
+    Write-ErrorX "$AppName failed: DISM exited with code $Code."
+    return @{Status='Failed'; Message="DISM exited with code $Code."}
+}
+
+# ============================================================
 #  SMART DEPLOY (the one true install path)
 # ============================================================
 function Smart-Deploy {
@@ -1317,6 +1531,17 @@ function Smart-Deploy {
     )
 
     if ([string]::IsNullOrWhiteSpace($AppId)) { return @{Status='Skipped'; Message='Empty AppId'} }
+
+    # THE TWO NON-WINGET ROW KINDS COME FIRST, before winget is even
+    # bootstrapped: neither has a package for winget to resolve, and a
+    # composite row's members each come back through here individually.
+    if (Is-CompositeApp $AppId) {
+        return Install-CompositeRuntime -AppId $AppId -AppName $AppName `
+            -Bulk:$Bulk -BulkMethod $BulkMethod
+    }
+    if (Is-WindowsFeatureApp $AppId) {
+        return Enable-WindowsFeaturePackage -AppId $AppId -AppName $AppName
+    }
 
     # Lazy winget bootstrap: only software deployment pays for it. Skipped in
     # dry-run - Ensure-Winget itself refuses to download during -WhatIf.
@@ -1335,11 +1560,8 @@ function Smart-Deploy {
         }
 
         if ($Script:DryRun) {
-            if ($InstalledVer) {
-                if (Test-DryRun "winget upgrade --id $AppId ($AppName) via --source msstore, silent") { }
-            } else {
-                Write-Info "[WHATIF] $AppName is a Microsoft Store app - a real run would require the Store (skipped)."
-            }
+            $Verb = if ($InstalledVer) { "upgrade" } else { "install" }
+            if (Test-DryRun "winget $Verb --id $AppId ($AppName) via --source msstore, silent") { }
             return @{Status='Success'; Message='Dry-run (no change)'}
         }
 
@@ -1388,6 +1610,9 @@ function Smart-Deploy {
             Write-Info "Updating $AppName via winget (Microsoft Store source)..."
             $Code = Invoke-Winget -ArgList @("upgrade", "--id", $AppId, "--exact", "--source", "msstore", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity")
             $Result = Resolve-WingetExitCode -Code $Code
+            # 3010/1641 is a SUCCESS the whole run has to report once at the
+            # end rather than per app - see Invoke-GuiBulkDeploy's summary.
+            if ($Result.RebootRequired) { $Script:PendingRestart = $true }
             if ($Result.Success) {
                 if ($Result.AlreadyCurrent) {
                     Write-AlreadyOK "$AppName -> $($Result.Message) - skipped."
@@ -1410,40 +1635,72 @@ function Smart-Deploy {
             }
         }
 
-        if ($Bulk) {
-            if ($BulkMethod -eq 'manual') {
-                Write-Info "Opening Store page for $AppName..."
-                Start-Process "ms-windows-store://pdp/?ProductId=$AppId"
-                return @{Status='Success'; Message='Store opened'}
-            } else {
-                Write-Warn "$AppName is a Store app and cannot be installed via winget. Skipping."
-                return @{Status='Skipped'; Message='Store app'}
+        # A FRESH STORE INSTALL IS A SILENT WINGET INSTALL, and this used
+        # to be the one place the catalog quietly could not deliver.
+        #
+        # The old code skipped every not-yet-installed Store app: in bulk
+        # it warned "cannot be installed via winget", and in GUI mode it
+        # returned Skipped with "no silent install path for Store apps".
+        # That was true of winget once and has not been for a long time -
+        # `winget install --source msstore` performs the whole acquisition
+        # headlessly, which is exactly what the UPDATE branch a few lines
+        # above has been doing all along. So the catalog offered WhatsApp,
+        # reported a clean success, and installed nothing.
+        #
+        # Same flags as the update path, plus --accept-package-agreements,
+        # which is what a first acquisition additionally needs.
+        if ($Bulk -and $BulkMethod -eq 'manual') {
+            Write-Info "Opening Store page for $AppName..."
+            Start-Process "ms-windows-store://pdp/?ProductId=$AppId"
+            return @{Status='Success'; Message='Store opened'}
+        }
+
+        if (-not ($Bulk -or $Script:NonInteractive)) {
+            Write-Host "   y = Install silently via winget (Microsoft Store source)" -ForegroundColor Yellow
+            Write-Host "   m = Open the Microsoft Store page instead" -ForegroundColor Yellow
+            Write-Host "   n = Skip this app only" -ForegroundColor Yellow
+            Write-Host "   b = Back to category" -ForegroundColor Yellow
+            Write-Host "   q = Quit to main menu" -ForegroundColor Yellow
+            $choice = Read-Choice -Prompt "   Choose (y/m/n/b/q)" -Valid @('y','m','n','b','q')
+            switch ($choice) {
+                'q' { return @{Status='Quit'; Message='User quit to main menu'} }
+                'b' { return @{Status='Back'; Message='User returned to category'} }
+                'n' { Write-Info "Bypassed $AppName."; return @{Status='Skipped'; Message='User skipped'} }
+                'm' {
+                    Write-Info "Launching Microsoft Store..."
+                    Start-Process "ms-windows-store://pdp/?ProductId=$AppId"
+                    Write-Success "Store page opened."
+                    return @{Status='Success'; Message='Store opened'}
+                }
+                'y' { }
             }
         }
 
-        if ($Script:NonInteractive) {
-            # GUI task: no console to prompt on and no silent install path
-            # for Store apps - skip cleanly instead of hanging on Read-Choice.
-            Write-Warn "$AppName is a Microsoft Store app - skipped in GUI mode."
-            return @{Status='Skipped'; Message='Store app (GUI)'}
+        Ensure-Winget | Out-Null
+        if (-not $global:WingetAvailable) {
+            Write-ErrorX "$AppName failed: winget is unavailable, so this Microsoft Store app can't be installed."
+            return @{Status='Failed'; Message='winget unavailable'}
         }
-
-        Write-Host "   m = Open Microsoft Store page" -ForegroundColor Yellow
-        Write-Host "   n = Skip this app only" -ForegroundColor Yellow
-        Write-Host "   b = Back to category" -ForegroundColor Yellow
-        Write-Host "   q = Quit to main menu" -ForegroundColor Yellow
-        $choice = Read-Choice -Prompt "   Choose (m/n/b/q)" -Valid @('m','n','b','q')
-        switch ($choice) {
-            'q' { return @{Status='Quit'; Message='User quit to main menu'} }
-            'b' { return @{Status='Back'; Message='User returned to category'} }
-            'm' {
-                Write-Info "Launching Microsoft Store..."
-                Start-Process "ms-windows-store://pdp/?ProductId=$AppId"
-                Write-Success "Store page opened."
-                return @{Status='Success'; Message='Store opened'}
-            }
-            default { return @{Status='Skipped'; Message='Skipped'} }
+        Write-GuiStage "Downloading $AppName (Microsoft Store)..."
+        Write-Info "Installing $AppName via winget (Microsoft Store source)..."
+        $Code = Invoke-Winget -ArgList @("install", "--id", $AppId, "--exact",
+            "--source", "msstore", "--accept-source-agreements",
+            "--accept-package-agreements", "--disable-interactivity")
+        $Result = Resolve-WingetExitCode -Code $Code
+        # 3010/1641 is a SUCCESS the whole run has to report once at the
+        # end rather than per app - see Invoke-GuiBulkDeploy's summary.
+        if ($Result.RebootRequired) { $Script:PendingRestart = $true }
+        if ($Result.Success) {
+            Write-Success "$AppName -> $($Result.Message)"
+            return @{Status='Success'; AlreadyCurrent=$Result.AlreadyCurrent; Message=$Result.Message}
         }
+        # The Store's own acquisition can refuse for reasons winget cannot
+        # fix - an unsigned-in Store, a machine with the Store removed, a
+        # region restriction. The fallback URL is logged either way, so the
+        # user has somewhere to go rather than just a code.
+        Open-FallbackUrl $AppId $AppName
+        Write-ErrorX "$AppName failed: $($Result.Message)"
+        return @{Status='Failed'; Message=$Result.Message}
     }
 
     Write-Host ""
@@ -1579,6 +1836,9 @@ function Smart-Deploy {
     }
 
     $Result = Resolve-WingetExitCode -Code $Code
+    # 3010/1641 is a SUCCESS the whole run has to report once at the
+    # end rather than per app - see Invoke-GuiBulkDeploy's summary.
+    if ($Result.RebootRequired) { $Script:PendingRestart = $true }
 
     if ($Result.Success) {
         if ($Result.AlreadyCurrent) {
@@ -1637,16 +1897,41 @@ function Smart-Deploy {
 #  HARDWARE MATCHING (GPU / motherboard vendor apps)
 # ============================================================
 function Hardware-Check {
+    <#
+    .SYNOPSIS
+        What GPU and motherboard are fitted, and the vendor suite that
+        matches them where one still exists.
+
+    .DESCRIPTION
+        NOTHING INSTALLS FROM THIS ANY MORE. The GPUApp/MoboApp ids used
+        to be appended to a catalog deploy automatically whenever the
+        selection touched the gaming or diagnostics lists. A live winget
+        check found SIX OF THE SEVEN ids that mechanism could append no
+        longer resolve to anything:
+
+            Nvidia.GeForceExperience          retired for the NVIDIA App
+            AdvancedMicroDevices.Adrenalin    never/no longer published
+            Intel.IntelGraphicsCommandCenter  Store-only now
+            Micro-Star.MSICenter              moved to MSI.MSICenter
+            Gigabyte.ControlCenter            gone
+            ASRock.AppShop                    gone
+
+        So the feature silently did nothing on virtually every machine,
+        and where it did fire it installed software the user had not
+        ticked. Pillar 3 replaces it with an explicit NVIDIA App row.
+
+        The two ids that DO still resolve are kept and corrected, because
+        this function also feeds the System Info report, which names the
+        hardware and is the reason it survives at all.
+    #>
     $GPU = Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name | Select-Object -First 1
-    $GPUApp = if ($GPU -match "NVIDIA") { "Nvidia.GeForceExperience" }
-              elseif ($GPU -match "AMD|Radeon") { "AdvancedMicroDevices.Adrenalin" }
-              elseif ($GPU -match "Intel") { "Intel.IntelGraphicsCommandCenter" } else { "" }
+    # The NVIDIA App is a Store product id (see Is-StoreApp) - it is the
+    # same row Pillar 3 offers, named here so a report can point at it.
+    $GPUApp = if ($GPU -match "NVIDIA") { "XP8CLZL93F5Z4P" } else { "" }
 
     $Mobo = Get-CimInstance Win32_BaseBoard | Select-Object -ExpandProperty Manufacturer
     $MoboApp = if ($Mobo -match "ASUS") { "Asus.ArmouryCrate" }
-               elseif ($Mobo -match "Micro-Star|MSI") { "Micro-Star.MSICenter" }
-               elseif ($Mobo -match "Gigabyte") { "Gigabyte.ControlCenter" }
-               elseif ($Mobo -match "ASRock") { "ASRock.AppShop" } else { "" }
+               elseif ($Mobo -match "Micro-Star|MSI") { "MSI.MSICenter" } else { "" }
 
     return @{ GPUApp = $GPUApp; MoboApp = $MoboApp; MoboName = $Mobo; GPUName = $GPU }
 }

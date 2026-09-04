@@ -163,89 +163,120 @@ Item schema:
 #                     RequiresAppId | None, RequiresDisplayName | None)
 # ============================================================
 SOFTWARE_CATALOG = [
+    # ========================================================
+    #  PILLAR 1 — ESSENTIAL DAILY & SYSTEM SOFTWARE
+    # ========================================================
     {
-        "key": "browsers",
-        "icon": "🌐",
-        "title": "Browsers & Media",
-        "blurb": "Browsers, chat, media players and productivity essentials.",
+        "key": "essentials",
+        "icon": "🖥️",
+        "title": "Essential Daily Software",
+        "blurb": "Everything a fresh machine needs to be usable — browsers, "
+                 "chat, media, utilities and the game launchers.",
         "groups": [
-            ("", [
+            ("🌐 Browsers & Communication", [
                 ("Google.Chrome", "Google Chrome",
                  "Fast, secure web browser from Google.",
                  "https://www.google.com/chrome/", None, None),
                 ("Brave.Brave", "Brave Browser",
                  "Privacy-first Chromium browser with built-in ad blocking.",
                  "https://brave.com/download/", None, None),
-                ("Mozilla.Firefox", "Mozilla Firefox",
-                 "Fast, independent browser built on open standards.",
-                 "https://www.mozilla.org/firefox/new/", None, None),
-                ("Microsoft.Edge", "Microsoft Edge",
-                 "Microsoft's Chromium browser — reinstalls cleanly here even after using Remove Microsoft Edge.",
-                 "https://www.microsoft.com/en-us/edge/download", None, None),
                 ("Telegram.TelegramDesktop", "Telegram Desktop",
                  "Fast, secure cloud-based messaging.",
                  "https://telegram.org/apps", None, None),
-                ("Spotify.Spotify", "Spotify (Win32)",
-                 "Music and podcast streaming client.",
-                 "https://www.spotify.com/download/windows/", None, None),
-                ("Discord.Discord", "Discord",
-                 "Voice, video and text chat for friends and communities.",
-                 "https://discord.com/download", None, None),
                 ("9NKSQCEZVDDB", "WhatsApp (Store)",
                  "Official WhatsApp messenger for the desktop.",
                  "https://www.whatsapp.com/download", None, None),
-                ("9PKTQ5699M62", "iCloud (Store)",
-                 "Access iCloud Photos, Drive and Passwords on Windows.",
-                 "https://www.apple.com/icloud/", None, None),
-                ("Apple.iTunes", "iTunes",
-                 "Media library and Apple device sync.",
-                 "https://www.apple.com/itunes/", None, None),
-                ("7zip.7zip", "7-Zip",
-                 "Open-source archiver with best-in-class compression.",
-                 "https://www.7-zip.org/", None, None),
+                ("Discord.Discord", "Discord",
+                 "Voice, video and text chat for friends and communities.",
+                 "https://discord.com/download", None, None),
+            ]),
+            ("🎬 Media & Productivity", [
+                ("Spotify.Spotify", "Spotify",
+                 "Music and podcast streaming client.",
+                 "https://www.spotify.com/download/windows/", None, None),
                 ("VideoLAN.VLC", "VLC Media Player",
                  "Plays practically every audio and video format ever made.",
                  "https://www.videolan.org/vlc/", None, None),
-                ("TheDocumentFoundation.LibreOffice", "LibreOffice",
-                 "Free office suite — Writer, Calc, Impress and more.",
-                 "https://www.libreoffice.org/download/download-libreoffice/", None, None),
                 ("Notion.Notion", "Notion",
                  "All-in-one notes, docs and project workspace.",
                  "https://www.notion.com/desktop", None, None),
             ]),
+            ("🧰 Utilities & Virtualization", [
+                ("7zip.7zip", "7-Zip",
+                 "Open-source archiver with best-in-class compression.",
+                 "https://www.7-zip.org/", None, None),
+                ("RARLab.WinRAR", "WinRAR",
+                 "Opens RAR archives natively — the format 7-Zip can read but not create.",
+                 "https://www.win-rar.com/download.html", None, None),
+                ("AnyDesk.AnyDesk", "AnyDesk",
+                 "Lightweight remote desktop — reach this PC, or help someone with theirs.",
+                 "https://anydesk.com/en/downloads/windows", None, None),
+                ("Oracle.VirtualBox", "Oracle VirtualBox",
+                 "Run whole operating systems in a window — test software without touching this install.",
+                 "https://www.virtualbox.org/wiki/Downloads", None, None),
+                ("Apple.iTunes", "iTunes",
+                 "Media library and Apple device sync.",
+                 "https://www.apple.com/itunes/", None, None),
+                ("BlueStacks.BlueStacks", "BlueStacks 5",
+                 "Android app player — run mobile apps and games on Windows.",
+                 "https://www.bluestacks.com/download.html", None, None),
+            ]),
+            ("🎮 Gaming Launchers", [
+                ("Valve.Steam", "Steam",
+                 "The largest PC game store and launcher.",
+                 "https://store.steampowered.com/about/", None, None),
+                ("EpicGames.EpicGamesLauncher", "Epic Games",
+                 "Epic's store and launcher — free weekly games included.",
+                 "https://store.epicgames.com/en-US/download", None, None),
+                ("RockstarGames.Launcher", "Rockstar Games Launcher",
+                 "Rockstar's launcher for GTA, Red Dead and more.",
+                 "https://socialclub.rockstargames.com/rockstar-games-launcher", None, None),
+            ]),
         ],
     },
+    # ========================================================
+    #  PILLAR 2 — DEVELOPER, AI & ENGINEERING STACK
+    # ========================================================
     {
         "key": "development",
         "icon": "🧑‍💻",
-        "title": "Development & Tools",
-        "blurb": "Runtimes, IDEs, AI tooling, databases and containers — "
-                 "the old Developer & University Hub, in the catalog.",
+        "title": "Developer, AI & Engineering",
+        "blurb": "Languages, compilers, IDEs and the local AI stack — "
+                 "everything needed to build software on this machine.",
         "groups": [
-            ("🧩 Core Runtimes & Compilers", [
+            ("🧩 Languages & Compilers", [
                 ("Python.Python.3.12", "Python 3.12",
                  "General-purpose language for scripting, data science and AI/ML projects.",
                  "https://www.python.org/downloads/", None, None),
-                ("EclipseAdoptium.Temurin.21.JDK", "Java JDK (Temurin 21)",
-                 "The Java Development Kit — compiles and runs Java projects; NetBeans and IntelliJ both need this.",
+                ("EclipseAdoptium.Temurin.21.JDK", "Java JDK (Temurin 21 LTS)",
+                 "The Java Development Kit — compiles and runs Java, and includes the runtime, "
+                 "so no separate JRE is needed.",
                  "https://adoptium.net/temurin/releases/", None, None),
                 ("OpenJS.NodeJS.LTS", "Node.js (LTS)",
                  "JavaScript runtime for web backends, build tools and npm packages.",
                  "https://nodejs.org/en/download", None, None),
-                ("Git.Git", "Git / Git Bash",
-                 "Version control — track changes and collaborate on any codebase.",
-                 "https://git-scm.com/downloads", None, None),
                 ("MSYS2.MSYS2", "GCC / MinGW-w64 Compiler",
                  "C/C++ compiler toolchain for native Windows builds.",
                  "https://www.msys2.org/", None, None),
+                ("Git.Git", "Git / Git Bash",
+                 "Version control — track changes and collaborate on any codebase.",
+                 "https://git-scm.com/downloads", None, None),
             ]),
-            ("🛠️ IDEs & Editors", [
+            ("🛠️ IDEs & Code Editors", [
                 ("Microsoft.VisualStudioCode", "VS Code",
                  "Lightweight, extensible code editor — the daily driver for most languages.",
                  "https://code.visualstudio.com/download", None, None),
                 ("Anysphere.Cursor", "Cursor IDE",
                  "AI-native code editor built on VS Code, with built-in AI pair programming.",
                  "https://cursor.sh/", None, None),
+                ("Google.Antigravity", "Antigravity",
+                 "Google's agent-first development environment, built around an AI that "
+                 "plans and edits across your whole project.",
+                 "https://antigravity.google/", None, None),
+                ("Apache.NetBeans", "NetBeans IDE",
+                 "Java IDE popular in university courses — project templates and a visual GUI builder.",
+                 "https://netbeans.apache.org/download/index.html",
+                 "EclipseAdoptium.Temurin.21.JDK", "Java JDK"),
                 ("JetBrains.PyCharm.Community", "PyCharm Community",
                  "Full-featured Python IDE with debugging, refactoring and test tools.",
                  "https://www.jetbrains.com/pycharm/download/",
@@ -254,80 +285,84 @@ SOFTWARE_CATALOG = [
                  "Full-featured Java IDE with deep code intelligence and refactoring.",
                  "https://www.jetbrains.com/idea/download/",
                  "EclipseAdoptium.Temurin.21.JDK", "Java JDK"),
-                ("Apache.NetBeans", "NetBeans IDE",
-                 "Java IDE popular in university courses — project templates and a visual GUI builder.",
-                 "https://netbeans.apache.org/download/index.html",
-                 "EclipseAdoptium.Temurin.21.JDK", "Java JDK"),
             ]),
-            ("🧠 AI & Local LLM Stack", [
+            ("🧠 AI, Containers & APIs", [
                 ("Ollama.Ollama", "Ollama (Local LLM Runner)",
                  "Run open-source LLMs (Llama, Mistral, etc.) locally — no cloud required.",
                  "https://ollama.com/download", None, None),
-                ("OpenWebUI.OpenWebUI", "Open WebUI (Local Chat Interface)",
+                ("OpenWebUI.OpenWebUI", "Open WebUI",
                  "A ChatGPT-style web interface for models running in Ollama.",
-                 "https://openwebui.com/", None, None),
-            ]),
-            ("🗄️ Databases & API Tools", [
-                ("DBeaver.DBeaver.Community", "DBeaver (Database Client)",
-                 "Universal SQL client — browse and query almost any database.",
-                 "https://dbeaver.io/download/", None, None),
-                ("Postman.Postman", "Postman (API Client)",
-                 "Build, test and document REST/GraphQL APIs.",
-                 "https://www.postman.com/downloads/", None, None),
-                ("Bruno.Bruno", "Bruno (Open-Source API Client)",
-                 "A fast, open-source Postman alternative that stores collections as local files.",
-                 "https://www.usebruno.com/downloads", None, None),
-            ]),
-            ("🐳 Containerization", [
+                 "https://openwebui.com/", "Ollama.Ollama", "Ollama"),
                 ("Docker.DockerDesktop", "Docker Desktop",
                  "Build and run containers — package an app with everything it needs to run anywhere.",
                  "https://www.docker.com/products/docker-desktop/", None, None),
+                ("Postman.Postman", "Postman",
+                 "Build, test and document REST/GraphQL APIs.",
+                 "https://www.postman.com/downloads/", None, None),
             ]),
         ],
     },
+    # ========================================================
+    #  PILLAR 3 — ESSENTIAL RUNTIMES & HARDWARE DRIVERS
+    #
+    #  The only pillar with a `footnote` and a `bulk` action, and both
+    #  exist for the same reason: this is the pillar people arrive at
+    #  ALREADY BROKEN — a game that will not start, a DLL named in an
+    #  error box — rather than shopping. So it answers the two questions
+    #  that state asks: "just give me all of it" (the bulk action) and
+    #  "what about OpenGL and Vulkan?" (the footnote, which says they
+    #  came with the display driver and are not missing).
+    # ========================================================
     {
-        "key": "gaming",
-        "icon": "🎮",
-        "title": "Gaming Launchers",
-        "blurb": "Game stores and launchers — the matching GPU vendor suite "
-                 "is added automatically when you pick any of these.",
+        "key": "runtimes",
+        "icon": "🧱",
+        "title": "Runtimes & Hardware Drivers",
+        "blurb": "The foundational dependencies other software fails "
+                 "without — plus GPU management and hardware diagnostics.",
+        "footnote": "OpenGL and Vulkan are not listed because they are not "
+                    "separate downloads — both are provided natively by your "
+                    "GPU's display driver, so installing the NVIDIA App (or "
+                    "your vendor's equivalent) is what keeps them current.",
+        #: The one-click "Install All Essential Dependencies" action. Ticks
+        #: exactly this group's rows — the foundational layer — and NOT the
+        #: hardware or diagnostics groups: someone asking for "everything my
+        #: software needs" is asking about DLLs, not asking to be handed an
+        #: overclocking utility. Mirrors $Script:EssentialRuntimeIds.
+        "bulk": {
+            "group": "⚙️ Core Runtimes & Dependencies",
+            "label": "Install All Essential Dependencies",
+            "hint": "Ticks every core runtime below — Visual C++, DirectX, "
+                    ".NET and OpenAL — in one pass.",
+        },
         "groups": [
-            ("", [
-                ("Valve.Steam", "Steam",
-                 "The largest PC game store and launcher.",
-                 "https://store.steampowered.com/about/", None, None),
-                ("EpicGames.EpicGamesLauncher", "Epic Games",
-                 "Epic's store and launcher — free weekly games included.",
-                 "https://store.epicgames.com/en-US/download", None, None),
-                ("RockstarGames.Launcher", "Rockstar Games",
-                 "Rockstar's launcher for GTA, Red Dead and more.",
-                 "https://socialclub.rockstargames.com/rockstar-games-launcher", None, None),
-                ("BlueStacks.BlueStacks", "BlueStacks 5",
-                 "Android app player — run mobile games on Windows.",
-                 "https://www.bluestacks.com/download.html", None, None),
-            ]),
-        ],
-    },
-    {
-        "key": "system",
-        "icon": "🧩",
-        "title": "System Runtimes & Utilities",
-        "blurb": "The prerequisite runtimes other software depends on, plus "
-                 "hardware monitoring and diagnostics tools.",
-        "groups": [
-            ("⚙️ Core API Runtimes", [
-                ("Microsoft.DirectX", "DirectX End-User Runtime",
-                 "Legacy DirectX libraries that older games still need.",
-                 "https://www.microsoft.com/en-us/download/details.aspx?id=35", None, None),
-                ("Microsoft.VCRedist.2015+.x64", "Visual C++ Redistributables",
-                 "C++ runtime DLLs required by countless Windows apps.",
+            ("⚙️ Core Runtimes & Dependencies", [
+                ("Pulse.VCRedistAIO", "Visual C++ Runtimes (All Versions, x86 + x64)",
+                 "Every Visual C++ redistributable from 2005 to 2015–2022, both architectures — "
+                 "this is what fixes “MSVCR100.dll is missing” and its relatives.",
                  "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist", None, None),
-                ("Microsoft.DotNet.DesktopRuntime.8", ".NET Desktop Runtime",
+                ("Microsoft.DirectX", "DirectX End-User Runtimes (Legacy D3DX)",
+                 "The June 2010 cumulative package — the D3DX9/10/11 and XInput libraries "
+                 "older games still ask for. Windows 11's own DirectX 12 is untouched.",
+                 "https://www.microsoft.com/en-us/download/details.aspx?id=35", None, None),
+                ("Microsoft.DotNet.DesktopRuntime.8", ".NET Desktop Runtime 8 (LTS)",
                  "Runs modern .NET desktop applications.",
                  "https://dotnet.microsoft.com/en-us/download/dotnet/8.0", None, None),
-                ("Oracle.JavaRuntimeEnvironment", "Java Runtime Environment",
-                 "Runs Java desktop applications.",
-                 "https://www.java.com/en/download/", None, None),
+                ("Pulse.DotNetFx35", ".NET Framework 3.5 (includes 2.0 and 3.0)",
+                 "Enabled as a Windows feature rather than downloaded — needed by a great deal "
+                 "of older business and game software. Requires Administrator.",
+                 "https://learn.microsoft.com/en-us/dotnet/framework/install/dotnet-35-windows", None, None),
+                ("CreativeTechnology.OpenAL", "OpenAL Core Runtime",
+                 "Positional 3D audio used by many older and cross-platform games.",
+                 "https://www.openal.org/downloads/", None, None),
+            ]),
+            ("🎛️ Hardware & GPU Management", [
+                ("XP8CLZL93F5Z4P", "NVIDIA App (Drivers & Display)",
+                 "NVIDIA's current driver and display-settings app — the replacement for "
+                 "GeForce Experience. Also how OpenGL and Vulkan stay up to date.",
+                 "https://www.nvidia.com/en-us/software/nvidia-app/", None, None),
+                ("Guru3D.Afterburner", "MSI Afterburner",
+                 "GPU overclocking, fan curves and on-screen performance monitoring.",
+                 "https://www.msi.com/Landing/afterburner", None, None),
             ]),
             ("🔬 Hardware Diagnostics", [
                 ("CPUID.CPU-Z", "CPU-Z",
@@ -336,19 +371,44 @@ SOFTWARE_CATALOG = [
                 ("TechPowerUp.GPU-Z", "GPU-Z",
                  "Graphics card information, sensors and BIOS tools.",
                  "https://www.techpowerup.com/gpuz/", None, None),
-                ("CPUID.HWMonitor", "HWMonitor",
-                 "Live voltages, temperatures and fan speeds.",
-                 "https://www.cpuid.com/softwares/hwmonitor.html", None, None),
                 ("CrystalDewWorld.CrystalDiskInfo", "CrystalDiskInfo",
                  "Drive health and S.M.A.R.T. monitoring.",
                  "https://crystalmark.info/en/software/crystaldiskinfo/", None, None),
-                ("Guru3D.Afterburner", "MSI Afterburner",
-                 "GPU overclocking and on-screen performance monitoring.",
-                 "https://www.msi.com/Landing/afterburner", None, None),
+                ("CPUID.HWMonitor", "HWMonitor",
+                 "Live voltages, temperatures and fan speeds.",
+                 "https://www.cpuid.com/softwares/hwmonitor.html", None, None),
             ]),
         ],
     },
 ]
+
+#: Section key -> the pillar it names, for the three scoped catalog cards.
+CATALOG_SECTION_KEYS = tuple(section["key"] for section in SOFTWARE_CATALOG)
+
+
+def catalog_section(section_key: str) -> dict | None:
+    """The pillar `section_key` names, or None. Each of the three Software
+    Management catalog cards carries one of these keys in
+    `catalog_section`, and SoftwareCatalogDialog renders only that
+    pillar."""
+    for section in SOFTWARE_CATALOG:
+        if section["key"] == section_key:
+            return section
+    return None
+
+
+def catalog_bulk_ids(section_key: str) -> list[str]:
+    """AppIds the pillar's one-click bulk action ticks, or [] when it
+    declares none. Only Pillar 3 has one — see its `bulk` note."""
+    section = catalog_section(section_key)
+    bulk = (section or {}).get("bulk")
+    if not bulk:
+        return []
+    wanted = bulk.get("group", "")
+    return [tool[0]
+            for group_title, tools in section["groups"]
+            if group_title == wanted
+            for tool in tools]
 
 # There are NO quick-select bundles. CATALOG_BUNDLES / CATALOG_BUNDLE_SECTION
 # used to declare three stacks ("Java / University", "AI / Python", "Web
@@ -397,18 +457,49 @@ CATEGORIES = [
         # of what shipped with the machine.
         "groups": [
             {"title": "INSTALL", "items": [
-                # -- THE CATALOG: every installable app, one card ---------
+                # -- THE THREE PILLARS: one card each ---------------------
                 #
-                # `catalog: True` opens widgets.SoftwareCatalogDialog — the
-                # tabbed hub sourced from SOFTWARE_CATALOG above. It is a
-                # RUNNABLE action, not a `hub` container: there is exactly
-                # one destination behind it, so wrapping it in a HubDialog
-                # would add a click that asks nothing. Featured position
-                # (index 0) gives it the bento hero treatment on the page.
-                {"icon": "📦", "glyph": "package", "title": "Software Catalog",
-                 "desc": "Every app in one place — browsers, dev tools, games "
-                         "and runtimes, filtered by sub-category.",
-                 "task": "InstallCatalogApps", "timeout": 3600, "catalog": True},
+                # `catalog: True` opens widgets.SoftwareCatalogDialog;
+                # `catalog_section` scopes it to one pillar of
+                # SOFTWARE_CATALOG. All three are RUNNABLE actions rather
+                # than `hub` containers — each has exactly one destination
+                # behind it, so a HubDialog would add a click that asks
+                # nothing. Featured position (index 0) gives the first the
+                # bento hero treatment on the page.
+                #
+                # THREE CARDS, NOT ONE, and this reverses an earlier merge
+                # deliberately. Collapsing four PRODUCT-TYPE cards
+                # (Essential / Dev Hub / Gaming / Diagnostics) into one was
+                # right: they answered the same question and split the
+                # answer four ways. These three answer DIFFERENT questions —
+                # make this machine usable, make it build software, stop it
+                # erroring — and a user chasing a missing DLL should not
+                # have to scroll past Spotify to reach the runtimes. One
+                # list still underlies all three, so a tick in each still
+                # deploys through the same InstallCatalogApps pass.
+                {"icon": "🖥️", "glyph": "package", "title": "Essential Daily Software",
+                 "desc": "Browsers, chat, media, utilities and game launchers "
+                         "— what a fresh machine needs to be usable.",
+                 "task": "InstallCatalogApps", "timeout": 3600,
+                 "catalog": True, "catalog_section": "essentials"},
+                {"icon": "🧑‍💻", "glyph": "code", "title": "Developer, AI & Engineering",
+                 "desc": "Languages, compilers, IDEs and the local AI stack "
+                         "— everything needed to build software here.",
+                 "task": "InstallCatalogApps", "timeout": 3600,
+                 "catalog": True, "catalog_section": "development"},
+                {"icon": "🧱", "glyph": "puzzle", "title": "Runtimes & Hardware Drivers",
+                 "desc": "Visual C++, DirectX, .NET and OpenAL, plus GPU "
+                         "management and hardware diagnostics.",
+                 "task": "InstallCatalogApps", "timeout": 3600,
+                 "catalog": True, "catalog_section": "runtimes"},
+                # The one-click dependency pass. A SEPARATE CARD rather
+                # than only a button inside the pillar above, because the
+                # two are reached from different states: someone browsing
+                # runtimes wants to choose, and someone whose game just
+                # refused to start wants it fixed without reading a list.
+                # It runs its own task, so it needs no dialog to ask
+                # anything first — and `confirm` still names what it will
+                # do before it does it.
                 {"icon": "📄", "title": "Microsoft Office Suite",
                  "desc": "Word, Excel, PowerPoint and Outlook via the official ODT.",
                  "glyph": "document", "task": "InstallOfficeODT", "timeout": 3600,
@@ -420,6 +511,56 @@ CATEGORIES = [
                 # 01-Catalogs.ps1 note), and a catalog row that silently
                 # behaved completely differently from its neighbours would
                 # be the worse lie.
+            ]},
+            # -- THE FOUNDATION, AS ACTIONS RATHER THAN A LIST ------------
+            #
+            # Both cards here serve the state Pillar 3 exists for: something
+            # is already broken. A user in that state is not browsing, so
+            # neither card opens a catalog — one deploys the whole
+            # dependency layer, the other opens the three network tools.
+            {"title": "DEPENDENCIES & DRIVERS", "items": [
+                # A SEPARATE CARD as well as a button inside the Runtimes
+                # pillar, because the two are reached from different states:
+                # someone browsing runtimes wants to choose, and someone
+                # whose game just refused to start wants it fixed without
+                # reading a list. It runs its own task, so it needs no
+                # dialog to ask anything first — `confirm` still names what
+                # it will do before it does it.
+                {"icon": "⚡", "glyph": "download", "title": "Install All Essential Dependencies",
+                 "desc": "One pass for the whole foundation — every Visual C++ "
+                         "runtime, DirectX legacy, .NET 8, .NET Framework 3.5 "
+                         "and OpenAL.",
+                 "task": "InstallEssentialRuntimes", "timeout": 3600,
+                 "confirm": True},
+                # A HUB, for the reason hubs exist here: the three actions
+                # are only sensible TOGETHER. The stack reset is a real
+                # teardown that needs a reboot, and offering it as a lone
+                # top-level card would advertise the destructive one; kept
+                # beside the two read-only tools that tell you whether you
+                # need it, it reads as the last step of a diagnosis instead
+                # of a button to press hopefully.
+                {"icon": "🌐", "glyph": "networktower", "title": "Network & Connectivity",
+                 "desc": "Diagnose adapters, check Ethernet and Wi-Fi drivers, "
+                         "or rebuild the network stack when nothing else works.",
+                 "hub": True,
+                 "items": [
+                     {"icon": "📡", "title": "Network Adapter Diagnostics",
+                      "desc": "Link state, speed, addresses, gateway and driver "
+                              "for every adapter — read-only.",
+                      "glyph": "search", "task": "NetworkAdapterReport",
+                      "timeout": 300, "action": "Run"},
+                     {"icon": "💿", "title": "Ethernet & Wi-Fi Driver Check",
+                      "desc": "How old each network driver is, and the official "
+                              "Intel / Realtek page to get a newer one.",
+                      "glyph": "chart", "task": "NetworkDriverCheck",
+                      "timeout": 300, "action": "Check"},
+                     {"icon": "🔧", "title": "Reset Network Stack",
+                      "desc": "Rebuild Winsock and TCP/IP, then renew the lease. "
+                              "Requires a restart to finish.",
+                      "glyph": "repair", "task": "NetworkStackReset",
+                      "timeout": 600, "confirm": True, "danger": True,
+                      "action": "Reset"},
+                 ]},
             ]},
             # -- WHAT IS ALREADY ON THE MACHINE ---------------------------
             #
@@ -998,6 +1139,10 @@ ADMIN_REQUIRED_TASKS = frozenset({
     # v1.0+ Phase 2 DNS switcher — mirrors 01-Catalogs.ps1.
     "SetDnsProfile", "RestoreDns",
     "ContextMenuToggle", "ContextMenuRestore",
+    # Pillar 3's network stack reset. Its two read-only companions
+    # (NetworkAdapterReport, NetworkDriverCheck) are deliberately absent —
+    # reading what hardware is fitted needs no rights.
+    "NetworkStackReset",
 })
 
 
@@ -1061,8 +1206,22 @@ def search_contents(item: dict) -> list[str]:
     """
     names: list[str] = []
     if item.get("catalog"):
-        names.extend(section["title"] for section in SOFTWARE_CATALOG)
-        names.extend(tool[1] for tool in catalog_tools())
+        # SCOPED TO THE PILLAR THIS CARD OPENS. Every catalog card used to
+        # claim every app, which was correct while there was one card and
+        # became a lie the moment there were three: "spotify" matched all
+        # three pillars identically and the palette ranked them
+        # alphabetically, so the top hit was the Developer card — which
+        # does not contain Spotify and never installs it. Naming only what
+        # a card actually opens is what makes the palette's answer the
+        # card that can act on the query.
+        key = item.get("catalog_section", "")
+        sections = ([catalog_section(key)] if catalog_section(key)
+                    else SOFTWARE_CATALOG)
+        names.extend(section["title"] for section in sections)
+        names.extend(tool[1]
+                     for section in sections
+                     for _group, tools in section["groups"]
+                     for tool in tools)
     if item.get("hub"):
         for sub in hub_items(item):
             names.append(sub.get("title", ""))

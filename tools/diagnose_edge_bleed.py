@@ -33,6 +33,16 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 MODE = sys.argv[1] if len(sys.argv) > 1 else "baseline"
 
 if MODE == "raster":
+    # BEFORE PySide6 IS IMPORTED, which is why this branch sits above
+    # the Qt imports rather than beside the other MODE checks: Qt
+    # resolves its rendering backend once, at import time, and an
+    # environment variable set afterwards is simply ignored.
+    #
+    # "software" forces the raster paint engine, so no QOpenGLWidget
+    # is created anywhere and the GPU path is out of the picture
+    # entirely — which is exactly the layer this mode exists to
+    # exclude.
+    os.environ["QT_OPENGL"] = "software"
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402

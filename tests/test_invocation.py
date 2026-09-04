@@ -234,17 +234,21 @@ class TestLiveInvocation:
         # name would still satisfy the assertion below by falling through
         # to the dispatcher's unknown-task branch, which reaches a verdict
         # without ever reading -AppIds — passing while testing nothing.
+        # TWO IDS FROM TWO DIFFERENT PILLARS, deliberately: the catalog is
+        # split into three surfaces now, and -AppIds still addresses ONE
+        # flat list underneath. A selection that spans pillars is the case
+        # that proves the split is a view rather than three lists.
         out = self._run(PowerShellTask(
             _CORE, "InstallCatalogApps", dry_run=True,
-            app_ids=["Mozilla.Firefox", "7zip.7zip"]))
+            app_ids=["7zip.7zip", "Postman.Postman"]))
         assert "##PULSE##SUCCESS" in out
         # Both picks reached the deploy queue, and nothing else in the
         # 43-app catalog did. Asserted on the per-app TARGET banners rather
         # than the summary counts: whether an app lands in "installed" or
         # "already up to date" depends on what this machine happens to have,
         # so a count assertion passes or fails by accident.
-        assert "TARGET: Mozilla Firefox" in out
         assert "TARGET: 7-Zip" in out
+        assert "TARGET: Postman" in out
         for other in ("Google Chrome", "Steam", "Docker Desktop"):
             assert f"TARGET: {other}" not in out, (
                 f"-AppIds did not narrow the catalog: {other} was queued too")

@@ -1503,8 +1503,7 @@ class TestSoftwareCatalogMirror:
         members = re.findall(r'\$(Apps_\w+|Runtimes)', union_line)
         ids: list[str] = []
         for member in members:
-            expanded = (["Apps_DevRuntimes", "Apps_DevIDEs", "Apps_DevAI",
-                         "Apps_DevData", "Apps_DevContainers"]
+            expanded = (["Apps_DevRuntimes", "Apps_DevIDEs", "Apps_DevAI"]
                         if member == "Apps_DevHubAll" else [member])
             for name in expanded:
                 ids.extend(array_ids(name))

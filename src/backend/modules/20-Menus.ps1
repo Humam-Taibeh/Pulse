@@ -152,59 +152,49 @@ function Show-RuntimesModule {
 function Show-AppDeploymentHub {
     do {
         Write-Banner "APP DEPLOYMENT HUB"
+        # ONE ENTRY PER PILLAR, matching the GUI's three catalog cards.
+        # The hub used to carry five categories (Essential / Dev / Gaming /
+        # Diagnostics / OneDrive) plus a hidden auto-append of a GPU or
+        # motherboard suite. Gaming folded into Pillar 1 and diagnostics
+        # into Pillar 3, and the auto-append is gone entirely - six of its
+        # seven package ids no longer exist in winget, so it silently did
+        # nothing on virtually every machine (see 01-Catalogs.ps1).
         Write-ModulePreview -Items @(
-            "Essential Apps: $($Apps_Basic.Count) items - Chrome, Spotify, Discord, WhatsApp, iTunes, 7-Zip, VLC...",
-            "Developer & University Hub: $($Apps_DevHubAll.Count) items - runtimes, IDEs, AI stack, databases, containers...",
-            "Gaming Launchers: $($Apps_Gaming.Count) items - Steam, Epic, Rockstar, BlueStacks + auto GPU app",
-            "Hardware Diagnostics: $($Apps_Tools.Count) items - CPU-Z, GPU-Z, HWMonitor... + auto motherboard app",
+            "Essential Daily Software: $($Apps_Essentials.Count) items - Chrome, Discord, VLC, 7-Zip, WinRAR, VirtualBox, Steam...",
+            "Developer, AI & Engineering: $($Apps_DevHubAll.Count) items - Python, JDK, Node, GCC, IDEs, Ollama, Docker...",
+            "Runtimes & Hardware Drivers: $($Apps_Pillar3All.Count) items - Visual C++ (all), DirectX, .NET, OpenAL, NVIDIA App, CPU-Z...",
             "Microsoft OneDrive: $($Apps_OfficeCompanions.Count) item - real standalone winget package",
             "(Full Office - Word/Excel/PowerPoint/Outlook - installs via the ODT wizard: Software Management > [4])"
         )
         do {
             Write-Banner "APP DEPLOYMENT HUB"
-            Write-Host "   [A]  Essential Apps" -ForegroundColor White
-            Write-Host "   [B]  Developer & University Hub" -ForegroundColor White
-            Write-Host "   [C]  Gaming Launchers" -ForegroundColor White
-            Write-Host "   [D]  Hardware Diagnostics" -ForegroundColor White
-            Write-Host "   [E]  Microsoft OneDrive" -ForegroundColor White
-            Write-Host "   [F]  Check & Deploy ALL Categories" -ForegroundColor Magenta
+            Write-Host "   [A]  Essential Daily Software" -ForegroundColor White
+            Write-Host "   [B]  Developer, AI & Engineering" -ForegroundColor White
+            Write-Host "   [C]  Runtimes & Hardware Drivers" -ForegroundColor White
+            Write-Host "   [D]  Microsoft OneDrive" -ForegroundColor White
+            Write-Host "   [E]  Check & Deploy ALL Pillars" -ForegroundColor Magenta
             Write-Host "   [X]  Back to Software Management" -ForegroundColor DarkGray
             Write-Divider
 
-            $AppMenu = Read-Choice -Prompt "   Select Category (A/B/C/D/E/F/X)" -Valid @('a','b','c','d','e','f','x')
-            $RunAll  = ($AppMenu.ToUpper() -eq 'F')
+            $AppMenu = Read-Choice -Prompt "   Select Pillar (A/B/C/D/E/X)" -Valid @('a','b','c','d','e','x')
+            $RunAll  = ($AppMenu.ToUpper() -eq 'E')
 
             if ($AppMenu.ToUpper() -eq 'A' -or $RunAll) {
-                $status = Process-AppCategory $Apps_Basic "Essential Apps"
+                $status = Process-AppCategory $Apps_Essentials "Essential Daily Software"
                 if ($status -eq "QUIT" -and $RunAll) { break }
                 if ($status -eq "BACK" -and $RunAll) { break }
             }
             if ($AppMenu.ToUpper() -eq 'B' -or $RunAll) {
-                $status = Process-AppCategory $Apps_DevHubAll "Developer & University Hub"
+                $status = Process-AppCategory $Apps_DevHubAll "Developer, AI & Engineering"
                 if ($status -eq "QUIT" -and $RunAll) { break }
                 if ($status -eq "BACK" -and $RunAll) { break }
             }
             if ($AppMenu.ToUpper() -eq 'C' -or $RunAll) {
-                $status = Process-AppCategory $Apps_Gaming "Gaming Launchers"
+                $status = Process-AppCategory $Apps_Pillar3All "Runtimes & Hardware Drivers"
                 if ($status -eq "QUIT" -and $RunAll) { break }
                 if ($status -eq "BACK" -and $RunAll) { break }
-                $HW = Hardware-Check
-                if ($HW.GPUApp) {
-                    $status = Smart-Deploy $HW.GPUApp "GPU Hardware Software ($($HW.GPUName))"
-                    if ($status.Status -eq 'Quit' -and $RunAll) { break }
-                }
             }
             if ($AppMenu.ToUpper() -eq 'D' -or $RunAll) {
-                $status = Process-AppCategory $Apps_Tools "Hardware Diagnostics"
-                if ($status -eq "QUIT" -and $RunAll) { break }
-                if ($status -eq "BACK" -and $RunAll) { break }
-                $HW = Hardware-Check
-                if ($HW.MoboApp) {
-                    $status = Smart-Deploy $HW.MoboApp "Official Motherboard App ($($HW.MoboName))"
-                    if ($status.Status -eq 'Quit' -and $RunAll) { break }
-                }
-            }
-            if ($AppMenu.ToUpper() -eq 'E' -or $RunAll) {
                 $status = Process-AppCategory $Apps_OfficeCompanions "Microsoft OneDrive"
                 if ($status -eq "QUIT" -and $RunAll) { break }
                 if ($status -eq "BACK" -and $RunAll) { break }
@@ -213,7 +203,7 @@ function Show-AppDeploymentHub {
             if (-not $RunAll -and $AppMenu.ToUpper() -ne 'X') {
                 Read-Host "   Press Enter to continue"
             } elseif ($RunAll) {
-                Write-Success "All categories processed."
+                Write-Success "All pillars processed."
                 Read-Host "   Press Enter to continue"
             }
         } while ($AppMenu.ToUpper() -ne 'X' -and -not $RunAll)
@@ -227,14 +217,14 @@ function Show-SoftwareManagementMenu {
     do {
         Write-Banner "📦 SOFTWARE MANAGEMENT"
         Write-ModulePreview -Items @(
-            "App Deployment Hub: Essential Apps, Developer & University Hub, Gaming Launchers, Hardware Diagnostics",
-            "Core API Runtimes: DirectX, VC++, .NET, Java (bulk or individual)",
+            "App Deployment Hub: Essential Daily Software, Developer/AI/Engineering, Runtimes & Hardware Drivers",
+            "Essential Runtimes: Visual C++ (all versions, x86+x64), DirectX legacy, .NET 8, .NET Framework 3.5, OpenAL",
             "Startup Program Manager: control which programs launch at boot",
             "Microsoft Office Deployment: auto-install or manual guide",
             "PATH Doctor: resolves Git, Python, Java, GCC... then scans the whole system PATH for dead and duplicate entries"
         )
         Write-Host "   [1]  App Deployment Hub" -ForegroundColor White
-        Write-Host "   [2]  Core API Runtimes" -ForegroundColor White
+        Write-Host "   [2]  Essential Runtimes" -ForegroundColor White
         Write-Host "   [3]  Startup Program Manager" -ForegroundColor White
         Write-Host "   [4]  Microsoft Office Deployment" -ForegroundColor White
         Write-Host "   [5]  PATH Doctor (dev tools + system PATH scan)" -ForegroundColor White
@@ -243,7 +233,7 @@ function Show-SoftwareManagementMenu {
         $Choice = Read-Choice -Prompt "   Select option (1-5, X)" -Valid @('1','2','3','4','5','x')
         switch ($Choice) {
             '1' { Show-AppDeploymentHub }
-            '2' { Write-Banner "CORE API RUNTIMES"; Write-ModulePreview -Items @("DirectX, VC++, .NET, Java"); Show-RuntimesModule; Read-Host "   Press Enter to continue" }
+            '2' { Write-Banner "ESSENTIAL RUNTIMES"; Write-ModulePreview -Items @("Visual C++ (all versions, x86+x64), DirectX legacy, .NET 8, .NET Framework 3.5, OpenAL"); Show-RuntimesModule; Read-Host "   Press Enter to continue" }
             '3' { Show-StartupProgramManager }
             '4' { Show-OfficeDeployment }
             '5' { Write-Banner "PATH DOCTOR"; Verify-Environment | Out-Null; Read-Host "   Press Enter to continue" }

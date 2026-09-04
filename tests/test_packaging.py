@@ -597,3 +597,52 @@ def test_the_build_script_survives_native_stderr(build_script):
 def test_the_build_script_refuses_a_ragged_version(build_script):
     """Releases are tagged v<VERSION>, so it must be MAJOR.MINOR.PATCH."""
     assert r"'^\d+\.\d+\.\d+$'" in build_script
+
+
+# ============================================================
+#  EVERY REPO .py COMPILES — including the ones nothing imports
+# ============================================================
+def test_every_repo_python_file_is_valid_python():
+    """The cheapest guard in the suite, and it found two dead files.
+
+    src/ and tests/ are covered by simply being imported: a syntax error
+    there fails collection before any assertion runs. tools/ is NOT — a
+    build-time script is never imported by anything, so a broken one sits
+    in the tree indefinitely looking fine in a diff.
+
+    Both tools were broken when this was written, and neither failure was
+    visible in review:
+
+      tools/fetch_app_icons.py   three RAW NEWLINES where `\n` escapes
+                                 belonged, inside the manifest-writing
+                                 block. The icon fetcher — the thing that
+                                 produces assets/appicons/ — could not run
+                                 at all.
+      tools/diagnose_edge_bleed.py
+                                 an `if MODE == "raster":` with an empty
+                                 body, so the rendering bisector could not
+                                 run in ANY mode.
+
+    Compiling rather than importing, deliberately: importing
+    diagnose_edge_bleed.py would construct a QApplication and open a
+    window. The question here is only whether the source is well-formed,
+    which is exactly what a broken tool fails.
+    """
+    import ast
+
+    broken = []
+    for folder in ("tools", "src", "tests"):
+        root = os.path.join(_ROOT, folder)
+        for base, _dirs, files in os.walk(root):
+            if "__pycache__" in base:
+                continue
+            for name in sorted(f for f in files if f.endswith(".py")):
+                path = os.path.join(base, name)
+                try:
+                    ast.parse(open(path, encoding="utf-8").read(), filename=path)
+                except SyntaxError as exc:
+                    broken.append(
+                        f"{os.path.relpath(path, _ROOT)}:{exc.lineno} {exc.msg}")
+    assert not broken, (
+        "python file(s) in the repo that do not compile:\n  "
+        + "\n  ".join(broken))

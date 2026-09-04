@@ -49,29 +49,62 @@ $Script:TweakCatalog = @(
 )
 
 # ============================================================
-#  APP CATALOG (mirrored by menu_structure.py)
+#  THE THREE PILLARS  (mirrored by menu_structure.py)
+#
+#  The catalog is SPLIT INTO THREE, and the split is by what the software
+#  IS FOR rather than by what it happens to be. One tabbed list of 43
+#  entries answered "which apps does Pulse offer?" and nothing else; the
+#  three questions people actually arrive with are "set up my daily
+#  machine", "set up my dev environment" and "why is this game telling me
+#  a DLL is missing?", and those have almost no overlap in audience,
+#  urgency or failure mode.
+#
+#    PILLAR 1  $Apps_Essentials   everyday software, media, utilities and
+#                                 the game launchers - what a fresh
+#                                 machine needs to be usable.
+#    PILLAR 2  $Apps_DevHubAll    languages, IDEs, AI and container
+#                                 tooling - what a machine needs to build
+#                                 things.
+#    PILLAR 3  $Runtimes + $Apps_Hardware + $Apps_Tools
+#                                 the foundational dependencies other
+#                                 software fails without, plus the drivers
+#                                 and diagnostics that go with them.
+#
+#  Each pillar is its own SURFACE in the GUI (three cards, three scoped
+#  catalog views) rather than three tabs behind one card, because a user
+#  chasing a missing VC++ runtime should never have to scroll past
+#  Spotify to reach it.
 # ============================================================
-$Apps_Basic = @(
-    @("Google.Chrome", "Google Chrome"), @("Brave.Brave", "Brave Browser"),
-    @("Mozilla.Firefox", "Mozilla Firefox"), @("Microsoft.Edge", "Microsoft Edge"),
+
+# ---- PILLAR 1: ESSENTIAL DAILY & SYSTEM SOFTWARE -------------------
+#  Gaming launchers live HERE rather than in a pillar of their own. A
+#  launcher is a daily app that happens to launch games, it needs no
+#  special install handling, and a fourth pillar holding four rows would
+#  have been a category created for symmetry rather than for a question.
+#
+#  Mozilla Firefox and LibreOffice were REMOVED, and Microsoft Edge and
+#  iCloud with them. Edge keeps its own card in Software Management (the
+#  remove/reinstall hub), which is the only place its reinstall was ever
+#  the point; a catalog row that duplicated it just made the same product
+#  reachable two ways with different behaviour.
+$Apps_Essentials = @(
+    @("Google.Chrome", "Google Chrome"),
+    @("Brave.Brave", "Brave Browser"),
     @("Telegram.TelegramDesktop", "Telegram Desktop"),
-    @("Spotify.Spotify", "Spotify (Win32)"),
-    @("Discord.Discord", "Discord"), @("9NKSQCEZVDDB", "WhatsApp (Store)"),
-    @("9PKTQ5699M62", "iCloud (Store)"), @("Apple.iTunes", "iTunes"),
-    @("7zip.7zip", "7-Zip"), @("VideoLAN.VLC", "VLC Media Player"),
-    @("TheDocumentFoundation.LibreOffice", "LibreOffice"), @("Notion.Notion", "Notion")
-)
-$Apps_Gaming = @(
-    @("Valve.Steam", "Steam"), @("EpicGames.EpicGamesLauncher", "Epic Games"),
-    @("RockstarGames.Launcher", "Rockstar Games"), @("BlueStacks.BlueStacks", "BlueStacks 5")
-)
-# Notion lives in $Apps_Basic (Browsers & Daily Apps) - it's a daily
-# productivity app, not a hardware tool; this catalog stays purely
-# diagnostic/monitoring utilities.
-$Apps_Tools = @(
-    @("CPUID.CPU-Z", "CPU-Z"), @("TechPowerUp.GPU-Z", "GPU-Z"),
-    @("CPUID.HWMonitor", "HWMonitor"), @("CrystalDewWorld.CrystalDiskInfo", "CrystalDiskInfo"),
-    @("Guru3D.Afterburner", "MSI Afterburner")
+    @("9NKSQCEZVDDB", "WhatsApp (Store)"),
+    @("Discord.Discord", "Discord"),
+    @("Spotify.Spotify", "Spotify"),
+    @("VideoLAN.VLC", "VLC Media Player"),
+    @("Notion.Notion", "Notion"),
+    @("7zip.7zip", "7-Zip"),
+    @("RARLab.WinRAR", "WinRAR"),
+    @("AnyDesk.AnyDesk", "AnyDesk"),
+    @("Oracle.VirtualBox", "Oracle VirtualBox"),
+    @("Apple.iTunes", "iTunes"),
+    @("BlueStacks.BlueStacks", "BlueStacks 5"),
+    @("Valve.Steam", "Steam"),
+    @("EpicGames.EpicGamesLauncher", "Epic Games"),
+    @("RockstarGames.Launcher", "Rockstar Games Launcher")
 )
 # Word/Excel/PowerPoint/Outlook/OneNote/Access/Publisher ship as ONE
 # Click-to-Run bundle with no per-app winget package - the only winget
@@ -87,87 +120,147 @@ $Apps_Tools = @(
 # Leading comma forces the single-element array to stay nested (same
 # PowerShell flattening pitfall documented for $Apps_DevContainers).
 $Apps_OfficeCompanions = ,@("Microsoft.OneDrive", "Microsoft OneDrive")
-$Runtimes = @(
-    @("Microsoft.DirectX", "DirectX End-User Runtime"),
-    @("Microsoft.VCRedist.2015+.x64", "Visual C++ Redistributables"),
-    @("Microsoft.DotNet.DesktopRuntime.8", ".NET Desktop Runtime"),
-    @("Oracle.JavaRuntimeEnvironment", "Java Runtime Environment")
-)
 
 # ============================================================
-#  DEVELOPER & UNIVERSITY HUB CATALOG
-#  Precisely separated from every other app list above - zero hardware
-#  drivers, zero general-purpose apps. Grouped into five sections purely
-#  for section headers; $Apps_DevHubAll (the flat concatenation, order
+#  PILLAR 2: DEVELOPER, AI & ENGINEERING STACK
+#  Precisely separated from every other app list - zero hardware drivers,
+#  zero general-purpose apps. Grouped into three sections purely for
+#  section headers; $Apps_DevHubAll (the flat concatenation, order
 #  preserved) is what Smart-Deploy/bulk-install actually iterates, and it
-#  is also the "Development & Tools" slice of $Apps_CatalogAll. Mirrored
-#  group-for-group by SOFTWARE_CATALOG's "development" section in
-#  menu_structure.py.
+#  is also the Pillar 2 slice of $Apps_CatalogAll. Mirrored group-for-group
+#  by SOFTWARE_CATALOG's "development" section in menu_structure.py.
+#
+#  THREE GROUPS, NOT FIVE. "Databases & API Tools" and "Containerization"
+#  each held one or two rows after Bruno and DBeaver were dropped, and a
+#  section header above a single row is a header that says less than the
+#  row does. Docker and Postman joined the AI group, which is where the
+#  services they front actually run.
+#
+#  REMOVED, and each for a stated reason rather than for space:
+#    Oracle.JavaRuntimeEnvironment  the JRE is contained IN Temurin 21's
+#                                   JDK, so the catalog was offering the
+#                                   same runtime twice and inviting a user
+#                                   to install a second, older Java.
+#    Bruno.Bruno                    a second API client beside Postman.
+#    DBeaver.DBeaver.Community      a database GUI in a stack with no
+#                                   database in it.
 # ============================================================
 $Apps_DevRuntimes = @(
     @("Python.Python.3.12", "Python 3.12"),
-    @("EclipseAdoptium.Temurin.21.JDK", "Java JDK (Temurin 21)"),
+    @("EclipseAdoptium.Temurin.21.JDK", "Java JDK (Temurin 21 LTS)"),
     @("OpenJS.NodeJS.LTS", "Node.js (LTS)"),
-    @("Git.Git", "Git / Git Bash"),
-    @("MSYS2.MSYS2", "GCC / MinGW-w64 Compiler")
+    @("MSYS2.MSYS2", "GCC / MinGW-w64 Compiler"),
+    @("Git.Git", "Git / Git Bash")
 )
 $Apps_DevIDEs = @(
     @("Microsoft.VisualStudioCode", "VS Code"),
     @("Anysphere.Cursor", "Cursor IDE"),
+    @("Google.Antigravity", "Antigravity"),
+    @("Apache.NetBeans", "NetBeans IDE"),
     @("JetBrains.PyCharm.Community", "PyCharm Community"),
-    @("JetBrains.IntelliJIDEA.Community", "IntelliJ IDEA Community"),
-    @("Apache.NetBeans", "NetBeans IDE")
+    @("JetBrains.IntelliJIDEA.Community", "IntelliJ IDEA Community")
 )
 $Apps_DevAI = @(
     @("Ollama.Ollama", "Ollama (Local LLM Runner)"),
-    @("OpenWebUI.OpenWebUI", "Open WebUI (Local Chat Interface)")
+    @("OpenWebUI.OpenWebUI", "Open WebUI"),
+    @("Docker.DockerDesktop", "Docker Desktop"),
+    @("Postman.Postman", "Postman")
 )
-$Apps_DevData = @(
-    @("DBeaver.DBeaver.Community", "DBeaver (Database Client)"),
-    @("Postman.Postman", "Postman (API Client)"),
-    @("Bruno.Bruno", "Bruno (Open-Source API Client)")
-)
-# Leading comma is deliberate, not a typo: `@( @("id","name") )` - a
-# single inner array as the ONLY content of the outer @() - is a classic
-# PowerShell flattening pitfall; PowerShell unwraps it to a flat 2-element
-# array instead of a 1-element array containing a 2-tuple. `,@(...)` (the
-# unary comma/array-construction operator) forces it to stay nested.
-$Apps_DevContainers = ,@("Docker.DockerDesktop", "Docker Desktop")
-$Apps_DevHubAll = @() + $Apps_DevRuntimes + $Apps_DevIDEs + $Apps_DevAI + $Apps_DevData + $Apps_DevContainers
+$Apps_DevHubAll = @() + $Apps_DevRuntimes + $Apps_DevIDEs + $Apps_DevAI
 
 # ============================================================
-#  UNIFIED SOFTWARE CATALOG (v1.0 RC)
-#  THE flat list every GUI software install now deploys from - the single
-#  hub behind menu_structure.py's SOFTWARE_CATALOG and the one
-#  InstallCatalogApps dispatcher case.
+#  PILLAR 3: ESSENTIAL RUNTIMES & HARDWARE DRIVERS
 #
-#  Software Management used to spread installable apps across FOUR
-#  separate cards (Essential Apps / Dev Hub / Gaming / Diagnostics) with
-#  four dispatcher cases and four selector dialogs, so "where do I get
-#  Docker" and "where do I get VLC" had different answers and nothing let
-#  you pick one of each in a single pass. The GUI now shows one catalog
-#  with a sub-category tab bar; the tabs are a VIEW over this list, not
-#  four lists wearing a hat.
+#  ZERO MISSING DEPENDENCIES is the goal, and it is a different goal from
+#  the other two pillars. Nobody wants a Visual C++ redistributable; they
+#  want the game that will not start. So this pillar is organised by the
+#  FAILURE it prevents, and two of its rows are not winget packages at all
+#  but COMPOSITE ids Pulse expands itself (see
+#  $Script:CompositeRuntimePackages and $Script:WindowsFeaturePackages
+#  below, and Smart-Deploy's handling of both):
 #
-#  Order is load-bearing: it mirrors SOFTWARE_CATALOG's section order
-#  (Browsers & Media -> Development & Tools -> Gaming Launchers ->
-#  System Runtimes & Utilities) so the deploy log reads in the same order
-#  the user saw on screen. The per-category arrays above are NOT dead -
-#  console mode's App Deployment Hub (20-Menus.ps1) still walks them
-#  category by category, which is the right shape for a numbered text
-#  menu; only the GUI collapsed to one catalog.
+#    Pulse.VCRedistAIO   the whole Visual C++ family, x86 AND x64, 2005
+#                        through 2015-2022. The catalog used to offer only
+#                        Microsoft.VCRedist.2015+.x64 - which is the one
+#                        modern software already ships with, and none of
+#                        the five older ones that a 2009 game actually
+#                        asks for. "Missing MSVCR100.dll" was unfixable
+#                        from this catalog.
+#    Pulse.DotNetFx35    .NET Framework 3.5, which also provides 2.0 and
+#                        3.0. It is an OPTIONAL WINDOWS FEATURE, not a
+#                        download: DISM enables it from Windows Update.
+#
+#  A composite id is used rather than twelve separate catalog rows because
+#  twelve rows is not a choice anyone can make. The user's decision is "do
+#  I want the C++ runtimes"; which twelve packages that means is Pulse's
+#  job to know.
 # ============================================================
-$Apps_CatalogAll = @() + $Apps_Basic + $Apps_DevHubAll + $Apps_Gaming + $Runtimes + $Apps_Tools
+$Runtimes = @(
+    @("Pulse.VCRedistAIO", "Visual C++ Runtimes (All Versions, x86 + x64)"),
+    @("Microsoft.DirectX", "DirectX End-User Runtimes (Legacy D3DX)"),
+    @("Microsoft.DotNet.DesktopRuntime.8", ".NET Desktop Runtime 8 (LTS)"),
+    @("Pulse.DotNetFx35", ".NET Framework 3.5 (includes 2.0 and 3.0)"),
+    @("CreativeTechnology.OpenAL", "OpenAL Core Runtime")
+)
+# GPU and system management. The NVIDIA App is the CURRENT replacement for
+# GeForce Experience, which NVIDIA retired - and which this file pointed
+# at until a live check found the winget package no longer exists at all
+# (see Hardware-Check in 04-SoftwareEngine.ps1).
+$Apps_Hardware = @(
+    @("XP8CLZL93F5Z4P", "NVIDIA App (Drivers & Display)"),
+    @("Guru3D.Afterburner", "MSI Afterburner")
+)
+# Purely diagnostic/monitoring utilities - nothing here changes a setting.
+$Apps_Tools = @(
+    @("CPUID.CPU-Z", "CPU-Z"),
+    @("TechPowerUp.GPU-Z", "GPU-Z"),
+    @("CrystalDewWorld.CrystalDiskInfo", "CrystalDiskInfo"),
+    @("CPUID.HWMonitor", "HWMonitor")
+)
 
-# The two hardware-matched EXTRAS Smart-Deploy can append (a GPU vendor
-# suite, a motherboard suite) used to ride along unconditionally with the
-# Gaming and Diagnostics cards respectively. In a unified catalog they
-# must stay tied to INTENT, not fire on every deploy: picking only VLC
-# should not silently pull in an NVIDIA suite. InstallCatalogApps appends
-# each extra only when the user's selection actually intersects the list
-# that promised it.
-$Script:CatalogGpuExtraTriggerIds  = @($Apps_Gaming | ForEach-Object { $_[0] })
-$Script:CatalogMoboExtraTriggerIds = @($Apps_Tools  | ForEach-Object { $_[0] })
+#  The whole of Pillar 3 in on-screen order - what console mode's App
+#  Deployment Hub walks as one category, and the Pillar 3 slice of
+#  $Apps_CatalogAll.
+$Apps_Pillar3All = @() + $Runtimes + $Apps_Hardware + $Apps_Tools
+
+#  The "Install All Essential Dependencies" one-click action deploys
+#  exactly $Runtimes - the foundational layer, and NOT the hardware or
+#  diagnostics rows. A user asking for "everything my software needs" is
+#  asking about DLLs, not about being given an overclocking utility and
+#  four monitoring tools they did not mention.
+$Script:EssentialRuntimeIds = @($Runtimes | ForEach-Object { $_[0] })
+
+# ============================================================
+#  THE FLAT CATALOG
+#  Every installable entry across all three pillars, in on-screen order,
+#  so the deploy log reads in the order the user saw. This is what the
+#  single InstallCatalogApps dispatcher case iterates; -SelectedIds
+#  narrows it to what was actually ticked, and a selection may span
+#  pillars (the three GUI surfaces are scoped VIEWS over this one list,
+#  not three independent lists).
+#
+#  The per-pillar arrays above are NOT dead: console mode's App Deployment
+#  Hub (20-Menus.ps1) walks them pillar by pillar, which is the right
+#  shape for a numbered text menu.
+# ============================================================
+$Apps_CatalogAll = @() + $Apps_Essentials + $Apps_DevHubAll + $Runtimes + $Apps_Hardware + $Apps_Tools
+
+# THE IMPLICIT HARDWARE EXTRAS ARE GONE, and they were removed on
+# evidence rather than on taste. Smart-Deploy used to append a GPU vendor
+# suite or a motherboard suite to a catalog deploy whenever the selection
+# touched the gaming or diagnostics lists. A live winget check found SIX
+# OF THE SEVEN package ids that mechanism could append no longer exist:
+# Nvidia.GeForceExperience (retired in favour of the NVIDIA App),
+# AdvancedMicroDevices.Adrenalin, Intel.IntelGraphicsCommandCenter,
+# Micro-Star.MSICenter (moved to MSI.MSICenter), Gigabyte.ControlCenter
+# and ASRock.AppShop all resolve to nothing. So on virtually every machine
+# the feature silently did nothing, and on the remaining one it installed
+# software the user never ticked.
+#
+# Pillar 3 replaces it with something better in both directions: the
+# NVIDIA App is an EXPLICIT row the user can see and choose, and no deploy
+# ever installs a package that was not on screen. Hardware-Check itself
+# survives - System Info still reports what GPU and board are fitted.
 
 # $Script:DevHubBundles is GONE. It declared three quick-select stacks
 # (Java / University, AI / Python, Web Dev) that the GUI catalog rendered
@@ -191,44 +284,125 @@ $Script:DevHubDependencyHints = @{
 #  APP DOWNLOAD FALLBACK URLS
 # ============================================================
 $Script:DownloadUrls = @{
+    # -- Pillar 1: essential daily & system software ----------------
     "Google.Chrome"                 = "https://www.google.com/chrome/"
     "Brave.Brave"                   = "https://brave.com/download/"
-    "Mozilla.Firefox"               = "https://www.mozilla.org/firefox/new/"
-    "Microsoft.Edge"                = "https://www.microsoft.com/en-us/edge/download"
     "Telegram.TelegramDesktop"      = "https://telegram.org/apps"
-    "Spotify.Spotify"               = "https://www.spotify.com/download"
+    "9NKSQCEZVDDB"                  = "https://www.whatsapp.com/download"
     "Discord.Discord"               = "https://discord.com/download"
+    "Spotify.Spotify"               = "https://www.spotify.com/download"
+    "VideoLAN.VLC"                  = "https://www.videolan.org/vlc/"
+    "Notion.Notion"                 = "https://www.notion.so/desktop"
+    "7zip.7zip"                     = "https://www.7-zip.org/download.html"
+    "RARLab.WinRAR"                 = "https://www.win-rar.com/download.html"
+    "AnyDesk.AnyDesk"               = "https://anydesk.com/en/downloads/windows"
+    "Oracle.VirtualBox"             = "https://www.virtualbox.org/wiki/Downloads"
     "Apple.iTunes"                  = "https://www.apple.com/itunes/download/"
+    "BlueStacks.BlueStacks"         = "https://www.bluestacks.com/download.html"
     "Valve.Steam"                   = "https://store.steampowered.com/about/"
     "EpicGames.EpicGamesLauncher"   = "https://store.epicgames.com/en-US/download"
     "RockstarGames.Launcher"        = "https://socialclub.rockstargames.com/rockstar-games-launcher"
-    "BlueStacks.BlueStacks"         = "https://www.bluestacks.com/download.html"
-    "CPUID.CPU-Z"                   = "https://www.cpuid.com/softwares/cpu-z.html"
-    "TechPowerUp.GPU-Z"             = "https://www.techpowerup.com/gpuz/"
-    "CPUID.HWMonitor"               = "https://www.cpuid.com/softwares/hwmonitor.html"
-    "CrystalDewWorld.CrystalDiskInfo" = "https://crystalmark.info/en/software/crystaldiskinfo/"
-    "Guru3D.Afterburner"            = "https://www.msi.com/Landing/afterburner/graphics-cards"
-    "Notion.Notion"                 = "https://www.notion.so/desktop"
-    "Anysphere.Cursor"              = "https://cursor.sh/"
-    "Microsoft.VisualStudioCode"    = "https://code.visualstudio.com/download"
-    "JetBrains.PyCharm.Community"   = "https://www.jetbrains.com/pycharm/download/"
-    "Apache.NetBeans"               = "https://netbeans.apache.org/download/index.html"
-    "MSYS2.MSYS2"                   = "https://www.msys2.org/"
-    "Ollama.Ollama"                 = "https://ollama.com/download"
-    "7zip.7zip"                     = "https://www.7-zip.org/download.html"
-    "VideoLAN.VLC"                  = "https://www.videolan.org/vlc/"
-    "Microsoft.OneDrive"            = "https://www.microsoft.com/microsoft-365/onedrive/download"
-    "TheDocumentFoundation.LibreOffice" = "https://www.libreoffice.org/download/download/"
+    # -- Pillar 2: developer, AI & engineering stack ----------------
     "Python.Python.3.12"            = "https://www.python.org/downloads/"
     "EclipseAdoptium.Temurin.21.JDK" = "https://adoptium.net/temurin/releases/"
-    "OpenJS.NodeJS.LTS"              = "https://nodejs.org/en/download"
-    "Git.Git"                        = "https://git-scm.com/downloads"
+    "OpenJS.NodeJS.LTS"             = "https://nodejs.org/en/download"
+    "MSYS2.MSYS2"                   = "https://www.msys2.org/"
+    "Git.Git"                       = "https://git-scm.com/downloads"
+    "Microsoft.VisualStudioCode"    = "https://code.visualstudio.com/download"
+    "Anysphere.Cursor"              = "https://cursor.sh/"
+    "Google.Antigravity"            = "https://antigravity.google/"
+    "Apache.NetBeans"               = "https://netbeans.apache.org/download/index.html"
+    "JetBrains.PyCharm.Community"   = "https://www.jetbrains.com/pycharm/download/"
     "JetBrains.IntelliJIDEA.Community" = "https://www.jetbrains.com/idea/download/"
-    "OpenWebUI.OpenWebUI"            = "https://openwebui.com/"
-    "DBeaver.DBeaver.Community"      = "https://dbeaver.io/download/"
-    "Postman.Postman"                = "https://www.postman.com/downloads/"
-    "Bruno.Bruno"                    = "https://www.usebruno.com/downloads"
-    "Docker.DockerDesktop"           = "https://www.docker.com/products/docker-desktop/"
+    "Ollama.Ollama"                 = "https://ollama.com/download"
+    "OpenWebUI.OpenWebUI"           = "https://openwebui.com/"
+    "Docker.DockerDesktop"          = "https://www.docker.com/products/docker-desktop/"
+    "Postman.Postman"               = "https://www.postman.com/downloads/"
+    # -- Pillar 3: runtimes, drivers & diagnostics ------------------
+    # The two composite ids get the page a user would be sent to if the
+    # automated path fails - Microsoft's own redist index, and the DISM
+    # feature's documentation, rather than a download that does not exist.
+    "Pulse.VCRedistAIO"             = "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist"
+    "Pulse.DotNetFx35"              = "https://learn.microsoft.com/en-us/dotnet/framework/install/dotnet-35-windows"
+    "Microsoft.DirectX"             = "https://www.microsoft.com/en-us/download/details.aspx?id=35"
+    "Microsoft.DotNet.DesktopRuntime.8" = "https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
+    "CreativeTechnology.OpenAL"     = "https://www.openal.org/downloads/"
+    "XP8CLZL93F5Z4P"                = "https://www.nvidia.com/en-us/software/nvidia-app/"
+    "Guru3D.Afterburner"            = "https://www.msi.com/Landing/afterburner/graphics-cards"
+    "CPUID.CPU-Z"                   = "https://www.cpuid.com/softwares/cpu-z.html"
+    "TechPowerUp.GPU-Z"             = "https://www.techpowerup.com/gpuz/"
+    "CrystalDewWorld.CrystalDiskInfo" = "https://crystalmark.info/en/software/crystaldiskinfo/"
+    "CPUID.HWMonitor"               = "https://www.cpuid.com/softwares/hwmonitor.html"
+    # -- outside the catalog, still deployable ----------------------
+    # Edge and OneDrive have their own remove/restore cards in Software
+    # Management; OneDrive is also the console hub's own category.
+    "Microsoft.Edge"                = "https://www.microsoft.com/en-us/edge/download"
+    "Microsoft.OneDrive"            = "https://www.microsoft.com/microsoft-365/onedrive/download"
+}
+
+# ============================================================
+#  COMPOSITE CATALOG ENTRIES
+#  One catalog row that Smart-Deploy expands into SEVERAL real winget
+#  packages. The row is the DECISION the user makes ("I want the C++
+#  runtimes"); the package list is the implementation, and it belongs to
+#  Pulse rather than to a person reading twelve near-identical rows and
+#  guessing which of them a 2009 game needs.
+#
+#  Ordered oldest-first, x86 before x64 within each year, because that is
+#  the order Microsoft's own installers assume and it makes the live
+#  console read as a progression rather than a shuffle.
+#
+#  A composite id is deliberately NOT a real winget id and is namespaced
+#  "Pulse." so it can never collide with one. Anything reading the catalog
+#  and handing an id straight to winget will get a clean "no package
+#  found" rather than a silent mismatch - and Smart-Deploy intercepts
+#  these before winget is ever consulted.
+# ============================================================
+$Script:CompositeRuntimePackages = @{
+    # THE COMMAS ARE LOAD-BEARING. Without them PowerShell FLATTENS the
+    # nested arrays: the twelve pairs become a flat list of twenty-four
+    # strings, Smart-Deploy iterates 24 'packages', and $Member[0] on a
+    # string yields its first CHARACTER - so the deploy log filled with
+    # 'TARGET: M' and 'TARGET: V'. Same pitfall this file documents for
+    # $Apps_DevContainers, reached from the other direction.
+    "Pulse.VCRedistAIO" = @(
+        @("Microsoft.VCRedist.2005.x86",  "Visual C++ 2005 (x86)"),
+        @("Microsoft.VCRedist.2005.x64",  "Visual C++ 2005 (x64)"),
+        @("Microsoft.VCRedist.2008.x86",  "Visual C++ 2008 (x86)"),
+        @("Microsoft.VCRedist.2008.x64",  "Visual C++ 2008 (x64)"),
+        @("Microsoft.VCRedist.2010.x86",  "Visual C++ 2010 (x86)"),
+        @("Microsoft.VCRedist.2010.x64",  "Visual C++ 2010 (x64)"),
+        @("Microsoft.VCRedist.2012.x86",  "Visual C++ 2012 (x86)"),
+        @("Microsoft.VCRedist.2012.x64",  "Visual C++ 2012 (x64)"),
+        @("Microsoft.VCRedist.2013.x86",  "Visual C++ 2013 (x86)"),
+        @("Microsoft.VCRedist.2013.x64",  "Visual C++ 2013 (x64)"),
+        @("Microsoft.VCRedist.2015+.x86", "Visual C++ 2015-2022 (x86)"),
+        @("Microsoft.VCRedist.2015+.x64", "Visual C++ 2015-2022 (x64)")
+    )
+}
+
+# ============================================================
+#  OPTIONAL WINDOWS FEATURE CATALOG ENTRIES
+#  .NET Framework 3.5 is not a download - it ships INSIDE Windows as a
+#  disabled optional feature, and enabling it is DISM's job. Offering it
+#  as a catalog row is right (a user hitting "this app requires .NET
+#  Framework 3.5" does not care about the distinction), but the row has to
+#  run a completely different pipeline, which is what this table declares.
+#
+#  ADMIN IS REQUIRED and the deploy reports it as a clean SKIP rather than
+#  a failure when absent - see Enable-WindowsFeaturePackage. Catalog
+#  installs are deliberately NOT admin-gated as a whole (winget handles
+#  its own elevation, and gating them breaks user-scope packages like
+#  Spotify), so this one row has to say so for itself.
+# ============================================================
+$Script:WindowsFeaturePackages = @{
+    "Pulse.DotNetFx35" = @{
+        FeatureName = "NetFx3"
+        Name        = ".NET Framework 3.5 (includes 2.0 and 3.0)"
+        # DISM pulls the payload from Windows Update when the local
+        # source is absent, which is the normal case on a retail install.
+        Note        = "Enabled from Windows Update - this can take a few minutes."
+    }
 }
 
 # ============================================================
@@ -634,5 +808,12 @@ $Script:AdminRequiredTasks = @(
     # (ContextMenuScan) is deliberately absent - reading the menu
     # needs no rights, and gating it would prompt for elevation
     # just to look.
-    "ContextMenuToggle","ContextMenuRestore"
+    "ContextMenuToggle","ContextMenuRestore",
+    # Pillar 3's network stack reset rewrites Winsock and the TCP/IP
+    # stack, both machine-scope. Its two READ-ONLY companions -
+    # NetworkAdapterReport and NetworkDriverCheck - are deliberately
+    # absent for the same reason ContextMenuScan is: asking what
+    # adapters are fitted and which driver they run needs no rights,
+    # and gating it would raise a UAC prompt just to look.
+    "NetworkStackReset"
 )

@@ -64,7 +64,7 @@ from frontend.animations import (  # noqa: E402
     PageFader,
 )
 from frontend.menu_structure import (  # noqa: E402
-    CATEGORIES, SOFTWARE_CATALOG, category_bands,
+    CATEGORIES, SOFTWARE_CATALOG, catalog_section, category_bands,
     category_operations, find_action_anywhere,
     hub_items, iter_leaf_items, recurring_days, requires_admin,
 )
@@ -85,7 +85,7 @@ from frontend.widgets import (  # noqa: E402
     SoftwareCatalogDialog,
     StartupManagerDialog, StatusRail, StorageAnalyzerDialog, TitleBar,
     ToolInstallWizardDialog, UpdateBadge, UpdateCenterDialog,
-    refit_dialog,
+    reanchor_dialog, refit_dialog,
 )
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
 
@@ -2942,12 +2942,17 @@ class PulseApp(QMainWindow):
                 self.toasts.show("info", "No updates were selected — nothing to update.", 3500)
                 return
         elif item.get("catalog"):
-            # THE unified software hub — every installable app behind one
-            # card, tab-filtered by sub-category. Hands back exactly what
-            # the old per-pack selectors did, so everything downstream
-            # (concurrency guard, live console, toasts) is unchanged.
+            # A CATALOG SURFACE, scoped to the pillar this card names.
+            # `catalog_section` selects one of SOFTWARE_CATALOG's three
+            # pillars; a card that omits it gets the combined view. All of
+            # them hand back exactly what the old per-pack selectors did —
+            # a list of AppIds — so everything downstream (the concurrency
+            # guard, the live console, the toasts) is unchanged, and a
+            # deploy from any pillar runs the same InstallCatalogApps pass.
+            section = catalog_section(item.get("catalog_section", ""))
             dialog = SoftwareCatalogDialog(
-                self, item, self.theme.t, SOFTWARE_CATALOG)
+                self, item, self.theme.t,
+                [section] if section else SOFTWARE_CATALOG)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if dialog.local_installer:
@@ -3418,6 +3423,30 @@ class PulseApp(QMainWindow):
         # a full-body scrim, so each needs the refit.
         for sheet in PulseDialog.open_dialogs():
             refit_dialog(sheet)
+
+    def moveEvent(self, event):
+        """Drag the window; the open sheets come with it.
+
+        THE SHEETS ARE TOP-LEVEL WINDOWS, not child widgets — that is what
+        lets a scrim paint itself over the body while the title bar stays
+        live (see PulseDialog.__init__). Nothing in Qt moves a second
+        top-level window when this one moves, so an open sheet kept the
+        screen coordinates it was given at open time: drag the shell and
+        the Ctrl+K palette, the Software Catalog or a wizard visibly slid
+        out of the app and sat over the desktop.
+
+        resizeEvent has re-anchored them for as long as sheets have
+        existed; a drag is the same requirement with none of the size
+        change, so it gets the cheap half — see widgets.reanchor_dialog for
+        why a move must NOT run the full refit.
+
+        The toasts are already anchored to this window's own geometry and
+        repositioned from resizeEvent, but they are children of it and
+        travel for free.
+        """
+        super().moveEvent(event)
+        for sheet in PulseDialog.open_dialogs():
+            reanchor_dialog(sheet)
 
     # ============================================================
     #  AMBIENT OCCLUSION — tell the wash what it is hidden behind

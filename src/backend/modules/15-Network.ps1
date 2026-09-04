@@ -274,3 +274,260 @@ function Restore-PulseDnsDefaults {
     try { Clear-DnsClientCache -ErrorAction Stop } catch { }
     return $true
 }
+
+# ============================================================
+#  CONNECTIVITY DIAGNOSTICS, STACK RESET AND DRIVER CHECK
+#  (Pillar 3 - "Essential Runtimes & Hardware Drivers")
+#
+#  These three sit beside the DNS switcher above because they answer the
+#  same question from three different depths: my connection is wrong. DNS
+#  is the shallowest cause, a corrupted Winsock catalog is the deepest,
+#  and an out-of-date Ethernet/Wi-Fi driver is the one no software fix
+#  reaches at all.
+#
+#  ONLY ONE OF THE THREE WRITES ANYTHING. The report and the driver check
+#  are read-only and deliberately NOT admin-gated (see the note in
+#  $Script:AdminRequiredTasks) - asking what hardware is fitted should
+#  never raise a UAC prompt. Reset-PulseNetworkStack is the write, and it
+#  is gated.
+# ============================================================
+
+function Get-PulseAdapterDiagnostics {
+    <# Every physical adapter - up or down - with the facts a connection
+       problem is actually diagnosed from: link state and speed, the
+       addresses it holds, its gateway, and the driver behind it.
+
+       PHYSICAL BUT NOT ONLY 'Up', which is the difference from
+       Get-PulseNetworkAdapters above. That one lists connections whose
+       DNS can be rewritten, so a down adapter is noise. Here a DOWN
+       adapter is frequently the whole answer - "your Ethernet cable is
+       not connected" is the diagnosis - so filtering it out would hide
+       the finding. #>
+    $result = @()
+    try {
+        $adapters = @(Get-NetAdapter -Physical -ErrorAction Stop)
+    } catch {
+        return @()
+    }
+    foreach ($adapter in $adapters) {
+        $v4 = @(); $gateway = ""
+        try {
+            $v4 = @((Get-NetIPAddress -InterfaceIndex $adapter.ifIndex `
+                        -AddressFamily IPv4 -ErrorAction Stop).IPAddress)
+        } catch { }
+        try {
+            $gateway = [string]((Get-NetIPConfiguration -InterfaceIndex $adapter.ifIndex `
+                        -ErrorAction Stop).IPv4DefaultGateway.NextHop | Select-Object -First 1)
+        } catch { }
+        $driverDate = ""
+        if ($adapter.DriverDate) {
+            try { $driverDate = ([datetime]$adapter.DriverDate).ToString('yyyy-MM-dd') } catch { }
+        }
+        $result += [PSCustomObject]@{
+            name           = [string]$adapter.Name
+            description    = [string]$adapter.InterfaceDescription
+            status         = [string]$adapter.Status
+            linkSpeed      = [string]$adapter.LinkSpeed
+            driverVersion  = [string]$adapter.DriverVersion
+            driverDate     = $driverDate
+            driverProvider = [string]$adapter.DriverProvider
+            addresses      = $v4
+            gateway        = $gateway
+        }
+    }
+    return $result
+}
+
+function Show-PulseAdapterDiagnostics {
+    <# The read-only connectivity report, written to the live console and
+       the operation log. Returns $true when at least one adapter is up -
+       the only "verdict" this task can honestly reach, since everything
+       else it prints is information rather than judgement. #>
+    $adapters = @(Get-PulseAdapterDiagnostics)
+    if ($adapters.Count -eq 0) {
+        Write-Warn "No physical network adapters were found on this PC."
+        return $false
+    }
+
+    $up = 0
+    foreach ($adapter in $adapters) {
+        Write-Host ""
+        Write-StatusPanel -Label $adapter.status.ToUpper() -Text $adapter.name
+        Write-Info "Adapter      : $($adapter.description)"
+        if ($adapter.status -eq 'Up') {
+            $up++
+            Write-Info "Link speed   : $($adapter.linkSpeed)"
+            if ($adapter.addresses.Count -gt 0) {
+                Write-Info "IPv4 address : $($adapter.addresses -join ', ')"
+            } else {
+                Write-Warn "This adapter is up but holds no IPv4 address - DHCP may not have answered."
+            }
+            if ($adapter.gateway) {
+                Write-Info "Gateway      : $($adapter.gateway)"
+            } else {
+                Write-Warn "No default gateway - this adapter can reach the local network but not the internet."
+            }
+        } else {
+            Write-Info "This adapter is $($adapter.status.ToLower()) - nothing is connected to it."
+        }
+        $driver = $adapter.driverVersion
+        if ($adapter.driverDate) { $driver = "$driver  ($($adapter.driverDate))" }
+        Write-Info "Driver       : $driver"
+        if ($adapter.driverProvider) { Write-Info "Provided by  : $($adapter.driverProvider)" }
+    }
+
+    Write-Host ""
+    if ($up -eq 0) {
+        Write-Warn "No adapter is currently connected."
+    } else {
+        Write-Success "$up of $($adapters.Count) adapter(s) connected."
+    }
+    return ($up -gt 0)
+}
+
+#: Official driver pages, by the vendor string an adapter reports.
+#:
+#: LINKS, NOT DOWNLOADS, and that is the whole design. A network driver is
+#: the one component where a wrong or generic package can leave a machine
+#: with no way to fetch the right one - so Pulse identifies the hardware
+#: precisely and hands over to the vendor's own tool, rather than guessing
+#: at an .inf and installing it. Windows Update is named first in the
+#: report because on a working connection it is genuinely the right
+#: answer; these are for when it is not.
+$Script:NetworkDriverVendors = @(
+    @{ Match = "Intel";            Name = "Intel Ethernet / Wi-Fi"
+       Url   = "https://www.intel.com/content/www/us/en/download-center/home.html" }
+    @{ Match = "Realtek";          Name = "Realtek Ethernet / Wi-Fi"
+       Url   = "https://www.realtek.com/Download" }
+    @{ Match = "Qualcomm|Atheros"; Name = "Qualcomm Atheros"
+       Url   = "https://www.qualcomm.com/support" }
+    @{ Match = "Broadcom";         Name = "Broadcom"
+       Url   = "https://www.broadcom.com/support/download-search" }
+    @{ Match = "MediaTek|Ralink";  Name = "MediaTek"
+       Url   = "https://www.mediatek.com/products/broadband-wifi" }
+)
+
+function Show-PulseNetworkDriverCheck {
+    <# Name every network adapter's driver and point at the vendor's own
+       download page. READ-ONLY: nothing is fetched or installed.
+
+       THE DATE IS THE CHECK THAT MATTERS. A network driver more than a
+       couple of years old is the usual cause of the "connected but slow,
+       drops under load" complaints that no amount of DNS or Winsock work
+       will fix - and it is invisible in Windows' own UI unless you go
+       looking in Device Manager. #>
+    $adapters = @(Get-PulseAdapterDiagnostics)
+    if ($adapters.Count -eq 0) {
+        Write-Warn "No physical network adapters were found on this PC."
+        return $false
+    }
+
+    Write-Info "Windows Update carries most network drivers - Settings > Windows Update > Advanced options > Optional updates is the first place to look."
+    $stale = 0
+    foreach ($adapter in $adapters) {
+        Write-Host ""
+        Write-StatusPanel -Label "ADAPTER" -Text $adapter.name
+        Write-Info $adapter.description
+        $driver = if ($adapter.driverVersion) { $adapter.driverVersion } else { "unknown" }
+        Write-Info "Driver version: $driver"
+
+        if ($adapter.driverDate) {
+            $age = ((Get-Date) - [datetime]$adapter.driverDate).Days
+            $years = [math]::Round($age / 365.0, 1)
+            if ($age -gt 730) {
+                $stale++
+                Write-Warn "Driver dated $($adapter.driverDate) - about $years years old. Worth updating."
+            } else {
+                Write-Info "Driver dated $($adapter.driverDate) - about $years years old."
+            }
+        }
+
+        $vendor = $null
+        foreach ($candidate in $Script:NetworkDriverVendors) {
+            if ($adapter.description -match $candidate.Match -or
+                $adapter.driverProvider -match $candidate.Match) {
+                $vendor = $candidate
+                break
+            }
+        }
+        if ($vendor) {
+            Write-Info "Official drivers: $($vendor.Name) - $($vendor.Url)"
+            Write-Log "NETWORK-DRIVER $($adapter.name): $($vendor.Name) -> $($vendor.Url)"
+        } else {
+            Write-Info "No vendor download page is mapped for this adapter - check your PC or motherboard maker's support page."
+        }
+    }
+
+    Write-Host ""
+    if ($stale -gt 0) {
+        Write-Warn "$stale adapter driver(s) are over two years old."
+    } else {
+        Write-Success "Every network adapter driver is reasonably current."
+    }
+    return $true
+}
+
+function Reset-PulseNetworkStack {
+    <# The deep repair: rebuild the Winsock catalog and the TCP/IP stack,
+       then release/renew the lease and flush every cache around them.
+
+       A REBOOT IS REQUIRED and this REPORTS it rather than performing it.
+       Both netsh resets rewrite registry state the running stack has
+       already loaded, so the machine is half-applied until it restarts -
+       and a network tool that reboots a PC out from under someone is not
+       a tool.
+
+       DISTINCT FROM 'Network & Ping Optimizer', which flushes DNS and
+       resets Winsock as a light-touch latency pass. This is the full
+       teardown, including the IP stack and the adapter lease, and it is
+       what you run when something is actually broken.
+
+       ORDER MATTERS: winsock before ip (the ip reset re-registers
+       providers the winsock reset just cleared), and the release/renew
+       after both so the adapter takes its lease against the rebuilt
+       stack rather than against the one being torn down. #>
+    $Steps = @(
+        @{ Label = "Resetting the Winsock catalog";   File = "netsh";    Args = @("winsock", "reset") }
+        @{ Label = "Resetting the IPv4 stack";        File = "netsh";    Args = @("int", "ip", "reset") }
+        @{ Label = "Resetting the IPv6 stack";        File = "netsh";    Args = @("int", "ipv6", "reset") }
+        @{ Label = "Releasing the current IP lease";  File = "ipconfig"; Args = @("/release") }
+        @{ Label = "Renewing the IP lease";           File = "ipconfig"; Args = @("/renew") }
+        @{ Label = "Flushing the DNS resolver cache"; File = "ipconfig"; Args = @("/flushdns") }
+        @{ Label = "Clearing the ARP cache";          File = "netsh";    Args = @("interface", "ip", "delete", "arpcache") }
+    )
+
+    if ($Script:DryRun) {
+        foreach ($Step in $Steps) {
+            [void](Test-DryRun "$($Step.Label): $($Step.File) $($Step.Args -join ' ')")
+        }
+        return $true
+    }
+
+    $failed = @()
+    $Index = 0
+    foreach ($Step in $Steps) {
+        $Index++
+        Write-GuiStage "[$Index/$($Steps.Count)] $($Step.Label)..."
+        try {
+            $Proc = Start-Process -FilePath $Step.File -ArgumentList $Step.Args `
+                -NoNewWindow -Wait -PassThru -ErrorAction Stop
+            # ipconfig /release and /renew return non-zero on an adapter
+            # with no DHCP lease to release, which is not a failure of the
+            # reset - it means there was nothing there. Only the netsh
+            # resets are treated as load-bearing.
+            if ($Proc.ExitCode -ne 0 -and $Step.File -eq "netsh") {
+                $failed += $Step.Label
+                Write-Warn "$($Step.Label) reported exit code $($Proc.ExitCode)."
+            } else {
+                Write-Success $Step.Label
+            }
+        } catch {
+            $failed += $Step.Label
+            Write-ErrorX "$($Step.Label) could not run: $($_.Exception.Message)"
+        }
+    }
+
+    if ($failed.Count -gt 0) { return $false }
+    $Script:PendingRestart = $true
+    return $true
+}

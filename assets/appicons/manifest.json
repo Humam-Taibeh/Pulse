@@ -11,11 +11,11 @@
   "source": "logos:whatsapp-icon",
   "title": "Whatsapp Icon"
  },
- "9PKTQ5699M62": {
+ "AnyDesk.AnyDesk": {
   "color": true,
-  "file": "9PKTQ5699M62.svg",
-  "source": "thesvg-color:icloud",
-  "title": "Icloud"
+  "file": "AnyDesk.AnyDesk.svg",
+  "source": "thesvg-color:anydesk",
+  "title": "Anydesk"
  },
  "Anysphere.Cursor": {
   "file": "Anysphere.Cursor.svg",
@@ -41,18 +41,6 @@
   "source": "logos:brave",
   "title": "Brave"
  },
- "Bruno.Bruno": {
-  "color": true,
-  "file": "Bruno.Bruno.svg",
-  "source": "devicon:bruno",
-  "title": "Bruno"
- },
- "DBeaver.DBeaver.Community": {
-  "color": true,
-  "file": "DBeaver.DBeaver.Community.svg",
-  "source": "devicon:dbeaver",
-  "title": "Dbeaver"
- },
  "Discord.Discord": {
   "color": true,
   "file": "Discord.Discord.svg",
@@ -68,8 +56,8 @@
  "EclipseAdoptium.Temurin.21.JDK": {
   "color": true,
   "file": "EclipseAdoptium.Temurin.21.JDK.svg",
-  "source": "logos:eclipse-icon",
-  "title": "Eclipse Icon"
+  "source": "thesvg-color:eclipse-adoptium",
+  "title": "Eclipse Adoptium"
  },
  "EpicGames.EpicGamesLauncher": {
   "color": true,
@@ -82,6 +70,12 @@
   "file": "Git.Git.svg",
   "source": "logos:git-icon",
   "title": "Git Icon"
+ },
+ "Google.Antigravity": {
+  "file": "Google.Antigravity.svg",
+  "hex": "#000000",
+  "source": "bxl:google-antigravity",
+  "title": "Google Antigravity"
  },
  "Google.Chrome": {
   "color": true,
@@ -110,8 +104,8 @@
  "MSYS2.MSYS2": {
   "color": true,
   "file": "MSYS2.MSYS2.svg",
-  "source": "logos:gnu",
-  "title": "Gnu"
+  "source": "thesvg-color:mingw-w64",
+  "title": "Mingw W64"
  },
  "Microsoft.DotNet.DesktopRuntime.8": {
   "color": true,
@@ -119,29 +113,11 @@
   "source": "logos:dotnet",
   "title": "Dotnet"
  },
- "Microsoft.Edge": {
-  "color": true,
-  "file": "Microsoft.Edge.svg",
-  "source": "logos:microsoft-edge",
-  "title": "Microsoft Edge"
- },
- "Microsoft.VCRedist.2015+.x64": {
-  "color": true,
-  "file": "Microsoft.VCRedist.2015+.x64.svg",
-  "source": "logos:c-plusplus",
-  "title": "C Plusplus"
- },
  "Microsoft.VisualStudioCode": {
   "color": true,
   "file": "Microsoft.VisualStudioCode.svg",
   "source": "logos:visual-studio-code",
   "title": "Visual Studio Code"
- },
- "Mozilla.Firefox": {
-  "color": true,
-  "file": "Mozilla.Firefox.svg",
-  "source": "logos:firefox",
-  "title": "Firefox"
  },
  "Notion.Notion": {
   "color": true,
@@ -167,17 +143,29 @@
   "source": "thesvg-color:openwebui",
   "title": "Openwebui"
  },
- "Oracle.JavaRuntimeEnvironment": {
+ "Oracle.VirtualBox": {
   "color": true,
-  "file": "Oracle.JavaRuntimeEnvironment.svg",
-  "source": "logos:java",
-  "title": "Java"
+  "file": "Oracle.VirtualBox.svg",
+  "source": "thesvg-color:virtualbox",
+  "title": "Virtualbox"
  },
  "Postman.Postman": {
   "color": true,
   "file": "Postman.Postman.svg",
   "source": "logos:postman-icon",
   "title": "Postman Icon"
+ },
+ "Pulse.DotNetFx35": {
+  "color": true,
+  "file": "Pulse.DotNetFx35.svg",
+  "source": "logos:dotnet",
+  "title": "Dotnet"
+ },
+ "Pulse.VCRedistAIO": {
+  "color": true,
+  "file": "Pulse.VCRedistAIO.svg",
+  "source": "logos:c-plusplus",
+  "title": "C Plusplus"
  },
  "Python.Python.3.12": {
   "color": true,
@@ -203,12 +191,6 @@
   "source": "logos:telegram",
   "title": "Telegram"
  },
- "TheDocumentFoundation.LibreOffice": {
-  "color": true,
-  "file": "TheDocumentFoundation.LibreOffice.svg",
-  "source": "thesvg-color:libreoffice",
-  "title": "Libreoffice"
- },
  "Valve.Steam": {
   "color": true,
   "file": "Valve.Steam.svg",
@@ -220,5 +202,10 @@
   "file": "VideoLAN.VLC.svg",
   "source": "thesvg-color:vlc-media-player",
   "title": "Vlc Media Player"
+ },
+ "XP8CLZL93F5Z4P": {
+  "file": "XP8CLZL93F5Z4P.svg",
+  "hex": "#76B900",
+  "title": "NVIDIA"
  }
 }
