@@ -17,6 +17,110 @@ long after `VERSION` had become the single source.
 
 ## [Unreleased]
 
+### Removed — three controls that reopened a decision the user had made
+
+- **The catalog's `Filter apps…` field.** It narrowed fifteen to twenty
+  rows that a strip of counted, labelled chips had already narrowed. It
+  also auto-focused on show, so the catalog opened with the keyboard in a
+  text box rather than on the list — Space could not tick the row under the
+  cursor — and it forced the group-header rule to carry an exception for a
+  query state no chip press can produce. That rule is one condition now,
+  and the field's row comes back as list height.
+
+- **`Preview` on the confirmation dialog.** It accepted like `Proceed` and
+  set a flag the caller read to append `-WhatIf`. A confirmation appears
+  once the user has already decided and is being asked to say so; a third
+  same-sized button there does not inform that decision, it reopens it —
+  and two of the three accepted. The Update Center's *"Some of these apps
+  are running"* made it plainest, offering to simulate an upgrade the user
+  had already queued and ticked. The engine's `-WhatIf` path is untouched
+  and still reached by `PlaybookDialog`, whose whole subject is a sequence
+  worth rehearsing, and `_start_task` keeps the parameter.
+
+- **The `⋯` on every catalog and Update Center row.** It opened a sheet
+  whose two options were *"Automated Install (winget)"* — the row's own
+  checkbox, one click further away — and *"Visit Official Website"*, which
+  was the only thing the sheet added, three clicks deep. Worse, accepting
+  it ran `set_all(False)`, ticked one row and deployed, so a stray press
+  discarded a selection built over a minute. Both row types now carry a
+  direct link button: one press opens the vendor's page in the browser and
+  nothing else moves. The URL is the catalog's curated one where Pulse has
+  it and a search naming the product otherwise, which is the Update
+  Center's normal case since it lists every upgradable program rather than
+  the catalog's forty-five. `ToolInstallWizardDialog` survives for the
+  Edge / OneDrive / Store restore cards, where nothing has been ticked and
+  its two options really are the two answers.
+
+### Fixed — brand marks that shipped as solid white cards on the dark theme
+
+- **The manifest was calling four silhouettes full-colour artwork.**
+  7‑Zip, Epic Games, Ollama and MSYS2 rendered as solid black shapes bolted
+  onto glaring near-white tiles, in a column where Chrome, Spotify and VLC
+  sat quietly on the neutral well. The classifier asked
+  `"currentColor" in body`, and a brand-logo set publishes two shapes of
+  monochrome mark — the second declares nothing at all, a bare
+  `<path d="…"/>`, which the SVG spec paints black. Flagged `color: true`
+  they took the render-as-drawn path, painted black, and the runtime did
+  the only thing left to it. `is_silhouette` reads the file for any
+  declaration that actually names a colour, and the manifest test imports
+  that function rather than re-implementing the rule: the old copy agreeing
+  with the old fetcher is exactly what made this invisible from the tests.
+
+- **The rescue plate had one step where it needed two.** It tried the
+  resting neutral and then jumped to near-white. On the dark theme the
+  resting well *lifts* with white, which helps a bright mark and harms a
+  dark one, so simply not lifting is often enough — VirtualBox measures
+  2.55 against the lifted plate and 3.06 against the bare surface. That
+  tier exists now, and `test_contract` asserts by measurement that no mark
+  this repo ships reaches the white tile on dark.
+
+- **The contrast guard stopped at the readability floor.** It returns the
+  first candidate clearing 2.6, which for Cursor's black cube on obsidian
+  is `#666666` — the "nearly black, not sharp" report. Walking to the floor
+  is right while a *hue* is being preserved; there is no hue in black, so
+  an achromatic mark now resolves to the theme's own high-contrast
+  foreground. Cursor reads `#eef1f6` at 13.6∶1 on dark and stays `#000000`
+  on light.
+
+### Changed — marks, and the surfaces they sit on
+
+- **Node.js** takes `devicon:nodejs`, the three-face isometric solid. It
+  was `logos:nodejs-icon`: the hexagon drawn as one flat silhouette with
+  the facet edges cut out of it, and at 20px those cut-outs close.
+- **MSYS2** is drawn. It carried `thesvg-color:mingw-w64`, which names a
+  toolchain MSYS2 can install rather than MSYS2 itself.
+- **WinRAR** and **OpenAL** are drawn. Both gaps were re-measured:
+  OpenMoji's books-and-belt mark is CC BY-SA, which an MIT app cannot
+  bundle for one row, and every published OpenAL mark is a wordmark that is
+  four illegible letterforms in a 20px square.
+- **BlueStacks** is the four-colour layered stack, and it is the closest
+  thing in `DRAWN_MAP` to a rendition of a vendor's mark — called out as
+  such in that map's own note, and the first entry to delete the day
+  BlueStacks publishes to an open set.
+- **The radius ramp's top step moves 16 → 20.** Three tiers is still the
+  whole point; 16 sat only 4px above the surface tier, so a 900px dialog
+  panel drew its container corner at almost the corner of the rows it
+  holds.
+- **One hover recipe for both list-row factories.** They lifted their fill
+  by different means — a blend against a swap that drops off the card tier
+  — and firmed their borders by different weights, inside one dialog.
+- **Both selector lists move to the `md` step.** At 8px two bordered rows
+  read as one 2px rule with a gap in it.
+- **The modal backdrop takes a third blur pass.** Measured, and stated as
+  measured: residual edge energy on synthetic app chrome goes 1.86 → 1.58
+  of a 5.41 raw, so the hairlines behind a sheet stop being individually
+  legible.
+
+### Known, and deliberately not fixed here
+
+- Adoptium's **gradient** mark variant has no source in any openly licensed
+  set, so Temurin keeps its authentic solid magenta arch.
+- On the **light** theme, OpenWebUI's pure-white artwork is still
+  near-invisible. That is a classification problem rather than a plate
+  problem: the directional plate that would fix it puts a near-black tile
+  under thirteen perfectly legible logos, Chrome, Spotify and VLC among
+  them. Documented on `_RESCUE_PLATE`.
+
 ---
 
 ## [10.10.0] — 2026-09-05
