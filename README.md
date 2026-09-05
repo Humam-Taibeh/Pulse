@@ -9,15 +9,16 @@
 **A Windows orchestration toolkit — a data-driven PowerShell engine wrapped in a GPU-accelerated, glass-morphism PySide6 command center, with a real-time operations console, declarative playbooks, and a global kill switch.**
 
 > ### 🧪 Beta software
-> **v10.4 is a pre-release.** It is unsigned, has had no third-party security review, and modifies the registry, services and installed software on the machine it runs on. The safety layers described below are real and tested, but they are not a substitute for your own backup. Run it on a machine you can afford to restore.
+> **Pulse is pre-release software.** It is unsigned, has had no third-party security review, and modifies the registry, services and installed software on the machine it runs on. The safety layers described below are real and tested, but they are not a substitute for your own backup. Run it on a machine you can afford to restore.
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-prerequisites)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](#-prerequisites)
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
-[![Release](https://img.shields.io/badge/release-v10.4%20beta-blueviolet)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-838%20pytest%20%2B%20101%20Pester-success)](#-testing--continuous-integration)
-[![CI](https://img.shields.io/badge/CI-windows--latest-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Humam-Taibeh/Pulse?label=release&color=blueviolet&logo=github)](https://github.com/Humam-Taibeh/Pulse/releases/latest)
+[![Tests](https://img.shields.io/badge/tests-1%2C303%20pytest%20%2B%20180%20Pester-success)](#-testing--continuous-integration)
+[![CI](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml)
+[![Release build](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml/badge.svg)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -248,12 +249,14 @@ Pulse/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
 │   └── fetch_app_icons.py           # Build-time vendor icon fetcher
 │
-├── tests/                           # 713 collected pytest tests
+├── tests/                           # 1,303 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
-│   ├── backend/                     # 101 Pester tests (safety, startup, hardening, …)
+│   ├── backend/                     # 180 Pester tests (safety, startup, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
 │
-└── .github/workflows/ci.yml         # Four gates, ordered cheapest-first
+└── .github/workflows/
+    ├── ci.yml                       # Four gates, ordered cheapest-first
+    └── release.yml                  # Tag -> build -> verify -> publish
 ```
 
 ---
@@ -607,10 +610,10 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 
 ```powershell
 python -m pytest tests -v          # 1,303 collected tests
-Invoke-Pester -Path tests\backend  # 126 tests
+Invoke-Pester -Path tests\backend  # 180 tests
 ```
 
-The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history, resources and the ambient field. **80 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
+The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **80 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
 
 The Pester suite does **real registry I/O**, deliberately — mocking the registry would test the mock, and invariants like first-write-wins and the `__NOTSET__` sentinel only bite against a real hive. Everything is confined to a throwaway key and removed in `AfterAll`; nothing needs elevation.
 
@@ -625,11 +628,47 @@ CI runs four gates on `windows-latest`, ordered cheapest-first so an obvious bre
 
 Gate 4's floor exists because a runner that lost its desktop session would still report green while silently testing a quarter of the suite. It fails loudly instead.
 
+Both workflows run on `windows-latest` and nothing else. There is no Linux
+fallback to be had: the GUI tests pump real Win32 messages and the engine
+calls DWM, the registry and `winget`.
+
+### Releases are automated
+
+[`release.yml`](.github/workflows/release.yml) is tag-driven. Pushing a
+`vX.Y.Z` tag is the entire release procedure:
+
+```powershell
+git tag -a v10.10.0 -m "Pulse v10.10.0"
+git push origin v10.10.0
+```
+
+| Step | What it does |
+|---|---|
+| **Gates** | Calls `ci.yml` as a reusable workflow — the *same* four gates, not a second copy. A commit CI rejects cannot be released. |
+| **Tag ↔ `VERSION`** | Refuses a tag that disagrees with the `VERSION` file. The installer is named from the file and the updater compares against the tag, so a mismatch ships an update that reinstalls itself forever. |
+| **Build** | Runs [`tools/build_release.ps1`](tools/build_release.ps1) — the same script a developer runs locally, not a reimplementation of it. |
+| **Verify** | Re-hashes the installer and checks `SHA256SUMS` actually lists *that* filename with *that* digest. |
+| **Publish** | Creates the GitHub release with the installer and `SHA256SUMS` attached, and the release body taken from this version's `CHANGELOG.md` section. |
+
+The verify step exists because the failure it catches is invisible from the
+releases page: `updater.py` declines any download whose digest is not
+published in `SHA256SUMS`, so a release missing that file — or carrying one
+that names a different filename — looks perfectly fine to a human and reads
+as "no update available" on every installed copy. Every release before v10.4
+had exactly that defect.
+
+Releases are **never** marked as GitHub prereleases, regardless of the beta
+language above: `updater.py` reads `/releases/latest` on its primary path,
+and that endpoint excludes prereleases.
+
+`workflow_dispatch` runs the identical build **without** publishing, so the
+pipeline can be exercised from a branch before a tag is cut.
+
 ### † A note on the GPU measurement
 
 The ambient-field figures this section used to qualify — ~10.9% of one core on the GPU path against 40.2% for raster at 60 fps — described a background that no longer exists. v10.6 deleted the field, both renderers and the occlusion system built to afford them; the canvas is now a static gradient and costs nothing to leave on screen. The numbers are kept in the v10.4.0 changelog entry as the record of why the GPU path was built, not as a claim about anything that ships.
 
-**There is no committed benchmark harness, and these numbers are not reproducible from this repository.** No hardware, OS or driver version was recorded. The performance tests that *are* in the suite ([test_ambient.py](tests/test_ambient.py), [test_shell_budget.py](tests/test_shell_budget.py)) measure per-paint cost in milliseconds against a frame budget — a different metric, which does not corroborate a CPU-percentage claim. Treat the ratio as directionally indicative of the author's hardware, not as a benchmark. The same caveat applies to the "0.000 card repaints per frame" figure in that docstring.
+**There is no committed benchmark harness, and these numbers are not reproducible from this repository.** No hardware, OS or driver version was recorded. The performance test that *is* in the suite ([test_shell_budget.py](tests/test_shell_budget.py)) measures per-paint cost in milliseconds against a frame budget — a different metric, which does not corroborate a CPU-percentage claim. Treat the ratio as directionally indicative of the author's hardware, not as a benchmark. The same caveat applies to the "0.000 card repaints per frame" figure in that docstring.
 
 ---
 

@@ -16,10 +16,14 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, main]
   pull_request:
-    branches: [master]
+    branches: [master, main]
   workflow_dispatch:
+  # Called by .github/workflows/release.yml so a release is gated on these
+  # exact four jobs rather than on a second, drifting copy of them. There
+  # is one definition of "green" in this repository, and this is it.
+  workflow_call:
 
 # A new push to the same branch makes an in-flight run obsolete.
 concurrency:

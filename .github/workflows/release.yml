@@ -1,0 +1,290 @@
+#  Pulse - release automation
+#
+#  Tag-driven. Pushing `vX.Y.Z` builds the artifacts and publishes them to
+#  GitHub Releases; nothing else does. `workflow_dispatch` runs the exact
+#  same build WITHOUT publishing, so the pipeline can be exercised on a
+#  branch before a tag is cut.
+#
+#  THREE THINGS THIS WORKFLOW DELIBERATELY DOES NOT DO:
+#
+#  1. It does not reimplement the build. tools/build_release.ps1 is the
+#     build - preflight, module manifest, PyInstaller, Inno Setup and
+#     SHA256SUMS - and it is what a developer runs locally. A workflow
+#     that inlined those steps would be a second build recipe that drifts
+#     from the first, and the drift would only ever be discovered in a
+#     release.
+#
+#  2. It does not define its own test gates. The `verify` job CALLS
+#     .github/workflows/ci.yml, so "green" means exactly one thing in this
+#     repository and a release cannot be cut from a commit CI rejects.
+#
+#  3. It does not mark releases as prereleases. src/utils/updater.py hits
+#     /releases/latest on its primary path, and that endpoint EXCLUDES
+#     prereleases - so a release published with --prerelease is one the
+#     in-app updater cannot see. The README's "beta" language is a
+#     statement about maturity, not a GitHub release flag.
+#
+#  KEEP EVERY `run:` BLOCK PURE ASCII, for the reason ci.yml documents at
+#  length: the runner writes each step to a BOM-less UTF-8 file and
+#  `shell: powershell` (Windows PowerShell 5.1) decodes it in the ANSI
+#  codepage, where an em-dash's last byte becomes U+201D - which
+#  PowerShell accepts as a STRING DELIMITER. One em-dash in a comment
+#  silently closes the string it sits in.
+#
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+# NOT cancel-in-progress. A cancelled CI run costs nothing; a release
+# cancelled between "installer built" and "assets uploaded" leaves a tag
+# with a partial release attached to it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================
+  #  1. The same four gates every push already has to clear
+  # ============================================================
+  verify:
+    name: Gates
+    uses: ./.github/workflows/ci.yml
+
+  # ============================================================
+  #  2. Build the artifacts, verify them, publish them
+  # ============================================================
+  release:
+    name: Build and publish
+    needs: verify
+    runs-on: windows-latest
+    permissions:
+      # Only this job writes, and only to create the release.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip -r requirements-dev.txt
+
+      # VERSION is the single source every artifact is stamped from, and
+      # the tag is the one thing in a release that is typed by hand. They
+      # are therefore the one pair that can disagree.
+      #
+      # A mismatch is not cosmetic. build_release.ps1 names the installer
+      # PULSE_Setup_v<VERSION>.exe from the FILE, while updater.py reads
+      # the release's tag_name to decide whether an update is available -
+      # so a v10.11.0 tag on a 10.10.0 tree publishes an asset the updater
+      # offers as 10.11.0 and installs as 10.10.0, and the next check
+      # offers it again, forever.
+      - name: Check the tag against VERSION
+        shell: powershell
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -TotalCount 1).Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "VERSION is '$version'; it must be MAJOR.MINOR.PATCH."
+            exit 1
+          }
+          Write-Output "VERSION file: $version"
+          "PULSE_VERSION=$version" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+            Write-Output "tag:          $tag"
+            if ($tag -ne "v$version") {
+              Write-Error "Tag '$tag' does not match VERSION '$version' (expected 'v$version'). Move the tag or correct VERSION; do not publish them out of step."
+              exit 1
+            }
+            "PULSE_TAG=$tag" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          }
+          else {
+            Write-Output "tag:          (none - dry run, nothing will be published)"
+          }
+
+      # windows-latest has shipped Inno Setup for several image generations,
+      # but that is an implementation detail of somebody else's image and
+      # not a guarantee. Resolve it the same way build_release.ps1 does,
+      # and install it only if it is genuinely absent.
+      - name: Ensure Inno Setup 6
+        shell: powershell
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          )
+          $found = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if ($found) {
+            Write-Output "ISCC.exe already present: $found"
+          }
+          else {
+            Write-Output "ISCC.exe not on this image; installing Inno Setup."
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Inno Setup install failed ($LASTEXITCODE)."
+              exit 1
+            }
+          }
+
+      # The whole build, by the same entry point a developer uses. Its own
+      # preflight re-checks the version wiring, and it throws on a missing
+      # payload rather than shipping a bundle with a hole in it.
+      #
+      # Unsigned, and that is the honest state of things: signing needs a
+      # certificate chained to a CA in Microsoft's trust program, which
+      # this project does not have (README, "SmartScreen and Smart App
+      # Control"). When one exists, add PULSE_SIGN_THUMBPRINT to the
+      # environment here and the script signs both artifacts with no
+      # further change - it already reads that variable.
+      - name: Build release artifacts
+        shell: powershell
+        run: .\tools\build_release.ps1
+
+      # THE PUBLISH STEP CANNOT BE THE FIRST THING THAT LOOKS AT THESE
+      # FILES. updater.py refuses to execute any download whose digest is
+      # not listed in SHA256SUMS, so a release published without that file
+      # - or with one naming a different filename than the asset beside it
+      # - is a release every existing install silently declines. That
+      # failure is invisible from the releases page and shows up only as
+      # "no update available" on other people's machines.
+      - name: Verify what is about to be published
+        shell: powershell
+        run: |
+          $version = $env:PULSE_VERSION
+          $setup = "dist\PULSE_Setup_v$version.exe"
+          $sums = 'dist\SHA256SUMS'
+
+          foreach ($path in @($setup, $sums)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              Write-Error "The build did not produce $path."
+              exit 1
+            }
+          }
+
+          $name = Split-Path -Leaf $setup
+          $actual = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          $listed = $null
+          foreach ($line in @(Get-Content -LiteralPath $sums)) {
+            if ($line.Trim() -match '^([0-9a-fA-F]{64})\s+(.+)$') {
+              if ($Matches[2].Trim() -eq $name) { $listed = $Matches[1].ToLowerInvariant() }
+            }
+          }
+          if (-not $listed) {
+            Write-Error "SHA256SUMS does not list '$name'. The in-app updater would decline this release."
+            exit 1
+          }
+          if ($listed -ne $actual) {
+            Write-Error "SHA256SUMS lists $listed for '$name' but the file hashes to $actual."
+            exit 1
+          }
+
+          $size = (Get-Item -LiteralPath $setup).Length / 1MB
+          Write-Output ("installer  {0}  ({1:N1} MB)" -f $name, $size)
+          Write-Output "sha256     $actual"
+          Write-Output "SHA256SUMS agrees with the artifact beside it."
+
+      # Kept whether or not this run publishes: on a dry run they are the
+      # only output, and on a real one they outlive a deleted release.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: pulse-setup-v${{ env.PULSE_VERSION }}
+          path: |
+            dist/PULSE_Setup_v*.exe
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+      # The release body is the CHANGELOG section for this version, not a
+      # generated commit list: the changelog is where the reasoning lives,
+      # and a release that says something different from it is a second
+      # account of the same change.
+      #
+      # Matched on "## [X.Y.Z]" alone - the heading continues with an
+      # em-dash and a date, which must not appear in this file.
+      - name: Extract the changelog section
+        shell: powershell
+        run: |
+          $version = $env:PULSE_VERSION
+          $lines = Get-Content -LiteralPath CHANGELOG.md -Encoding UTF8
+          $start = -1
+          $end = $lines.Count
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s+\[' + [regex]::Escape($version) + '\]') { $start = $i; break }
+          }
+          if ($start -lt 0) {
+            Write-Error "CHANGELOG.md has no section for $version. Add one before tagging."
+            exit 1
+          }
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s+\[') { $end = $i; break }
+          }
+          # A descending range is a real hazard here: PowerShell reads
+          # ($start+1)..($end-1) backwards when the section is empty, which
+          # would reverse the notes instead of failing.
+          if ($end -le ($start + 1)) {
+            Write-Error "The CHANGELOG.md section for $version is empty."
+            exit 1
+          }
+          $body = $lines[($start + 1)..($end - 1)]
+          $notes = @()
+          $notes += $body
+          $notes += ''
+          $notes += '---'
+          $notes += ''
+          $notes += '### Verify your download'
+          $notes += ''
+          $notes += 'Both files below are release assets. Check the installer against the digest before running it:'
+          $notes += ''
+          $notes += '```powershell'
+          $notes += "Get-FileHash .\PULSE_Setup_v$version.exe -Algorithm SHA256"
+          $notes += '```'
+          $notes += ''
+          $notes += 'The digest must match the line for that filename in `SHA256SUMS`. The in-app updater performs the same check automatically and refuses any download it cannot verify.'
+          $notes += ''
+          $notes += 'Releases are unsigned, so Windows SmartScreen will warn on first run. See [SmartScreen and Smart App Control](https://github.com/Humam-Taibeh/Pulse#-smartscreen-and-smart-app-control) in the README.'
+          $out = Join-Path (Get-Location).Path 'release-notes.md'
+          [System.IO.File]::WriteAllLines($out, $notes, (New-Object System.Text.UTF8Encoding($false)))
+          Write-Output "Release notes: $($notes.Count) line(s) from the $version section."
+
+      # gh is preinstalled on GitHub-hosted runners. Used in preference to
+      # a third-party publish action on purpose: this is the step that
+      # hands the token that can write to the repository to something, and
+      # the fewer things that is, the better - which is the same reasoning
+      # the rest of this project applies to what it will execute.
+      - name: Publish the release
+        if: github.event_name == 'push'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = $env:PULSE_VERSION
+          $tag = $env:PULSE_TAG
+          gh release create $tag `
+            "dist\PULSE_Setup_v$version.exe" `
+            'dist\SHA256SUMS' `
+            --title "Pulse v$version" `
+            --notes-file release-notes.md `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "gh release create failed ($LASTEXITCODE)."
+            exit 1
+          }
+          Write-Output "Published $tag with the installer and SHA256SUMS."
+
+      - name: Dry run summary
+        if: github.event_name != 'push'
+        shell: powershell
+        run: |
+          Write-Output "Dry run: the artifacts above were built and verified but NOT published."
+          Write-Output "Push a tag matching v$env:PULSE_VERSION to publish them."

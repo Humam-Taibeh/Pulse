@@ -467,6 +467,9 @@ if (-not $SkipInstaller) {
     Write-Host ''
     Write-Host '    Next:' -ForegroundColor Yellow
     Write-Host "      git tag -a v$Version -m 'PULSE v$Version'  &&  git push origin v$Version"
-    Write-Host '      Attach the installer AND SHA256SUMS to the GitHub release —'
-    Write-Host '      the updater declines any download it cannot verify.'
+    Write-Host ''
+    Write-Host '      That tag is the whole release procedure. .github/workflows/release.yml'
+    Write-Host '      re-runs the gates, rebuilds these same artifacts on a clean runner and'
+    Write-Host '      publishes them with SHA256SUMS attached. The files above are for local'
+    Write-Host '      verification; they are not what ships.'
 }
