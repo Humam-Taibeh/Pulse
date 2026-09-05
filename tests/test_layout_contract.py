@@ -24,7 +24,7 @@ import os
 import re
 
 import pytest
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QWidget
 
 from conftest import settle
 from frontend import theme as TH
@@ -226,9 +226,18 @@ def test_the_radius_ramp_is_exactly_three_tiers():
     `control`, `plaque` and `card` all resolving to 12 is the scale
     asserting that a button, an icon well and a card ARE the same tier,
     which is a statement the old ramp had no way to make.
+
+    v16 MOVED THE TOP STEP, 16 -> 20, and this test moved with it rather
+    than being relaxed: what it pins is that there are exactly three
+    values and which three they are. 16 sat only 4px above the surface
+    tier, which is the same "below the threshold at which a difference
+    reads as a decision" this test's own premise rejects — a 900px dialog
+    panel holding a column of 12px rows was drawing its container corner
+    at almost the rows' corner. 20 puts the step back, and stays an
+    8-multiple so the ramp is still 8/12/20 rather than 8/12/18.
     """
     tiers = sorted(set(TH.RADIUS.values()))
-    assert tiers == [8, 12, 16], (
+    assert tiers == [8, 12, 20], (
         f"the radius ramp is back to {len(tiers)} values {tiers} — see the "
         "note on TH.RADIUS for why three is the whole point")
 
@@ -1805,42 +1814,53 @@ class TestChipStrip:
         dialog.deleteLater()
         qapp.processEvents()
 
-    def test_the_filter_field_has_its_own_row(self, window, qapp):
-        """The field and the tabs are TWO rows, and this is the assertion
-        that used to say the opposite.
+    def test_the_tab_strip_spans_the_content_column(self, window, qapp):
+        """The strip is the dialog's ONE narrowing control and takes the
+        whole content width.
 
-        They shared one line, with the field pinned to the right of a
-        SCROLLING strip. A scroll area takes the width it is given and
-        reports overflow instead of asking for more, so the two never
-        competed honestly: the strip surrendered the field's ~190px and
-        put a tab under the scrollbar at every window size, while the field
-        itself was 180px on a panel three times that wide. Both are fixed
-        by the split, and both would come back the moment someone merged
-        the rows again — so what is pinned here is the separation itself,
-        the field spanning the content width, and the two never overlapping.
+        This assertion used to be about a "Filter apps…" field instead —
+        first that the field and the strip shared a row (they did, and it
+        broke both: a scroll area takes the width it is given and reports
+        overflow rather than asking for more, so the strip silently
+        surrendered the field's ~190px and put a tab under the scrollbar at
+        every window size), then that they were two rows. The field is
+        gone entirely now — see TestTheCatalogHasOneNarrowingControl in
+        test_catalog_pillars.py — so what is left to pin is that nothing
+        else has moved back onto the strip's line to take width off it
+        again.
         """
         dialog = dict(_dialog_specs(window))["SoftwareCatalogDialog"]()
         dialog.show()
         qapp.processEvents()
         strip = self._strip(dialog)
-        field = dialog._search
+        body = dialog.panel.layout()
 
-        field_rect = field.rect().translated(
-            field.mapTo(dialog.panel, field.rect().topLeft()))
         strip_rect = strip.rect().translated(
             strip.mapTo(dialog.panel, strip.rect().topLeft()))
-        assert not field_rect.intersects(strip_rect), (
-            f"the filter field {field_rect} overlaps the tab strip "
-            f"{strip_rect} — they are back on one row")
-        assert field_rect.bottom() <= strip_rect.top(), (
-            "the filter field is not above the tab strip")
-        assert field.width() == strip.width(), (
-            f"the field is {field.width()}px against a {strip.width()}px "
-            "strip — it no longer spans the content column")
+        siblings = [w for w in dialog.panel.findChildren(QWidget)
+                    if w.isVisible() and w is not strip
+                    and not strip.isAncestorOf(w)
+                    and w.parent() is dialog.panel]
+        overlapping = [
+            w for w in siblings
+            if strip_rect.intersects(w.rect().translated(
+                w.mapTo(dialog.panel, w.rect().topLeft())))]
+        assert not overlapping, (
+            f"{overlapping} share the tab strip's row and take width from it")
+
+        # contentsRect(), not width(): the panel paints a 1px QSS border,
+        # which Qt takes out of the layout's usable area before the
+        # dialog_body margins are applied. Deriving from the raw width
+        # measures a column two pixels wider than any child can ever be.
+        margins = body.contentsMargins()
+        content_w = (dialog.panel.contentsRect().width()
+                     - margins.left() - margins.right())
+        assert strip.width() == content_w, (
+            f"the strip is {strip.width()}px inside a {content_w}px content "
+            "column — something is still eating its width")
         tab = next(iter(dialog._tab_buttons.values()))
-        assert tab.height() == field.height(), (
-            "a tab pill and the filter field are both controls and must "
-            "share one height")
+        assert tab.height() == TH.CONTROL_H, (
+            "a tab pill is not the app's one primary-control height")
         dialog.reject()
         dialog.deleteLater()
         qapp.processEvents()

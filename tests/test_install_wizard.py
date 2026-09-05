@@ -1,22 +1,36 @@
 """
 tests/test_install_wizard.py
 
-THE SINGLE-APP MODAL OFFERS ONE ACTION AND ONE ESCAPE HATCH.
+THE SINGLE-APP MODAL OFFERS ONE ACTION AND ONE ESCAPE HATCH — AND IT IS
+REACHED FROM ONE PLACE.
 
-ToolInstallWizardDialog is what a catalog row's "⋯", an Update Center
-row's "⋯" and the Edge/OneDrive restore flow all open. It used to present
-three equal GlassCards — "One-Click Automated Install", "Official Download
-Link", "Local File / Manual Selection" — and the shape was the problem.
+ToolInstallWizardDialog is what the Edge / OneDrive / Store RESTORE cards
+open. It used to present three equal GlassCards — "One-Click Automated
+Install", "Official Download Link", "Local File / Manual Selection" — and
+the shape was the problem.
 
-Every tool this dialog opens for HAS a working winget package: that is the
-entry condition, since it is only ever reached from a catalog row, an
-update row, or a bundled-app restore. So the automated install is the
-right answer in every case, and presenting it as one of three peers made a
-solved problem look like an open question. Path C was worse than redundant:
-it was the only route in the app that ran an arbitrary executable the
-engine had never seen, offered to a user who would first have had to find,
-download and remember the location of an installer the dialog was about to
-fetch for them.
+Every tool this dialog opens for HAS a working winget package, so the
+automated install is the right answer in every case, and presenting it as
+one of three peers made a solved problem look like an open question. Path C
+was worse than redundant: it was the only route in the app that ran an
+arbitrary executable the engine had never seen, offered to a user who would
+first have had to find, download and remember the location of an installer
+the dialog was about to fetch for them.
+
+THE TWO ROW CALLERS ARE GONE, and that is v16 rather than the change this
+file was written for. A catalog row's "⋯" and an Update Center row's "⋯"
+both opened this sheet, over lists whose every row already installs with
+winget when you tick it and press Deploy — so one of the sheet's two
+options was the row's own checkbox restated as a button, and the other was
+the only thing the sheet added, three clicks deep. Worse, accepting it
+meant "clear every tick, tick this one, deploy": a "⋯" could silently
+discard a selection the user had spent a minute building. Both rows now
+carry a direct link button instead (widgets.open_official_page, pinned by
+test_dialogs.py).
+
+A RESTORE CARD IS NOT A ROW, which is why this dialog survives it. Nothing
+has been ticked, there is no list, and "install it for me" and "let me go
+and get it" genuinely are the two answers to the question the card asked.
 
 So the dialog is now a primary BUTTON and a secondary LINK, and the
 local-file path is gone end to end — the card, `mode == "local"`, the
@@ -136,16 +150,22 @@ class TestTwoOptions:
 
     def test_a_missing_url_falls_back_to_a_search(self, wizard, qapp,
                                                   monkeypatch):
-        """The Update Center passes "" — it lists whatever winget reports
-        as upgradable, which is not limited to the catalog and so has no
-        curated URL."""
+        """A restore target with no curated URL still has to go somewhere.
+
+        THROUGH THE SHARED HELPER, which is the assertion that matters:
+        widgets.search_url is what the selector rows' link buttons reach
+        too, so a hand-off has one URL shape in the app rather than one
+        per call site. Spaces come out as '+' — a raw space is what QUrl
+        silently truncates the tail of."""
         from frontend import widgets as W
 
         opened = []
         monkeypatch.setattr(W.QDesktopServices, "openUrl",
                             lambda url: opened.append(url.toString()))
         wizard._choose_url("", "Some Off-Catalog App")
-        assert opened and "Some Off-Catalog App" in opened[0]
+        assert opened == [W.search_url("Some Off-Catalog App")]
+        assert "Some+Off-Catalog+App" in opened[0], (
+            f"the product is not named in the search: {opened[0]}")
 
     def test_no_file_picker_can_be_reached(self, wizard, qapp):
         """The behaviour behind the removed card, not just its label."""

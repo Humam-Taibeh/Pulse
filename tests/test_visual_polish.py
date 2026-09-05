@@ -314,10 +314,14 @@ def test_the_scroll_corner_is_never_platform_grey(mode):
 #: v15.1 renamed the palette's entry. `command_input_qss` styled a bare
 #: QLineEdit; the field is a bordered FRAME around a chromeless input now,
 #: so that it can carry a leading search mark (see palette_field_qss).
+#: v16 dropped `catalog_search_qss` with the field it styled — see
+#: SoftwareCatalogDialog's docstring on why a counted chip strip over
+#: fifteen grouped rows is already the narrowing control, and
+#: TestTheCatalogHasOneNarrowingControl in test_catalog_pillars.py, which
+#: is what keeps the field from coming back.
 _FIELDS = [
     ("sidebar_search_qss", False),
     ("filter_combo_qss", True),
-    ("catalog_search_qss", True),
     ("palette_field_qss", False),
 ]
 
@@ -1210,3 +1214,196 @@ def test_glyph_icon_falls_back_rather_than_rendering_nothing(qapp):
     to draw — None, and the caller keeps its own text. A helper that
     returned an empty QIcon here would leave a silent hole in a control."""
     assert TH.glyph_icon("no-such-glyph", 15, "#ffffff") is None
+
+
+# ============================================================
+#  THE SELECTOR SURFACES  (v16)
+# ============================================================
+class TestEveryListRowHoversTheSameWay:
+    """ONE HOVER RECIPE, and it used to be two.
+
+    The app has exactly two row factories - dev_hub_row_qss (the Software
+    Catalog and the Update Center) and action_row_qss (a hub's offered
+    actions). They disagreed: the action row LIFTED its fill by blending
+    card_hover over card and firmed its border to alpha(accent, 0.40); the
+    selector row REPLACED its fill with card_hover outright and firmed to
+    0.35.
+
+    The replacement was the half that was actually wrong. `background:
+    card_hover` in a :hover rule does not tint the card, it swaps the
+    card's fill for the tint (see theme.blend's note) - so two hovered
+    rows eight pixels apart in one dialog landed on different tones, one
+    of them not even on the card tier any more.
+    """
+
+    @pytest.mark.parametrize("mode", ["dark", "light"])
+    def test_both_factories_lift_the_card_rather_than_replacing_it(self, mode):
+        t = TH.tokens(mode)
+        lifted = TH.row_hover_fill(t)
+        assert lifted != t["card_hover"], (
+            "the lift and the raw tint are the same string; this test "
+            "cannot tell a blend from a swap")
+        for name, qss in (("dev_hub_row_qss", TH.dev_hub_row_qss(t)),
+                          ("action_row_qss",
+                           TH.action_row_qss(t, t["accent"]))):
+            hover = qss.split(":hover")[1]
+            assert lifted in hover, (
+                f"{mode}: {name} does not use the shared hover fill")
+
+    @pytest.mark.parametrize("mode", ["dark", "light"])
+    def test_both_factories_firm_the_border_by_the_same_weight(self, mode):
+        t = TH.tokens(mode)
+        line = TH.alpha(t["accent"], TH.ROW_HOVER_LINE)
+        for name, qss in (("dev_hub_row_qss", TH.dev_hub_row_qss(t)),
+                          ("action_row_qss",
+                           TH.action_row_qss(t, t["accent"]))):
+            hover = qss.split(":hover")[1]
+            assert line in hover, (
+                f"{mode}: {name} firms its hover border by a weight of its "
+                "own instead of ROW_HOVER_LINE")
+
+    def test_a_selector_row_is_a_card_not_a_control(self):
+        """The row named the BUTTON tier. Both resolve to 12 and always
+        have, so nothing was visibly wrong - until v16 moved the ramp's
+        top step and nothing in the file said which tier this surface was
+        meant to follow."""
+        t = TH.tokens("dark")
+        assert f"border-radius: {TH.RADIUS['card']}px" in TH.dev_hub_row_qss(t)
+
+
+class TestTheTwoSelectorListsShareOneRhythm:
+    """UpdateRow is built to be DevHubRow's twin - same checkbox, same
+    trailing link, same caption underneath - so a list of them at a
+    different spacing is exactly the drift that promise exists to prevent.
+
+    THE STEP IS `md` RATHER THAN `sm` because every row in both lists is a
+    BORDERED card: at 8px two neighbouring hairlines read as one 2px rule
+    with a gap in it, which makes the column a stack of rows instead of a
+    set of cards. The extra air comes out of the row the "Filter apps..."
+    field used to occupy, so both lists are still taller than before.
+    """
+
+    def _spacing(self, dialog):
+        from frontend.widgets import DevHubRow, FitScroll, UpdateRow
+        for scroll in dialog.findChildren(FitScroll):
+            host = scroll.widget()
+            if host is None or host.layout() is None:
+                continue
+            rows = host.findChildren(DevHubRow) + host.findChildren(UpdateRow)
+            if rows or scroll is dialog.findChildren(FitScroll)[0]:
+                return host.layout().spacing()
+        return None
+
+    def test_the_catalog_list_breathes(self, window, qapp):
+        from frontend.menu_structure import catalog_section
+        from frontend.widgets import SoftwareCatalogDialog
+        dialog = SoftwareCatalogDialog(
+            window, {"icon": "\U0001f4e6", "title": "Essential Daily Software"},
+            window.theme.t, [catalog_section("essentials")])
+        dialog.show()
+        qapp.processEvents()
+        try:
+            assert self._spacing(dialog) == TH.SPACE["md"]
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_the_update_centre_list_matches_it(self):
+        """Read from the source rather than by opening the dialog: the
+        Update Center builds its list host inside a page that only exists
+        once a scan has run."""
+        import re
+        source = open("src/frontend/widgets.py", encoding="utf-8").read()
+        page = source[source.index("class UpdateCenterDialog"):]
+        page = page[:page.index("\nclass ")]
+        hosts = re.findall(r"scroll_host_layout\([^)]*\)", page)
+        assert hosts, "the Update Center no longer builds a scroll host"
+        assert all('"md"' in call for call in hosts), (
+            f"the Update Center's list rhythm disagrees with the catalog's: "
+            f"{hosts}")
+
+
+class TestTheFrostIsGlassNotAScreenshot:
+    """The backdrop blur, measured on the thing it actually has to erase.
+
+    Two passes were enough to leave no visible TILE GRID, which is what
+    they were raised to fix. What they left was STRUCTURE: the hairline
+    edges of the app behind the sheet - a card border, the sidebar's lit
+    rail, a column of nav entries - survived as recognisable smears, so
+    the backdrop read as a dimmed screenshot.
+
+    Measured rather than asserted as a constant, so lowering the passes
+    has to be argued with a number rather than typed.
+    """
+
+    @staticmethod
+    def _chrome(w=220, h=130):
+        """A synthetic frame of app chrome: a sidebar, a column of nav
+        hairlines, a grid of card borders. Hairlines rather than blocks
+        because a 1px edge is precisely what a box blur is worst at
+        removing and precisely what makes a backdrop legible."""
+        from PySide6.QtGui import QColor, QImage, QPainter, QPen
+        image = QImage(w, h, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#0b0d11"))
+        p = QPainter(image)
+        p.fillRect(0, 0, 34, h, QColor("#16181d"))
+        p.setPen(QPen(QColor("#f0f2f5"), 1))
+        for y in range(10, h, 9):
+            p.drawLine(4, y, 30, y)
+        for y in range(8, h - 20, 26):
+            p.drawRect(44, y, 70, 20)
+            p.drawRect(126, y, 80, 20)
+        p.end()
+        return image
+
+    @staticmethod
+    def _edge_energy(image):
+        """Mean absolute horizontal step, in 0-255 units. High for crisp
+        chrome, low for glass."""
+        total = 0
+        count = 0
+        for y in range(image.height()):
+            row = [image.pixelColor(x, y).red()
+                   for x in range(image.width())]
+            total += sum(abs(a - b) for a, b in zip(row, row[1:]))
+            count += len(row) - 1
+        return total / count
+
+    def test_each_pass_removes_structure_and_the_count_is_the_one_shipped(
+            self, qapp):
+        from frontend.widgets import PulseDialog
+
+        image = self._chrome()
+        raw = self._edge_energy(image)
+        assert raw > 4.0, "the fixture is not sharp enough to prove anything"
+
+        residual = []
+        current = image
+        for _ in range(PulseDialog._BLUR_PASSES + 1):
+            current = PulseDialog._box_blur(current)
+            residual.append(self._edge_energy(current))
+
+        assert residual == sorted(residual, reverse=True), (
+            f"a blur pass sharpened the capture: {residual}")
+        shipped = residual[PulseDialog._BLUR_PASSES - 1]
+        assert shipped <= 0.32 * raw, (
+            f"the shipped {PulseDialog._BLUR_PASSES} passes leave "
+            f"{shipped:.2f} of {raw:.2f} - the chrome behind the sheet is "
+            "still individually legible")
+
+    def test_three_passes_beat_the_two_that_shipped_before(self, qapp):
+        """THE REGRESSION GUARD, and the reason this is a measurement
+        rather than `assert _BLUR_PASSES == 3`: what matters is that the
+        shipped count clears a bar two passes could not."""
+        from frontend.widgets import PulseDialog
+
+        image = self._chrome()
+        two = image
+        for _ in range(2):
+            two = PulseDialog._box_blur(two)
+        two_energy = self._edge_energy(two)
+
+        shipped = image
+        for _ in range(PulseDialog._BLUR_PASSES):
+            shipped = PulseDialog._box_blur(shipped)
+        assert self._edge_energy(shipped) < two_energy * 0.95, (
+            "the shipped blur is no softer than the two passes it replaced")

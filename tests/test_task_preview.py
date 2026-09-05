@@ -1,40 +1,41 @@
 """
-Preview: showing what a destructive task WOULD do, before it does it.
+Preview: the engine can simulate a task, and the CONFIRMATION is not where
+that is offered.
 
-THE CAPABILITY ALREADY EXISTED AND WAS NOT REACHABLE.
+THE CAPABILITY IS REAL AND STAYS REACHABLE.
 core.ps1 has been fully -WhatIf aware since v6: $Script:DryRun gates every
 mutation primitive, Invoke-GuiTask reports a simulated pass as
 "##PULSE##SUCCESS|[DRY-RUN] ... (simulated - no changes were made)", and
 Invoke-Mutation logs a "[WHATIF] ..." line for each write it did not make.
-Terminal mode exposes it (`core.ps1 -WhatIf`) and playbooks expose it (the
-run dialog's Preview mode). PowerShellTask has taken a `dry_run` flag the
-whole time and appends -WhatIf when it is set.
+Terminal mode exposes it (`core.ps1 -WhatIf`), playbooks expose it (the run
+dialog's Preview/Run pair), and PowerShellTask appends -WhatIf whenever its
+`dry_run` flag is set. _start_task still takes and threads that flag.
 
-The GUI's individual tasks were the one caller that never passed it.
-_start_playbook threaded dry_run through; _start_task did not, so the
-operations with the least reversible consequences - Remove Edge, Purge
-OneDrive, Remove Windows.old - offered a confirmation that could describe
-INTENT and never EFFECT.
+WHAT WAS REMOVED, AND WHY IT WAS THE WRONG SURFACE
+    ConfirmDialog carried a third button, "Preview", styled as a peer of
+    Cancel and Proceed and accepting like Proceed, with a `preview`
+    attribute the caller read to decide which kind of run to start.
 
-WHERE THE ACTION LIVES, AND WHY NOT ON THE CARD
-    In the ConfirmDialog, which is already the decision point and already
-    exists for exactly this set of tasks. A second button on the card face
-    would put a visual exception into a grid whose uniformity GlassCard
-    works hard to hold, and would need its own layout-contract carve-out;
-    the dialog needs neither and is where the question is actually being
-    asked.
+    A confirmation appears at the moment the user has already decided and
+    is being asked to say so. A third control there does not inform that
+    decision - it reopens it, and it does so as one of three same-sized
+    buttons, two of which accept. The most common instance in the app made
+    it plainest: the Update Center's "Some of these apps are running"
+    offered to SIMULATE a winget upgrade the user had already queued and
+    ticked, which is an answer to a question nobody asked.
 
-WHICH TASKS OFFER IT
-    Those carrying `confirm: True` - the app's existing "this warrants a
-    decision" marker, which is a superset of `danger: True`. No new
-    taxonomy to keep in step: if Pulse already stops to ask, showing what
-    the answer commits to is exactly the help that is missing.
+    A playbook is the opposite case and keeps its Preview: its whole
+    subject is an ordered sequence you would reasonably want to rehearse
+    before running, and PlaybookDialog offers it as the safe half of a
+    pair rather than as a third wheel on a yes/no.
 
-WHAT A PREVIEW MUST NOT DO
-    Bank history. _finish_common records the run's wall-clock into the
-    per-task duration average, and a simulated pass is not a measurement
-    of the real thing - it is faster by exactly the work it skipped. The
-    same reasoning the cancelled-run path already documents.
+WHAT THIS FILE PINS NOW
+    That the confirmation is a clean binary; that no accepting path can
+    silently start a simulation; that the engine plumbing behind the flag
+    is intact and still refuses to bank a simulated run as a real
+    measurement; and that every dispatch route through request_task still
+    reaches _start_task, which is the regression that got past this file
+    the last time the flag moved.
 """
 from __future__ import annotations
 
@@ -61,75 +62,98 @@ PLAIN = {"icon": "⚡", "title": "Ultimate Power Plan",
          "task": "UltimatePowerPlan"}
 
 
-class TestTheDialogOffersIt:
-    def test_a_destructive_task_offers_preview(self, window, qapp):
-        dialog = ConfirmDialog(window, DESTRUCTIVE, window.theme.t)
-        try:
-            assert "Preview" in _buttons(dialog), (
-                "the least reversible task in the app still asks for "
-                "confirmation without offering to show what it would do")
-        finally:
-            dialog.deleteLater()
-            qapp.processEvents()
-
-    def test_every_confirmed_task_offers_it(self, window, qapp):
-        """The gate is `confirm`, not `danger`: if Pulse already stops to
-        ask, the preview is what informs the answer."""
-        dialog = ConfirmDialog(window, CONFIRMED, window.theme.t)
-        try:
-            assert "Preview" in _buttons(dialog)
-        finally:
-            dialog.deleteLater()
-            qapp.processEvents()
-
-    def test_the_three_buttons_read_in_order(self, window, qapp):
-        """Cancel, Preview, Proceed - dialog_footer right-aligns with the
-        primary last, so the destructive commitment stays the final step
-        rather than sitting between two safe ones."""
+class TestTheConfirmationIsBinary:
+    def test_a_destructive_task_offers_two_answers(self, window, qapp):
+        """Cancel and Proceed, in that order - dialog_footer right-aligns
+        with the primary last, so the commitment is the final step."""
         dialog = ConfirmDialog(window, DESTRUCTIVE, window.theme.t)
         try:
             labels = [b.text() for b in dialog.findChildren(QPushButton)]
-            assert labels == ["Cancel", "Preview", "Proceed"], labels
+            assert labels == ["Cancel", "Proceed"], labels
+        finally:
+            dialog.deleteLater()
+            qapp.processEvents()
+
+    def test_a_merely_confirmed_task_offers_two_as_well(self, window, qapp):
+        """The gate for the third button was `confirm`, a superset of
+        `danger`, so this is where most of them appeared."""
+        dialog = ConfirmDialog(window, CONFIRMED, window.theme.t)
+        try:
+            labels = [b.text() for b in dialog.findChildren(QPushButton)]
+            assert labels == ["Cancel", "Proceed"], labels
+        finally:
+            dialog.deleteLater()
+            qapp.processEvents()
+
+    def test_the_running_apps_prompt_is_binary_too(self, window, qapp):
+        """THE INSTANCE THE REMOVAL WAS FOR, built the way the Update
+        Center builds it: a ConfirmDialog over apps that must be closed
+        before they can be replaced. 'Preview' there offered to simulate
+        an upgrade the user had already queued and ticked."""
+        item = {
+            "icon": "\u26a0\ufe0f",
+            "title": "Some of these apps are running",
+            "desc": ("Visual Studio Code is open right now. Windows cannot "
+                     "replace files that are in use, so this app will be "
+                     "closed before the update is applied."),
+        }
+        dialog = ConfirmDialog(window, item, window.theme.t)
+        try:
+            labels = [b.text() for b in dialog.findChildren(QPushButton)]
+            assert labels == ["Cancel", "Proceed"], labels
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
 
-class TestTheDialogReportsWhichWasChosen:
-    def test_preview_accepts_and_flags_itself(self, window, qapp):
+class TestNoAcceptingPathSimulates:
+    def test_the_dialog_reports_no_preview_outcome(self, window, qapp):
+        """`preview` was the attribute request_task read on the line after
+        exec() returned. An attribute that lingers at False is an entry
+        point waiting to be re-armed by a caller that finds it."""
         dialog = ConfirmDialog(window, DESTRUCTIVE, window.theme.t)
         try:
-            assert dialog.preview is False, "preview is set before it is asked for"
-            _buttons(dialog)["Preview"].click()
-            assert dialog.preview is True
-            assert dialog.result() == QDialog.DialogCode.Accepted, (
-                "Preview must accept — the caller starts a run either way, "
-                "and only `preview` decides which kind")
+            assert not hasattr(dialog, "preview"), (
+                "the preview outcome survives on the dialog")
+            assert not hasattr(dialog, "_choose_preview")
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_proceed_is_not_a_preview(self, window, qapp):
+    def test_proceed_accepts(self, window, qapp):
         dialog = ConfirmDialog(window, DESTRUCTIVE, window.theme.t)
         try:
             _buttons(dialog)["Proceed"].click()
-            assert dialog.preview is False, (
-                "Proceed flagged itself as a preview — the real run would "
-                "silently simulate and change nothing")
             assert dialog.result() == QDialog.DialogCode.Accepted
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_cancel_is_neither(self, window, qapp):
+    def test_cancel_rejects(self, window, qapp):
         dialog = ConfirmDialog(window, DESTRUCTIVE, window.theme.t)
         try:
             _buttons(dialog)["Cancel"].click()
-            assert dialog.preview is False
             assert dialog.result() == QDialog.DialogCode.Rejected
         finally:
             dialog.deleteLater()
             qapp.processEvents()
+
+    def test_an_accepted_confirmation_starts_a_real_run(self, window,
+                                                        monkeypatch):
+        """END TO END, and the half a dialog-only assertion cannot reach:
+        the dispatch that used to read `dialog.preview` must now start a
+        real run whatever the user pressed."""
+        started = {}
+        monkeypatch.setattr(
+            window, "_start_task",
+            lambda *a, **k: started.update({"args": a, "kwargs": k}))
+        monkeypatch.setattr(
+            window, "_exec_dialog", lambda d: QDialog.DialogCode.Accepted)
+        monkeypatch.setattr(window, "is_admin", True)
+        window.request_task(dict(DESTRUCTIVE), None)
+        assert started, "an accepted confirmation started nothing"
+        assert started["kwargs"].get("dry_run", False) is False, (
+            "the dispatch still asks for a simulated run")
 
 
 class TestTheFlagReachesTheEngine:
@@ -292,10 +316,13 @@ class TestEveryDispatchPathStillWorks:
 
     def test_an_unconfirmed_task_dispatches(self, window, monkeypatch):
         """The NameError path: no confirm branch runs, so nothing bound
-        `dry_run` before it was passed."""
+        `dry_run` before it was passed. request_task no longer passes the
+        argument at all - _start_task's own default is what makes the run
+        real - so what is checked is that it did not ask for a simulation,
+        by argument or by default."""
         started = self._dispatch(window, monkeypatch, PLAIN)
         assert started, "a plain task never reached _start_task"
-        assert started["kwargs"].get("dry_run") is False
+        assert started["kwargs"].get("dry_run", False) is False
 
     def test_a_confirmed_task_dispatches_when_accepted(self, window,
                                                        monkeypatch):

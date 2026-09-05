@@ -137,12 +137,29 @@ class PulseDialog(QDialog):
     _BLUR_DOWNSCALE = 6
 
     #: Box-blur passes applied to the small capture BEFORE it is scaled
-    #: back up. Two passes of a separable 3x3 box over a ~220x130 image is
-    #: sub-millisecond and approximates a Gaussian well enough that the
-    #: result has no directional structure left to magnify — which is what
-    #: lets the downscale factor come down without the frost turning back
-    #: into a legible screenshot.
-    _BLUR_PASSES = 2
+    #: back up. Each pass is a separable 3x3 box over a ~220x130 image,
+    #: sub-millisecond, and together they approximate a Gaussian well
+    #: enough that the result has no directional structure left to
+    #: magnify — which is what lets the downscale factor come down without
+    #: the frost turning back into a legible screenshot.
+    #:
+    #: 2 -> 3, and it is the FROST that wanted it rather than the tiling.
+    #: Two passes already left no visible grid, which is what they were
+    #: raised to fix; what they did leave was STRUCTURE — the hairline
+    #: edges of the app behind the sheet (a card border, the sidebar's lit
+    #: rail, a row of nav entries) survived as recognisable smears, so the
+    #: backdrop read as a dimmed screenshot rather than as frosted glass.
+    #:
+    #: MEASURED, and stated as measured rather than as an improvement in
+    #: principle: on a synthetic frame of app chrome the mean horizontal
+    #: edge energy runs 5.41 raw, 1.86 after two passes and 1.58 after
+    #: three — a further 15%, not a halving. That is a modest gain bought
+    #: for a third 220x130 scale round-trip on the one frame already
+    #: hidden behind the 130 ms entrance fade, which is why it is worth
+    #: taking and why it stops here rather than at four or five.
+    #: test_visual_polish measures it rather than asserting the constant,
+    #: so raising it back would have to be argued rather than typed.
+    _BLUR_PASSES = 3
 
     def __init__(self, parent: QWidget | None):
         super().__init__(parent)
@@ -4065,27 +4082,33 @@ class ActionRow(QFrame):
 #  DIALOGS
 # ============================================================
 class ConfirmDialog(PulseDialog):
-    """"Are you sure?", with the option to be shown rather than told.
+    """"Are you sure?" — Cancel or Proceed, and nothing else.
 
-    THE PREVIEW BUTTON IS THE POINT OF THIS DIALOG NOW. A confirmation can
-    describe INTENT — "Removes Edge and backs up its data first" — and
-    cannot describe EFFECT, which for the least reversible operations in
-    the app is the half the user actually needs. The engine has been able
-    to answer that since v6 ($Script:DryRun gates every mutation primitive
-    and Invoke-Mutation logs a "[WHATIF] Would ..." line for each write it
-    does not make); nothing in the GUI's single-task path ever asked it.
+    A BINARY QUESTION GETS TWO ANSWERS. This dialog carried a third
+    button, "Preview", which accepted like Proceed and set a `preview`
+    flag the caller read to append -WhatIf. The capability it reached is
+    real and stays reachable — the engine has been -WhatIf aware since v6,
+    and PlaybookDialog still offers it as the safe half of its own
+    Preview/Run pair, which is a dialog whose entire subject is a sequence
+    you want to rehearse.
 
-    Preview ACCEPTS rather than taking a third result code: both buttons
-    start a run, and `preview` is what decides which kind. The caller
-    reads that attribute on the next line, which is the contract
-    _exec_dialog's deleteLater depends on.
+    A CONFIRMATION IS NOT THAT DIALOG. It appears at the moment the user
+    has already decided and is being asked to say so, and a third control
+    at that moment does not inform the decision — it reopens it. Worse, it
+    reopened it AS A BUTTON SIZED LIKE THE OTHER TWO: three peers on one
+    footer, two of which accept and only one of which does the thing the
+    row was pressed for. The most common instance in the app is the
+    Update Center's "Some of these apps are running", where "Preview" over
+    a winget upgrade meant simulating a download the user had already
+    queued — an answer to a question nobody had asked, sitting between
+    Cancel and Proceed.
+
+    So the footer is Cancel · Proceed, right-aligned with the commitment
+    last, and Accepted has exactly one meaning again.
     """
 
     def __init__(self, parent: QWidget, item: dict, t: dict):
         super().__init__(parent)
-        #: True when the user asked to SEE the task rather than run it.
-        #: Read by main.request_task immediately after exec() returns.
-        self.preview = False
         danger = bool(item.get("danger"))
         accent = t["err"] if danger else t["accent"]
         panel = _dialog_chrome(self, t, accent, width=440)
@@ -4125,25 +4148,9 @@ class ConfirmDialog(PulseDialog):
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
 
-        # Styled as a SECONDARY action, sharing the cancel treatment: it is
-        # the safe choice, and giving it the accent would put two primaries
-        # on one row and make the destructive one compete for the eye.
         # dialog_footer right-aligns in the order given with the primary
-        # last, so this reads Cancel · Preview · Proceed — the commitment
-        # stays the final step rather than sitting between two safe ones.
-        preview = QPushButton("Preview")
-        preview.setStyleSheet(TH.dialog_cancel_qss(t))
-        preview.setToolTip(
-            "Run this task in simulation — it reports every change it "
-            "would make and makes none of them.")
-        preview.setAccessibleName("Preview this task without changing anything")
-        preview.clicked.connect(self._choose_preview)
-
-        dialog_footer(lay, cancel, preview, go)
-
-    def _choose_preview(self):
-        self.preview = True
-        self.accept()
+        # last, so this reads Cancel · Proceed.
+        dialog_footer(lay, cancel, go)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -7902,17 +7909,30 @@ class SoftwareCatalogDialog(PulseDialog):
     the user to work untangling it. Nothing here is pre-ticked and the
     deploy button stays inert until something is actually chosen.
 
-TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
-    and the tabs narrow by CATEGORY; they compose, but they no longer
-    share a line. They did, with the field pinned to the right of the
-    scrolling tab strip, and that arrangement broke both of them: a scroll
-    area takes the width it is given and reports overflow rather than
-    asking for more, so the strip simply surrendered the field's 180px and
-    put a tab under the scrollbar at every window size — while the field
-    itself was 180px wide on a panel five times that. See the row's own
-    comment in __init__.
+ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
+    "Filter apps…" field on its own row above the tabs — and removing it
+    is a correction rather than a simplification for its own sake.
 
-    There is no THIRD control. The dialog used to carry a strip of
+    A FIELD EARNS ITS ROW BY THE SIZE OF WHAT IT NARROWS. The Ctrl+K
+    palette filters every leaf item in the app, which is the case a text
+    field is for. A pillar is fifteen to twenty rows, all visible in two
+    or three scrolls, already grouped, and already narrowed by a strip of
+    labelled chips that carries a count on every one of them. Typing four
+    characters to skip one scroll is not a saving; it is a control that
+    exists because catalogs usually have one.
+
+    It also cost more than a row of pixels. The field auto-focused on
+    show, so the dialog opened with the keyboard in a text box rather than
+    on the list — Space could not tick the row under the cursor and the
+    arrow keys did not walk it — and the strip beneath it had to justify a
+    second, contradictory narrowing state (see the header rule in
+    _apply_filter, which is simpler now that a query cannot exist).
+
+    WHAT THE LIST GAINS is the whole of it: the field, its row and the
+    step of air under it come back as list height, which is the one thing
+    a catalog dialog can never have enough of.
+
+    There is no THIRD control either. The dialog used to carry a strip of
     "Java / University Stack" / "AI / Python Stack" / "Web Dev Stack"
     buttons under the tabs; they only applied to one of the five tabs, and
     they answered a question — "which five apps does a Java course need?"
@@ -7936,14 +7956,11 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         self._t = t
         self.selected_ids: list[str] = []
         self._rows: dict[str, DevHubRow] = {}
-        self._tool_meta: dict[str, tuple[str, str]] = {}   # id -> (name, url)
         self._row_tab: dict[str, str] = {}                 # id -> its tab key
-        self._row_haystack: dict[str, str] = {}            # id -> searchable text
         self._dependents: dict[str, list[str]] = {}        # requires_id -> [ids]
         self._headers: list[tuple[QWidget, str, list[str]]] = []  # (w, tab, ids)
         self._tab_buttons: dict[str, QPushButton] = {}
         self._active_tab = self.ALL_KEY
-        self._query = ""
         accent = t["accent"]
 
         # SCOPED TO ONE PILLAR when the caller passes a single section —
@@ -7975,33 +7992,12 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         self._blurb.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._blurb)
 
-        # -- the filter row, then the tab row --------------------
-        # TWO ROWS, and they used to be one. The tabs narrow by CATEGORY,
-        # the field narrows by NAME, and they do compose — "development" +
-        # "sql" is a question neither answers alone — but composing is not
-        # a reason to make them share a line, and sharing one is what broke
-        # both of them.
+        # -- the tab row, and it is the ONLY narrowing control ----
+        # A "Filter apps…" field used to sit on its own row above this
+        # one. See the class docstring for why fifteen grouped rows behind
+        # a counted chip strip do not need a second way to be narrowed,
+        # and for what the dialog got back by dropping it.
         #
-        # The field was a 180px fixed block on the right of a row whose
-        # left-hand item is a SCROLLING STRIP. A scroll area takes whatever
-        # width it is given and reports overflow rather than asking for
-        # more, so the two never competed honestly for space: the strip
-        # simply surrendered ~190px of its own to the field and the fifth
-        # tab went under the scrollbar at every window size, not only at the
-        # narrow ones. Meanwhile the field itself was 180px on a 900px panel
-        # — a search box that could show about twenty characters.
-        #
-        # Split apart, each control gets the full content width: the field
-        # spans the panel, and the strip below it gets ~190px back, which is
-        # roughly one more tab visible before it has to scroll at all.
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("Filter apps…")
-        self._search.setFixedHeight(_CHIP_H)
-        self._search.setClearButtonEnabled(True)
-        self._search.setStyleSheet(TH.catalog_search_qss(t, accent))
-        self._search.textChanged.connect(self._on_query)
-        lay.addWidget(self._search)
-
         # The tabs live in a horizontally scrolling strip, NOT directly in
         # the layout — five labelled pills want ~1300px against a panel that
         # caps at 900, so the strip is what makes the overflow reachable
@@ -8081,7 +8077,13 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
 
         host = QWidget()
         host.setStyleSheet("background: transparent;")
-        host_lay = scroll_host_layout(host, "sm")
+        # "md", not "sm". Every row in this list is a bordered CARD, and
+        # 8px between two bordered surfaces is close enough that the two
+        # hairlines read as one 2px rule with a gap in it — a stack of
+        # rows rather than a column of cards. The step comes out of the
+        # air the filter field used to occupy, so the list is still taller
+        # than it was before both changes.
+        host_lay = scroll_host_layout(host, "md")
 
         for sec in sections:
             for group_title, tools in sec["groups"]:
@@ -8102,15 +8104,12 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
                 header.setStyleSheet(TH.label_qss(t, "section"))
                 host_lay.addWidget(header)
                 self._headers.append((header, tab_key, ids))
-                for app_id, name, desc, url, req_id, req_name in tools:
+                for app_id, name, desc, _url, req_id, req_name in tools:
                     row = DevHubRow(app_id, name, desc, req_id, req_name, t)
                     row.checkbox.toggled.connect(
                         lambda checked, aid=app_id: self._on_row_toggled(aid, checked))
-                    row.options_requested.connect(self._open_tool_wizard)
                     self._rows[app_id] = row
-                    self._tool_meta[app_id] = (name, url)
                     self._row_tab[app_id] = tab_key
-                    self._row_haystack[app_id] = f"{name} {desc} {app_id}".lower()
                     if req_id:
                         self._dependents.setdefault(req_id, []).append(app_id)
                     host_lay.addWidget(row)
@@ -8118,7 +8117,7 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         # Empty state — a filter that matches nothing must say so, for the
         # same reason CategoryPage carries one: a blank list is
         # indistinguishable from a broken dialog.
-        self._empty = QLabel("No apps match that filter.")
+        self._empty = QLabel("No apps in this category.")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet(TH.empty_state_qss(t))
         self._empty.hide()
@@ -8158,7 +8157,7 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
 
         self._set_tab(self.ALL_KEY)
 
-    # -- tab / search filtering ------------------------------------
+    # -- tab filtering ---------------------------------------------
     def _set_tab(self, key: str):
         self._active_tab = key
         accent = self._t["accent"]
@@ -8167,14 +8166,9 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
                 TH.catalog_tab_qss(self._t, accent, tab_key == key))
         self._apply_filter()
 
-    def _on_query(self, text: str):
-        self._query = text.strip().lower()
-        self._apply_filter()
-
     def _row_matches(self, app_id: str) -> bool:
-        if self._active_tab and self._row_tab.get(app_id) != self._active_tab:
-            return False
-        return not self._query or self._query in self._row_haystack.get(app_id, "")
+        return (not self._active_tab
+                or self._row_tab.get(app_id) == self._active_tab)
 
     def _apply_filter(self):
         """Show/hide rows and their headers, then sync the affordances that
@@ -8201,12 +8195,15 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         # switched off; pick a chip and the headers come back, where the
         # single remaining one reads as a caption for the filter.
         #
-        # A SEARCH QUERY DOES NOT SUPPRESS THEM, and that asymmetry is
-        # deliberate. Typing "sql" narrows across every group at once, and
-        # the headers are then the only thing saying which part of the
-        # catalog each surviving row came from — the exact orientation the
-        # chips cannot give, because none of them is pressed.
-        flat = self._active_tab == self.ALL_KEY and not self._query
+        # ONE CONDITION NOW, and that is the second thing dropping the
+        # filter field bought. The rule used to carry an exception — a
+        # typed query kept the headers even on "All", because a query
+        # narrows ACROSS groups with no chip pressed and the headers were
+        # then the only thing saying which part of the catalog a surviving
+        # row came from. With no query there is no such state: the list is
+        # either unfiltered (flat) or filtered by exactly one chip, whose
+        # header reads as that chip's caption.
+        flat = self._active_tab == self.ALL_KEY
         # A header otherwise survives only while at least one of its own
         # rows does — otherwise a filtered list grows orphan titles over
         # empty space.
@@ -8276,7 +8273,7 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         whole catalog — otherwise '5 selected' on a tab showing four rows
         looks like a bug rather than a feature."""
         count = self.checked_count()
-        narrowed = bool(self._active_tab) or bool(self._query)
+        narrowed = bool(self._active_tab)
         self._count_label.setText(
             f"{count} selected across all categories" if count and narrowed
             else f"{count} selected")
@@ -8297,25 +8294,9 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
             return
         self.accept()
 
-    # -- per-tool wizard --------------------------------------------
-    def _open_tool_wizard(self, app_id: str):
-        name, url = self._tool_meta.get(app_id, (app_id, ""))
-        desc = self._rows[app_id].checkbox.toolTip()
-        wizard = ToolInstallWizardDialog(self, app_id, name, desc, url, self._t)
-        if wizard.exec() != QDialog.DialogCode.Accepted:
-            return
-        # Accepted now means exactly one thing (see the wizard's own
-        # docstring): install THIS app. Rejected covers Cancel and the
-        # website hand-off alike, and both leave the catalog untouched.
-        for row in self._rows.values():
-            row.checkbox.setChecked(False)
-        self._rows[app_id].checkbox.setChecked(True)
-        self._accept_selection()
-
     def showEvent(self, e):
         super().showEvent(e)
         _present_dialog(self)
-        self._search.setFocus()
 
 
 # ============================================================
@@ -9788,8 +9769,10 @@ class ToolInstallWizardDialog(PulseDialog):
         self.accept()
 
     def _choose_url(self, url: str, app_name: str):
-        target = url or f"https://www.google.com/search?q={app_name} download"
-        QDesktopServices.openUrl(QUrl(target))
+        # search_url rather than a second f-string: the row buttons that
+        # replaced this dialog in the catalog and the Update Center reach
+        # the same helper, so a hand-off looks the same wherever it starts.
+        QDesktopServices.openUrl(QUrl(url or search_url(app_name)))
         self.reject()
 
     def showEvent(self, e):
@@ -9798,23 +9781,121 @@ class ToolInstallWizardDialog(PulseDialog):
 
 
 # ============================================================
-#  DEV HUB ROW — checkbox + dependency hint + per-tool "..." wizard
+#  THE OFFICIAL-PAGE HAND-OFF  (a selector row's one trailing action)
+# ============================================================
+#: Size of the trailing link button on a selector row. Not CONTROL_H: this
+#: is punctuation at the end of a row, not a control the row is about, and
+#: at 36px square it would out-weigh the checkbox that IS the row's point.
+#: The pair was already 28x24 for the "⋯" it replaced; what changed is the
+#: mark inside it, not its footprint.
+_ROW_LINK_W, _ROW_LINK_H = 28, 24
+
+
+def search_url(app_name: str) -> str:
+    """A web search for `app_name`'s official download page.
+
+    THE LAST RESORT, shared by every hand-off in the app so there is one
+    search-URL shape rather than one per call site. `+` for the spaces
+    because a raw space in a URL is what QUrl silently drops the tail of.
+    """
+    return ("https://www.google.com/search?q="
+            + f"{app_name} official download".replace(" ", "+"))
+
+
+def official_url(app_id: str, app_name: str) -> str:
+    """The page to open for `app_id` — the catalog's curated link when
+    there is one, a web search when there is not.
+
+    The fallback is the Update Center's case and only its case: it lists
+    whatever winget reports as upgradable, which is every installed
+    program rather than the ~45 the catalog curates, so an off-catalog row
+    has no link to carry. A search naming the product is a worse answer
+    than the vendor's own URL and a far better one than a dead button.
+    """
+    return MS.catalog_url(app_id) or search_url(app_name)
+
+
+def open_official_page(app_id: str, app_name: str) -> str:
+    """Hand `app_id`'s download page to the default browser. Returns the
+    URL opened, so a caller (and a test) can see which one it was.
+
+    NO DIALOG, and that is the whole change this function represents. A
+    catalog row's "⋯" and an Update Center row's "⋯" both used to open
+    ToolInstallWizardDialog — a modal offering "Automated Install
+    (winget)" and "Visit Official Website" — over a list whose every row
+    already installs with winget when you tick it and press Deploy. So one
+    of the modal's two options was the row's own checkbox restated as a
+    button, and the other was the only thing the modal added. Pressing the
+    row's button now IS that second option, one click instead of three.
+
+    (ToolInstallWizardDialog itself stays: main.py's bundled-app RESTORE
+    flow reaches it from a card rather than from a row, where "install it
+    for me" and "let me go and get it" genuinely are the two answers and
+    no checkbox has been ticked to imply either.)
+    """
+    url = official_url(app_id, app_name)
+    QDesktopServices.openUrl(QUrl(url))
+    return url
+
+
+def _dress_link_button(button: QPushButton, t: dict) -> None:
+    """Put the OpenInNewWindow mark on a selector row's link button and
+    give it the row's ghost treatment.
+
+    THE GLYPH IS THE BUTTON'S TEXT, not a QIcon, and that is what keeps
+    its hover honest: icon_ghost_button_qss moves `color` from muted to
+    the accent on hover, and QSS colours text — a baked QIcon pixmap would
+    sit at one tone through every state, which on a column of thirty rows
+    is the difference between "the one under my pointer is live" and
+    "these are decorations". The stylesheet supplies the SIZE and the
+    QFont only the family, so the two do not fight (Qt applies stylesheet
+    font properties over the widget font, leaving the family alone).
+
+    Falls back to the emoji automatically: theme.glyph reports whether the
+    OS icon family resolved, and on a machine without it the codepoint
+    would be an empty box.
+    """
+    char, fluent = TH.glyph("openexternal")
+    button.setText(char)
+    if fluent:
+        font = TH.icon_font(TH.ICON["micro"])
+        if font is not None:
+            button.setFont(font)
+    button.setStyleSheet(TH.icon_ghost_button_qss(t, t["accent"]))
+
+
+# ============================================================
+#  DEV HUB ROW — checkbox + dependency hint + official-page link
 # ============================================================
 class DevHubRow(QFrame):
     """One app row inside SoftwareCatalogDialog. Manual-first: unchecked by
     default. `requires_name`, when given, renders a small "needs X" caption
-    — a passive hint, never an auto-check. The "⋯" button opens
-    ToolInstallWizardDialog for just this tool, independent of the
-    checkbox — choosing the install there short-circuits straight to
-    "select only this row and deploy" (see
-    SoftwareCatalogDialog._open_tool_wizard), and the website option hands
-    off to the browser and closes.
+    — a passive hint, never an auto-check.
+
+    TWO CONTROLS, AND THEY ANSWER DIFFERENT QUESTIONS. The checkbox queues
+    this app for the winget deploy; the trailing link button leaves Pulse
+    for the vendor's own download page. Nothing in between.
+
+    There used to be something in between: a "⋯" that opened
+    ToolInstallWizardDialog, a modal whose two options were "Automated
+    Install (winget)" and "Visit Official Website". The first was the
+    checkbox restated as a button — a row you can tick and deploy does not
+    need a private sheet offering to tick and deploy it — and the second
+    was the only thing the modal actually added, three clicks deep. So the
+    button became that option: one press, the browser opens, no sheet.
 
     Still named for the Dev Hub that introduced it: the catalog absorbed
     that hub, and this row is the one selector row shape the whole app
     uses (Update Center's UpdateRow is deliberately built to match)."""
 
-    options_requested = Signal(str)  # app_id
+    #: NO SIGNAL FOR THE LINK, deliberately. Every other affordance on a
+    #: selector row reports upward because the DIALOG owns what happens
+    #: next — a tick changes a count, a deploy collects ids. Opening a
+    #: vendor page changes nothing in the dialog at all, and routing it
+    #: through one bought exactly one thing: a handler that could, and
+    #: did, decide to clear the selection on the way past. The row calls
+    #: open_official_page itself, which resolves the URL from the same
+    #: catalog the dialog was built from.
 
     #: This row rasterises a brand mark at the SCREEN's device-pixel ratio
     #: (utils.appicons.app_icon), so it has to be redrawn when that ratio
@@ -9855,14 +9936,16 @@ class DevHubRow(QFrame):
         row.addWidget(self.checkbox)
         row.addStretch()
 
-        self.options_btn = QPushButton("⋯")
-        self.options_btn.setFixedSize(28, 24)
-        self.options_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.options_btn.setToolTip(
-            "Install options for this tool (automated install, or the "
-            "official website)")
-        self.options_btn.clicked.connect(lambda: self.options_requested.emit(self.app_id))
-        row.addWidget(self.options_btn)
+        self.website_btn = QPushButton()
+        self.website_btn.setFixedSize(_ROW_LINK_W, _ROW_LINK_H)
+        self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.website_btn.setToolTip(
+            f"Open {app_name}'s official download page in your browser")
+        self.website_btn.setAccessibleName(
+            f"Open the official {app_name} download page")
+        self.website_btn.clicked.connect(
+            lambda: open_official_page(self.app_id, self._app_name))
+        row.addWidget(self.website_btn)
         outer.addLayout(row)
 
         self._hint_label: QLabel | None = None
@@ -9876,7 +9959,7 @@ class DevHubRow(QFrame):
     def apply_theme(self, t: dict):
         self.setStyleSheet(TH.dev_hub_row_qss(t))
         self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
-        self.options_btn.setStyleSheet(TH.icon_ghost_button_qss(t, t["accent"]))
+        _dress_link_button(self.website_btn, t)
         # brand marks are recoloured per theme (appicons' contrast guard);
         # shell icons are theme-independent and come straight from cache
         self._icon.setPixmap(
@@ -9900,8 +9983,8 @@ class DevHubRow(QFrame):
 # ============================================================
 class UpdateRow(QFrame):
     """One update candidate, built on the EXACT same structure as
-    DevHubRow (checkbox carries its own label, a '⋯' wizard button sits at
-    the row's right edge, a muted caption line underneath) — so an Update
+    DevHubRow (checkbox carries its own label, a link button sits at the
+    row's right edge, a muted caption line underneath) — so an Update
     Center row and an Essential Apps / Dev Hub row read as one family, not
     two different products with different padding and chrome. Pre-checked,
     same 'curated pack' contract every other selector uses — the scan
@@ -9909,12 +9992,20 @@ class UpdateRow(QFrame):
 
     The whole row is clickable (not just the checkbox) — ticking a box or
     tapping anywhere on the row does the same thing, matching how a native
-    settings list behaves. The '⋯' opens the identical
-    ToolInstallWizardDialog every other app row uses — a silent winget
-    install, or the vendor's official website. The install just narrows
-    the caller's selection down to this one AppId."""
+    settings list behaves. The link button opens the vendor's official
+    download page in the browser, exactly as a catalog row's does, and
+    opens no modal on the way (see widgets.open_official_page).
 
-    options_requested = Signal(str)  # app_id
+    THE URL COMES FROM A LOOKUP HERE, not from the row's own data, and
+    that is the one real difference between the two rows: the Update
+    Center lists whatever winget reports as upgradable, which is every
+    installed program rather than the ~45 the catalog curates. On-catalog
+    apps get their curated link; the rest get a search naming the product
+    (see official_url)."""
+
+    #: No signal for the link, for the reason DevHubRow states: the
+    #: dialog has nothing to do when a vendor page opens, and the handler
+    #: that used to sit there is where "clear every tick" lived.
 
     def __init__(self, app_id: str, name: str, current: str, available: str,
                  t: dict, running: list[str] | None = None):
@@ -9965,13 +10056,16 @@ class UpdateRow(QFrame):
         self._available = QLabel(available or "—")
         row.addWidget(self._available)
 
-        self.options_btn = QPushButton("⋯")
-        self.options_btn.setFixedSize(28, 24)
-        self.options_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.options_btn.setToolTip(
-            "Install options for this app (winget / official link / local file)")
-        self.options_btn.clicked.connect(lambda: self.options_requested.emit(self.app_id))
-        row.addWidget(self.options_btn)
+        self.website_btn = QPushButton()
+        self.website_btn.setFixedSize(_ROW_LINK_W, _ROW_LINK_H)
+        self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.website_btn.setToolTip(
+            f"Open {name}'s official download page in your browser")
+        self.website_btn.setAccessibleName(
+            f"Open the official {name} download page")
+        self.website_btn.clicked.connect(
+            lambda: open_official_page(self.app_id, self.app_name))
+        row.addWidget(self.website_btn)
         outer.addLayout(row)
 
         self._id_label = QLabel(app_id)
@@ -9985,7 +10079,7 @@ class UpdateRow(QFrame):
         self._current.setStyleSheet(TH.version_chip_qss(t, accent=False))
         self._available.setStyleSheet(TH.version_chip_qss(t, accent=True))
         self._arrow.setStyleSheet(TH.label_qss(t, "faint"))
-        self.options_btn.setStyleSheet(TH.icon_ghost_button_qss(t, t["accent"]))
+        _dress_link_button(self.website_btn, t)
         self._id_label.setStyleSheet(TH.label_qss(t, "caption"))
         if self._running_chip is not None:
             # WARN, not ERR. A running app is a heads-up the user acts on,
@@ -10002,10 +10096,10 @@ class UpdateRow(QFrame):
 
     def mouseReleaseEvent(self, e):
         # Click-anywhere-toggles, except on controls that already own
-        # their own click (the checkbox itself, the '⋯' wizard button).
+        # their own click (the checkbox itself, the official-page button).
         if e.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(e.position().toPoint())
-            if child not in (self.checkbox, self.options_btn):
+            if child not in (self.checkbox, self.website_btn):
                 self.checkbox.setChecked(not self.checkbox.isChecked())
         super().mouseReleaseEvent(e)
 
@@ -10190,7 +10284,11 @@ class UpdateCenterDialog(PulseDialog):
         scroll.setStyleSheet(TH.scroll_area_qss(t))
         self._host = QWidget()
         self._host.setStyleSheet("background: transparent;")
-        self._host_lay = scroll_host_layout(self._host, "sm")
+        # "md", matching the Software Catalog exactly. UpdateRow is built
+        # to be DevHubRow's twin (see its docstring); a list of the same
+        # rows at a different rhythm is the drift that promise exists to
+        # prevent, and it is pinned in test_visual_polish.
+        self._host_lay = scroll_host_layout(self._host, "md")
         self._host_lay.addStretch()
         scroll.setWidget(self._host)
         lay.addWidget(scroll, 1)
@@ -10343,7 +10441,6 @@ class UpdateCenterDialog(PulseDialog):
             running = ["(unknown)"]
         row = UpdateRow(app_id, name, current, available, self._t, running)
         row.checkbox.toggled.connect(self._update_count)
-        row.options_requested.connect(self._open_tool_wizard)
         self._rows[app_id] = row
         self._host_lay.insertWidget(self._host_lay.count() - 1, row)
         return row
@@ -10376,8 +10473,9 @@ class UpdateCenterDialog(PulseDialog):
         # Same sentence shape SoftwareCatalogDialog uses for its selection —
         # one consistent voice across every selector in the app.
         self._subtitle.setText(
-            f"All {len(self._rows)} updates are pre-selected — untick anything you don't "
-            "want, or use a row's ⋯ for more install options.")
+            f"All {len(self._rows)} updates are pre-selected — untick anything you "
+            "don't want, or open a row's link to fetch it from the vendor "
+            "yourself.")
         self._update_count()
 
     def _set_all(self, checked: bool):
@@ -10440,21 +10538,6 @@ class UpdateCenterDialog(PulseDialog):
                 "rest."),
         }, self._t)
         return confirm.exec() == QDialog.DialogCode.Accepted
-
-    # -- per-app wizard ("⋯") --------------------------------------------
-    def _open_tool_wizard(self, app_id: str):
-        row = self._rows.get(app_id)
-        if row is None:
-            return
-        desc = f"Update available: {row.current_version} → {row.available_version}"
-        wizard = ToolInstallWizardDialog(self, app_id, row.app_name, desc, "", self._t)
-        if wizard.exec() != QDialog.DialogCode.Accepted:
-            return
-        # One meaning for Accepted now: update THIS app. See
-        # ToolInstallWizardDialog, which dropped its local-file path.
-        self._set_all(False)
-        row.checkbox.setChecked(True)
-        self._accept_selection()
 
     def reject(self):
         if self._worker is not None:

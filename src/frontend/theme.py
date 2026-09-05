@@ -271,8 +271,20 @@ PAD = {
 #   12 SURFACE   — anything you can point at and operate, plus the wells
 #                  that hold a glyph: buttons, inputs, GlassCards, icon
 #                  plaques, nav entries, list rows.
-#   16 CONTAINER — anything that HOLDS surfaces: the sidebar, the content
+#   20 CONTAINER — anything that HOLDS surfaces: the sidebar, the content
 #                  frame, dialog panels, the dashboard hero.
+#
+# v16 MOVES THE TOP STEP 16 -> 20, and moves ONLY it. The rule the ramp is
+# built on — three tiers, semantic names colliding onto them — is untouched;
+# what changed is that 16 was no longer far enough from 12 to be read as a
+# different KIND of thing. A dialog panel is a 900px sheet floating over the
+# app holding a column of 12px-cornered rows, and at a 4px difference the
+# sheet's own corner read as the rows' corner drawn slightly large rather
+# than as the container around them. 20 restores the step: it is the
+# corner every current desktop system gives a floating sheet, it is far
+# enough from the surface tier that the nesting is legible at a glance, and
+# it is still an EIGHT-multiple, so the ramp stays 8/12/20 rather than
+# acquiring an off-grid value.
 #
 # The five semantic names survive because call sites should keep naming the
 # surface, not the number — `RADIUS['card']` still says what it is, and
@@ -281,9 +293,10 @@ PAD = {
 # statement the old ramp could not make.
 #
 # The card step therefore rises 14 -> 12 (tightening toward the machined
-# edge v11 was already reaching for) and the panel step falls 18 -> 16,
-# closing the gap between a dialog and the card grid inside it.
-_R_SMALL, _R_SURFACE, _R_CONTAINER = 8, 12, 16
+# edge v11 was already reaching for) and the panel step went 18 -> 16 ->
+# 20: see the CONTAINER note above for why closing that gap turned out to
+# be one step too far.
+_R_SMALL, _R_SURFACE, _R_CONTAINER = 8, 12, 20
 
 RADIUS = {
     "chip":    _R_SMALL,      # pills, badges, small tags
@@ -932,6 +945,14 @@ GLYPHS: dict[str, tuple[str, str]] = {
     'sync':          ("\uE895", "\U0001f501"),    # Install / Restore pairs
     'cloud':         ("\uE753", "\u2601\ufe0f"),  # OneDrive purge
     # --- console toolbar (v10) ---
+    # --- selector rows (v16) ---
+    # THE ROW'S ONE AFFORDANCE BESIDE ITS CHECKBOX, and it replaced a
+    # literal "\u22ef" typed into a QPushButton's label. OpenInNewWindow is
+    # the mark every desktop system uses for "this leaves the app", which
+    # is exactly and only what the button now does: the vendor's own
+    # download page, in the default browser (see widgets.DevHubRow).
+    # Verified by the advance-width check this table's header documents.
+    'openexternal':  ("\uE8A7", "\u2197"),        # Official download page
     'copy':          ("\uE8C8", "\u2398"),        # Copy output to the clipboard
     'clear':         ("\uE894", "\u232b"),        # Clear the console
     'export':        ("\uE8E5", "\u2913"),        # Save output to a file (v12: was
@@ -2852,23 +2873,57 @@ def dev_hub_row_qss(t: dict) -> str:
     highlight when this tool is a checked-off IDE's unmet runtime
     dependency (see widgets.DevHubRow / SoftwareCatalogDialog's
     dependency-hint nudge — 'subtly suggests', never auto-forces a check).
-    Hover lifts the fill as well as the border — border-only hover read as
-    inert next to GlassCard, whose hover changes both."""
+
+    A CARD, at the surface tier, which is what RADIUS['card'] says and
+    RADIUS['control'] did not. The two resolve to the same 12 today and
+    always have; naming the row after the button tier meant that the day
+    the ramp moved — and v16 moved its top step — nothing said which of
+    them this surface was meant to follow.
+
+    Hover lifts the fill as well as the border, and does it through the
+    SHARED recipe (row_hover_fill / ROW_HOVER_LINE) rather than through
+    numbers of its own. See that constant's note: this factory and
+    action_row_qss were drawing two different hovered rows inside one
+    dialog, and the difference was never chosen."""
     return f"""
         QFrame {{
             background: {t['card']};
             border: 1px solid {t['card_line']};
-            border-radius: {RADIUS['control']}px;
+            border-radius: {RADIUS['card']}px;
         }}
         QFrame:hover {{
-            background: {t['card_hover']};
-            border: 1px solid {alpha(t['accent'], 0.35)};
+            background: {row_hover_fill(t)};
+            border: 1px solid {alpha(t['accent'], ROW_HOVER_LINE)};
         }}
         QFrame[suggested="true"] {{
             border: 1px solid {alpha(t['warn'], 0.55)};
             background: {alpha(t['warn'], 0.07)};
         }}
     """
+
+
+#: THE LIST-ROW HOVER, and it is ONE recipe rather than two.
+#:
+#: The app has exactly two row factories — dev_hub_row_qss (the Software
+#: Catalog and the Update Center) and action_row_qss (a hub's offered
+#: actions) — and they disagreed about how a hovered row looks. The action
+#: row lifted its fill by BLENDING card_hover over card and firmed its
+#: border to alpha(accent, 0.40); the selector row swapped its fill for
+#: card_hover outright and firmed to 0.35.
+#:
+#: Nothing chose that difference, and the swap is the half that was
+#: actually wrong: `background: card_hover` REPLACES the fill rather than
+#: lifting it (see blend()'s note), so a hovered selector row landed on a
+#: different tone from a hovered action row eight pixels away in the same
+#: dialog. Named here so a third row type inherits the answer instead of
+#: picking one.
+ROW_HOVER_LINE = 0.40
+
+
+def row_hover_fill(t: dict) -> str:
+    """The opaque fill a list row takes under the pointer: the card tier
+    LIFTED by the hover tint, never replaced by it."""
+    return blend(t["card"], t["card_hover"])
 
 
 #: THE DESTRUCTIVE TINT, and the number the whole action-row treatment
@@ -2941,8 +2996,11 @@ def action_row_qss(t: dict, accent: str, danger: bool = False) -> str:
     else:
         fill = t["card"]
         line = t["card_line"]
-        hover_fill = blend(t["card"], t["card_hover"])
-        hover_line = alpha(accent, 0.40)
+        # The shared list-row recipe — see ROW_HOVER_LINE. These two
+        # literals are where it came from; they are named now so the
+        # selector rows can share them instead of approximating them.
+        hover_fill = row_hover_fill(t)
+        hover_line = alpha(accent, ROW_HOVER_LINE)
     return f"""
         QFrame#actionRow {{
             background: {fill};
@@ -3106,37 +3164,6 @@ def catalog_tab_qss(t: dict, accent: str, active: bool) -> str:
     """
 
 
-def catalog_search_qss(t: dict, accent: str) -> str:
-    """The Software Catalog's in-list filter field.
-
-    This does NOT reopen the v1.0 "two search boxes" problem the category
-    page's status filter closed. That rule is about two inputs answering
-    the SAME question on the SAME screen: the page's old free-text box and
-    the sidebar's global-search doorway both meant "find me a thing in
-    Pulse". This box lives inside a modal that is already scoped to one
-    list of 43 rows, the Ctrl+K palette is unreachable while it is up, and
-    the question it answers — "narrow THESE rows" — has no other control.
-    Sizing and material match command_input_qss's quieter sibling so the
-    two never read as rival implementations of one idea.
-    """
-    return f"""
-        QLineEdit {{
-            background: {t['panel']};
-            border: 1px solid {t['panel_line']};
-            border-radius: {RADIUS['control']}px;
-            color: {t['text']};
-            font-size: {TYPE['body']}px;
-            padding: 0 10px;
-            selection-background-color: {alpha(accent, 0.35)};
-        }}
-        QLineEdit:hover {{ border: 1px solid {alpha(accent, FIELD['hover'])}; }}
-        QLineEdit:focus {{
-            border: 1px solid {alpha(accent, FIELD['focus'])};
-            background: {t['card']};
-        }}
-    """
-
-
 def hub_group_header_qss(t: dict, accent: str) -> str:
     """Sub-group title inside a grouped hub's landing screen: the
     'section' typographic role, lifted from text_faint to a soft accent
@@ -3177,8 +3204,15 @@ def hairline_qss(t: dict) -> str:
 
 
 def icon_ghost_button_qss(t: dict, accent: str) -> str:
-    """Small ghost icon-only button — the Dev Hub row's per-tool '⋯'
-    install-options trigger."""
+    """Small ghost icon-only button — a selector row's one trailing
+    affordance.
+
+    It carried the '⋯' overflow mark and opened a modal; it carries the
+    OpenInNewWindow glyph and opens the vendor's download page directly
+    (see widgets.DevHubRow). The treatment is unchanged, and deliberately
+    so: quiet at rest so a column of thirty of them reads as texture
+    rather than as thirty buttons, accented on hover so the one under the
+    pointer is unmistakably live."""
     return f"""
         QPushButton {{
             background: transparent; border: 1px solid {t['card_line']};

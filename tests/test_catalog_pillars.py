@@ -720,33 +720,91 @@ class TestAllTabIsFlat:
         finally:
             dialog.reject(); dialog.deleteLater(); qapp.processEvents()
 
-    def test_a_search_keeps_the_headers_on_the_all_tab(self, window, qapp):
-        """THE ASYMMETRY, and it is deliberate. A query narrows across
-        every group at once with no chip pressed, so the headers are the
-        only thing saying which part of the catalog each surviving row
-        came from."""
+    def test_returning_to_all_goes_back_to_flat(self, window, qapp):
+        """The header rule is now a single condition, so the round trip
+        chip -> All has to land back exactly where it started."""
         dialog = self._open(window, qapp)
         try:
-            dialog._on_query("a")
+            group = next(key for key in dialog._tab_buttons if key)
+            dialog._set_tab(group)
             qapp.processEvents()
-            assert dialog._active_tab == dialog.ALL_KEY
-            shown = [h for h, _tab, _ids in dialog._headers if h.isVisible()]
-            assert shown, (
-                "a search on the All tab hid the headers too — the results "
-                "span groups and nothing says which is which")
-        finally:
-            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
-
-    def test_clearing_the_search_returns_to_flat(self, window, qapp):
-        dialog = self._open(window, qapp)
-        try:
-            dialog._on_query("a")
-            qapp.processEvents()
-            dialog._on_query("")
+            assert [h.text() for h, _t, _i in dialog._headers if h.isVisible()]
+            dialog._set_tab(dialog.ALL_KEY)
             qapp.processEvents()
             shown = [h.text() for h, _tab, _ids in dialog._headers
                      if h.isVisible()]
-            assert not shown, f"headers survived the cleared search: {shown}"
+            assert not shown, f"headers survived the return to All: {shown}"
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+
+class TestTheCatalogHasOneNarrowingControl:
+    """THE "Filter apps…" FIELD IS GONE, and this is what keeps it gone.
+
+    A text field earns its row by the size of what it narrows. The Ctrl+K
+    palette filters every leaf item in the app; a catalog pillar is
+    fifteen to twenty rows, already grouped, already narrowed by a strip
+    of labelled chips that carries a count on each one. A second control
+    over that is not a saving — and it was not free either: the field
+    auto-focused on show, so the dialog opened with the keyboard in a text
+    box instead of on the list, and the strip underneath had to justify a
+    second, contradictory narrowing state (see the header rule in
+    _apply_filter, which is one condition now instead of two).
+
+    Pinned by BEHAVIOUR rather than by the absence of one attribute name:
+    a field reintroduced under any name would still be a QLineEdit in this
+    panel, and would still take the focus this dialog now gives its list.
+    """
+
+    def _open(self, window, qapp):
+        from frontend.menu_structure import catalog_section
+        from frontend.widgets import SoftwareCatalogDialog
+        section = catalog_section("essentials")
+        dialog = SoftwareCatalogDialog(
+            window, {"icon": "📦", "title": "Essential Daily Software"},
+            window.theme.t, [section])
+        dialog.show()
+        qapp.processEvents()
+        return dialog
+
+    def test_the_catalog_carries_no_text_field(self, window, qapp):
+        from PySide6.QtWidgets import QLineEdit
+        dialog = self._open(window, qapp)
+        try:
+            fields = dialog.findChildren(QLineEdit)
+            assert not fields, (
+                f"{len(fields)} text field(s) survive in the catalog: "
+                + repr([f.placeholderText() for f in fields]))
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_nothing_takes_the_keyboard_off_the_list(self, window, qapp):
+        """The field auto-focused on show. With it gone, no text-entry
+        widget may claim the keyboard when the dialog opens — otherwise
+        Space cannot tick the row under the cursor."""
+        from PySide6.QtWidgets import QLineEdit
+        dialog = self._open(window, qapp)
+        try:
+            focused = dialog.focusWidget()
+            assert not isinstance(focused, QLineEdit), (
+                f"the catalog opened with the keyboard in {focused!r}")
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_the_only_narrowing_state_is_the_active_tab(self, window, qapp):
+        """A row is shown for exactly one reason now. A second, orthogonal
+        filter is what made the header rule need an exception."""
+        dialog = self._open(window, qapp)
+        try:
+            group = next(key for key in dialog._tab_buttons if key)
+            dialog._set_tab(group)
+            qapp.processEvents()
+            visible = {aid for aid, row in dialog._rows.items()
+                       if row.isVisible()}
+            expected = {aid for aid, tab in dialog._row_tab.items()
+                        if tab == group}
+            assert visible == expected, (
+                "the visible set is not exactly the active tab's rows")
         finally:
             dialog.reject(); dialog.deleteLater(); qapp.processEvents()
 

@@ -482,6 +482,31 @@ def catalog_app_ids(section_key: str = "") -> list[str]:
     with no section key."""
     return [tool[0] for tool in catalog_tools(section_key)]
 
+
+def catalog_url(app_id: str) -> str:
+    """The official download page for `app_id`, or "" when the catalog
+    does not carry that app.
+
+    THE UPDATE CENTER IS WHY THIS IS A LOOKUP rather than a field the
+    caller already has. A catalog row is built from a tool tuple and knows
+    its own URL; an Update Center row is built from whatever winget
+    reports as upgradable, which is every installed program on the machine
+    and not only the ~45 this catalog curates. Both rows now offer the
+    same "open the official page" button, so both need the same answer,
+    and the ones this file knows about should get the CURATED link rather
+    than a web search — a search for "Git" is a worse answer than
+    git-scm.com when the better one is three lines away.
+
+    Empty for anything off-catalog, which widgets.official_url turns into
+    a search. Kept separate from that fallback on purpose: this function
+    answers "does Pulse curate a link for this?" and nothing else, so it
+    stays testable without a network or a browser.
+    """
+    for tool in catalog_tools():
+        if tool[0] == app_id:
+            return tool[3] or ""
+    return ""
+
 # ============================================================
 #  CATEGORIES  (rendered top-to-bottom in the sidebar)
 # ============================================================

@@ -2798,11 +2798,6 @@ class PulseApp(QMainWindow):
             self._open_hub(item)
             return
         task = item["task"]
-        # Only the confirm branch below can turn this on. Declared here so
-        # every other path through this method — bulk deploy, the Office
-        # wizard, a local installer, a plain unconfirmed task — starts a
-        # real run without having to know the flag exists.
-        dry_run = False
 
         if task.startswith("@"):
             self._run_local_action(task)
@@ -2998,16 +2993,25 @@ class PulseApp(QMainWindow):
                     "info", "Office installation cancelled — no files were selected.", 3500)
                 return
         elif item.get("confirm"):
-            dialog = ConfirmDialog(self, item, self.theme.t)
-            if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
+            # Accepted has ONE meaning here. The dialog used to carry a
+            # third button, "Preview", which also accepted and set a flag
+            # this line read to append -WhatIf; see ConfirmDialog on why a
+            # confirmation is the wrong surface for it. `dry_run` stays a
+            # real parameter of _start_task — PowerShellTask appends
+            # -WhatIf for it and the engine honours it — so the simulation
+            # path is still one caller away rather than removed.
+            if self._exec_dialog(
+                    ConfirmDialog(self, item, self.theme.t)
+            ) != QDialog.DialogCode.Accepted:
                 return
-            # Read on the line after exec() returns, before the event loop
-            # turns — the contract _exec_dialog's deleteLater relies on.
-            # Preview and Proceed both accept; this is the only thing that
-            # separates them.
-            dry_run = dialog.preview
 
-        self._start_task(item, card, app_ids, office_paths, dry_run=dry_run)
+        # NO dry_run ARGUMENT, and its absence is the point. The confirm
+        # branch above was the only thing that could ever set it, and it
+        # no longer can (see ConfirmDialog). _start_task keeps the
+        # parameter and its default of False, so every dispatch through
+        # here starts a real run and the simulation path stays available
+        # to a caller that means it.
+        self._start_task(item, card, app_ids, office_paths)
 
     def _start_task(self, item: dict, card: GlassCard | None,
                      app_ids: list[str] | None = None,
