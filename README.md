@@ -613,7 +613,7 @@ python -m pytest tests -v          # 1,303 collected tests
 Invoke-Pester -Path tests\backend  # 180 tests
 ```
 
-The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **80 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless.
+The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **Around 100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless: the last recorded headless run skipped 102 of 1,202 collected, against 3 on a healthy one. The figure is quoted from that measurement rather than counted by hand, because every hand-counted number in this file had drifted by the time anyone re-read it.
 
 The Pester suite does **real registry I/O**, deliberately — mocking the registry would test the mock, and invariants like first-write-wins and the `__NOTSET__` sentinel only bite against a real hive. Everything is confined to a throwaway key and removed in `AfterAll`; nothing needs elevation.
 
