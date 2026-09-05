@@ -2946,6 +2946,27 @@ class PulseApp(QMainWindow):
                 [section] if section else SOFTWARE_CATALOG)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
+            # TWO ACCEPTED OUTCOMES. A pillar may declare an `action` — a
+            # task with no AppId to tick, which for Runtimes & Hardware
+            # Drivers is the Windows Update driver scan — and pressing it
+            # accepts with `requested_task` set and no selection. Read
+            # BEFORE selected_ids because the two are mutually exclusive
+            # and this one replaces the item the card described.
+            if dialog.requested_task:
+                action = section["action"]
+                self._start_task({
+                    **item,
+                    "title": action["label"],
+                    "desc": action["hint"],
+                    "task": action["task"],
+                    "timeout": action.get("timeout", 900),
+                    # The catalog keys are what brought us into this
+                    # branch; carrying them onto the task item would send
+                    # it straight back through the dialog.
+                    "catalog": False,
+                    "catalog_section": "",
+                }, card)
+                return
             if dialog.selected_ids:
                 app_ids = dialog.selected_ids
             else:

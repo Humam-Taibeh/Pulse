@@ -873,6 +873,123 @@ class TestCatalogPlacement:
 # ============================================================
 #  10. WINDOWS UPDATE DRIVER SYNCHRONISATION
 # ============================================================
+class TestThePillarActionReachesTheTask:
+    """A declared `action` is the catalog dialog's SECOND accepted
+    outcome, and the two must not be able to fire together.
+
+    `selected_ids` and `requested_task` answer different questions —
+    "install these" and "run that" — and the caller reads whichever is
+    populated. A press that returned both would deploy five runtimes AND
+    ask Windows Update for drivers off one click, which is the "one
+    button, two effects" the footer's single primary exists to prevent.
+    """
+
+    def _runtimes(self, window, qapp):
+        from frontend.menu_structure import catalog_section
+        from frontend.widgets import SoftwareCatalogDialog
+        dialog = SoftwareCatalogDialog(
+            window, {"icon": "\U0001f9f1", "title": "Runtimes & Hardware Drivers"},
+            window.theme.t, [catalog_section("runtimes")])
+        dialog.show()
+        qapp.processEvents()
+        return dialog
+
+    def test_the_button_is_rendered_for_the_pillar_that_declares_one(
+            self, window, qapp):
+        dialog = self._runtimes(window, qapp)
+        try:
+            assert dialog._action_btn.text() == "Fetch Missing Hardware Drivers"
+            assert dialog._action_btn.toolTip()
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_no_other_pillar_grows_one(self, window, qapp):
+        """Two of the three pillars declare no action, and a button that
+        appeared on all three would be chrome rather than an affordance."""
+        from frontend.menu_structure import catalog_section
+        from frontend.widgets import SoftwareCatalogDialog
+        for key in ("essentials", "development"):
+            dialog = SoftwareCatalogDialog(
+                window, {"icon": "\U0001f4e6", "title": key},
+                window.theme.t, [catalog_section(key)])
+            dialog.show()
+            qapp.processEvents()
+            try:
+                assert dialog._action is None
+                assert not hasattr(dialog, "_action_btn")
+            finally:
+                dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_pressing_it_accepts_with_the_task_and_no_selection(
+            self, window, qapp):
+        from PySide6.QtWidgets import QDialog
+        dialog = self._runtimes(window, qapp)
+        try:
+            # A selection is made FIRST, so the assertion is about the
+            # action discarding it rather than about there being none.
+            for app_id in list(dialog._rows)[:3]:
+                dialog._rows[app_id].checkbox.setChecked(True)
+            qapp.processEvents()
+            assert dialog.checked_count() == 3
+
+            dialog._action_btn.click()
+            qapp.processEvents()
+            assert dialog.result() == QDialog.DialogCode.Accepted
+            assert dialog.requested_task == "DriverSync"
+            assert dialog.selected_ids == [], (
+                "the action also queued a deploy")
+        finally:
+            dialog.deleteLater(); qapp.processEvents()
+
+    def test_a_plain_deploy_requests_no_task(self, window, qapp):
+        """The other direction: Deploy Selected must not look like an
+        action press to the caller, or every deploy would run the driver
+        scan instead."""
+        dialog = self._runtimes(window, qapp)
+        try:
+            for app_id in list(dialog._rows)[:2]:
+                dialog._rows[app_id].checkbox.setChecked(True)
+            qapp.processEvents()
+            dialog._accept_selection()
+            assert dialog.selected_ids
+            assert dialog.requested_task == ""
+        finally:
+            dialog.deleteLater(); qapp.processEvents()
+
+    def test_the_dispatch_starts_the_task_rather_than_a_deploy(
+            self, window, monkeypatch):
+        """END TO END through request_task, which is where the two
+        outcomes are actually told apart."""
+        from PySide6.QtWidgets import QDialog
+        from frontend import main as M
+
+        started = {}
+        monkeypatch.setattr(
+            window, "_start_task",
+            lambda *a, **k: started.update({"item": a[0] if a else None}))
+        monkeypatch.setattr(window, "is_admin", True)
+
+        class _Stub:
+            selected_ids: list = []
+            requested_task = "DriverSync"
+
+        monkeypatch.setattr(M, "SoftwareCatalogDialog",
+                            lambda *a, **k: _Stub())
+        monkeypatch.setattr(window, "_exec_dialog",
+                            lambda d: QDialog.DialogCode.Accepted)
+        window.request_task({
+            "icon": "\U0001f9f1", "title": "Runtimes & Hardware Drivers",
+            "desc": "", "task": "InstallCatalogApps", "timeout": 3600,
+            "catalog": True, "catalog_section": "runtimes"}, None)
+
+        assert started, "the action never reached _start_task"
+        item = started["item"]
+        assert item["task"] == "DriverSync"
+        assert not item["catalog"], (
+            "the task item kept its catalog keys, so it would reopen the "
+            "dialog it was just dismissed from")
+
+
 class TestDriverSync:
     """The action half of DriverScan.
 
@@ -883,12 +1000,63 @@ class TestDriverSync:
     arrive through exactly that channel, under names nobody searches for.
     """
 
-    def test_the_card_exists_in_the_drivers_band(self):
+    def test_it_is_declared_on_the_pillar_that_owns_the_errand(self):
+        """IT MOVED, AND THIS IS WHERE IT MOVED TO.
+
+        It was a standalone dashboard card in a band called "DEPENDENCIES
+        & DRIVERS", beside "Install All Essential Dependencies". That
+        second card was the Runtimes pillar's own one-click action with a
+        card around it — two doors to one room — so the band lost it, and
+        a titled band holding one orphan is a heading for a nearly-empty
+        room.
+
+        This is not a duplicate, though, which is why it was rehomed
+        rather than deleted: asking Windows Update for chipset, audio,
+        Wi-Fi and Bluetooth drivers is the SAME ERRAND as the runtimes
+        ("this machine is missing something it needs to work") and it has
+        no AppId to tick, so it can be neither a catalog row nor a `bulk`.
+        The pillar declares it as an `action` and the dialog renders it
+        beside the bulk button.
+        """
+        from frontend.menu_structure import catalog_section
+        action = catalog_section("runtimes").get("action") or {}
+        assert action.get("task") == "DriverSync", (
+            f"the runtimes pillar no longer declares the driver scan: {action}")
+        assert action.get("label") and action.get("hint"), (
+            "a declared action with no label or hint renders as a blank "
+            "button nobody can be expected to press")
+
+    def test_the_two_duplicate_dashboard_cards_are_gone(self):
+        """The band and both cards. Asserted as the ABSENCE of the tasks
+        from the card tree rather than of the band title, because a card
+        moved to a different band would still be the duplication this
+        removed."""
         from frontend.menu_structure import CATEGORIES, category_bands
         software = next(c for c in CATEGORIES if c["id"] == "software")
-        band = dict((title, items) for title, items in category_bands(software))
-        tasks = {item.get("task") for item in band["DEPENDENCIES & DRIVERS"]}
-        assert "DriverSync" in tasks
+        bands = dict(category_bands(software))
+        assert "DEPENDENCIES & DRIVERS" not in bands, (
+            "the band came back")
+        tasks = {item.get("task")
+                 for _title, items in category_bands(software)
+                 for item in items}
+        assert "InstallEssentialRuntimes" not in tasks
+        assert "DriverSync" not in tasks, (
+            "the driver scan is a dashboard card again as well as a "
+            "pillar action — which is the duplication this removed")
+
+    def test_the_retired_task_left_no_dispatcher_case_behind(self):
+        """InstallEssentialRuntimes had exactly one caller and it is gone.
+        A backend case nothing can reach is dead code that still looks
+        maintained."""
+        assert '"InstallEssentialRuntimes" {' not in _read(_DISPATCHER)
+
+    def test_the_runtimes_array_survives_for_console_mode(self):
+        """The removal took the dispatcher CASE, not the catalog it
+        deployed: console mode walks $Runtimes directly through
+        Process-AppCategory and never used that case."""
+        assert "$Runtimes" in _read(_CATALOGS)
+        assert "$Runtimes" in _read(
+            os.path.join(_ROOT, "src/backend/modules/20-Menus.ps1"))
 
     def test_it_has_a_dispatcher_case(self):
         assert '"DriverSync" {' in _read(_DISPATCHER)

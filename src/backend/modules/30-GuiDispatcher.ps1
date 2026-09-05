@@ -224,15 +224,18 @@ function Invoke-GuiTask {
                 Invoke-GuiBulkDeploy $Apps_CatalogAll "Software Catalog" -SelectedIds $Script:SelectedAppIds
                 break
             }
-            # THE ONE-CLICK DEPENDENCY PASS. Deploys $Runtimes - the
-            # foundational layer of Pillar 3 - and nothing else. Distinct
-            # from InstallCatalogApps rather than a preset selection of it
-            # because it answers a different question ("just make the DLL
-            # errors stop") and needs no dialog to ask anything first.
-            "InstallEssentialRuntimes" {
-                Invoke-GuiBulkDeploy $Runtimes "Essential Dependencies" -SelectedIds @()
-                break
-            }
+            # (InstallEssentialRuntimes retired. It deployed $Runtimes -
+            #  the foundational layer of Pillar 3 - blind, from a
+            #  standalone dashboard card, and was justified as answering a
+            #  different question from InstallCatalogApps: "just make the
+            #  DLL errors stop". The Runtimes pillar's own one-click
+            #  action answers that question better, because it TICKS those
+            #  same five rows instead of running them unseen - the user
+            #  reads what is queued and presses Deploy, and the deploy is
+            #  the ordinary InstallCatalogApps pass. Two doors to one
+            #  room; this was the one with no window in it. $Runtimes is
+            #  untouched and still walked by console mode through
+            #  Process-AppCategory in 20-Menus.ps1.)
             # (InstallEssentialApps / InstallDevHub / InstallGamingApps /
             #  InstallDiagnosticApps / InstallRuntimes all retired into
             #  InstallCatalogApps above - the GUI no longer has four app

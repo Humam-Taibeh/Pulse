@@ -339,3 +339,139 @@ class TestFilterChipContrast:
         rest = TH.filter_chip_qss(t, "warn", active=False)
         active = TH.filter_chip_qss(t, "warn", active=True)
         assert rest != active
+
+
+# ============================================================
+#  THE STARTUP MANAGER'S TOOLBAR  (v16)
+# ============================================================
+class TestTheStartupToolbarMatchesTheUpdateCenter:
+    """Two dialogs, one shape. Both are "scan, then act on the rows", and
+    they disagreed about where the controls for that live.
+
+    THE UPDATE CENTER puts its actions in one left cluster at the top of
+    the results page — Select All, Deselect All, Rescan — with the count
+    on the right. THE STARTUP MANAGER had its filter chips at the top and
+    Rescan alone in the bottom-left corner, diagonally opposite the chips
+    that filter the very list it re-reads, with a full-width accented
+    OPTIMIZE banner wedged between the two.
+
+    THE BANNER IS THE PART THAT WAS ACTIVELY WRONG. On a clean machine it
+    rendered as "⚡  Optimize Startup — all clear": the loudest control on
+    the dialog, spanning it edge to edge, present only to announce that it
+    had nothing to do. A control that says that is a banner, and this
+    dialog's subject is the itemized toggles underneath it.
+
+    None of this removes the capability. Optimize is offered as a link
+    beside Rescan whenever there is something to optimize, and is simply
+    absent otherwise — which states "all clear" by the honest route and
+    hands the list back the height the banner was holding.
+    """
+
+    _ITEMS = [
+        {"Id": "a", "Name": "OneDrive", "Enabled": True, "Impact": "High",
+         "Recommendation": "Disable", "Reason": "Cloud sync", "Type": "Registry",
+         "Protected": False},
+        {"Id": "b", "Name": "RealtekAudio", "Enabled": True, "Impact": "Low",
+         "Recommendation": "Keep", "Reason": "Audio stack", "Type": "Registry",
+         "Protected": True},
+        {"Id": "c", "Name": "Spotify", "Enabled": False, "Impact": "Medium",
+         "Recommendation": "Review", "Reason": "Music", "Type": "Folder",
+         "Protected": False},
+    ]
+
+    @pytest.fixture
+    def manager(self, window, qapp, monkeypatch):
+        from frontend.widgets import StartupManagerDialog
+        # No live scan, for the reason the Update Center's and the purge's
+        # own fixtures document: __init__ spawns a real PowerShell worker
+        # against an empty path, which fails in milliseconds and swaps the
+        # stack to the error page under the assertions.
+        monkeypatch.setattr(StartupManagerDialog, "_start_scan",
+                            lambda self: None)
+        dialog = StartupManagerDialog(window, "", window.theme.t)
+        dialog.show()
+        qapp.processEvents()
+        yield dialog
+        dialog.reject()
+        dialog.deleteLater()
+        qapp.processEvents()
+
+    def _render(self, manager, qapp, items):
+        manager._populate_rows(list(items))
+        manager._stack.setCurrentWidget(manager._results_page)
+        qapp.processEvents()
+
+    def test_rescan_sits_with_the_filter_chips(self, manager, qapp):
+        """Same row as the chips, not the opposite corner of the dialog."""
+        self._render(manager, qapp, self._ITEMS)
+        chip = manager._chip_all
+        rescan = manager._rescan_btn
+        assert rescan.isVisible()
+        # Same parent row => same vertical band. Compared in the page's
+        # own coordinates so a scroll position cannot confuse it.
+        page = manager._results_page
+        chip_y = chip.mapTo(page, chip.rect().center()).y()
+        rescan_y = rescan.mapTo(page, rescan.rect().center()).y()
+        assert abs(chip_y - rescan_y) <= 2, (
+            f"Rescan sits {abs(chip_y - rescan_y)}px off the chip row")
+
+    def test_the_footer_holds_only_the_way_out(self, manager, qapp):
+        """A self-contained dialog commits nothing on close — every toggle
+        already took effect — so its action bar has exactly one job."""
+        from PySide6.QtWidgets import QPushButton
+        self._render(manager, qapp, self._ITEMS)
+        page = manager._results_page
+        footer_y = page.height() - 60
+        in_footer = [
+            b.text() for b in page.findChildren(QPushButton)
+            if b.isVisible()
+            and b.mapTo(page, b.rect().center()).y() >= footer_y]
+        assert in_footer == ["Close"], (
+            f"the action bar carries {in_footer} rather than just Close")
+
+    def test_optimize_is_offered_when_there_is_something_to_optimize(
+            self, manager, qapp):
+        self._render(manager, qapp, self._ITEMS)
+        assert manager._optimize_btn.isVisible()
+        assert "(1)" in manager._optimize_btn.text(), (
+            f"the control does not say how many: "
+            f"{manager._optimize_btn.text()!r}")
+
+    def test_it_is_absent_rather_than_announcing_all_clear(
+            self, manager, qapp):
+        """THE DEFECT, stated as the string a user read. A full-width
+        accented button whose label is "all clear" is a banner."""
+        clean = [{**it, "Recommendation": "Keep"} for it in self._ITEMS]
+        self._render(manager, qapp, clean)
+        assert not manager._optimize_btn.isVisible(), (
+            "the optimize control is still on screen with nothing to do")
+        assert "all clear" not in manager._optimize_btn.text().lower()
+
+    def test_it_never_spans_the_dialog(self, manager, qapp):
+        """It was a full-width block between the chips and the list. A
+        link beside Rescan is the weight this action actually has."""
+        self._render(manager, qapp, self._ITEMS)
+        page = manager._results_page
+        assert manager._optimize_btn.width() < page.width() / 2, (
+            "the optimize control is still a banner across the dialog")
+
+    def test_the_protected_item_keeps_its_own_chip(self, manager, qapp):
+        """The chips are what the interface is focused on now, so the one
+        that matters most has to survive the tidy-up."""
+        self._render(manager, qapp, self._ITEMS)
+        assert manager._rows["b"]._rec_badge.text() == "System Critical"
+        assert manager._rows["a"]._rec_badge.text() == "Recommended to Disable"
+        assert manager._rows["c"]._rec_badge.text() == "Worth Reviewing"
+
+    def test_optimize_still_skips_the_protected_item(self, manager, qapp,
+                                                     monkeypatch):
+        """The capability survived the demotion, including its one
+        safeguard: a System Critical row is never swept."""
+        self._render(manager, qapp, self._ITEMS)
+        queued = []
+        monkeypatch.setattr(manager, "_pump_toggle_queue",
+                            lambda: queued.extend(manager._toggle_queue))
+        manager._optimize_btn.click()
+        qapp.processEvents()
+        assert [item_id for item_id, _want in manager._toggle_queue] == ["a"], (
+            f"optimize queued {manager._toggle_queue}")

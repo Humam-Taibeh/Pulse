@@ -348,6 +348,35 @@ SOFTWARE_CATALOG = [
             "hint": "Ticks every core runtime below — Visual C++, DirectX, "
                     ".NET and OpenAL — in one pass.",
         },
+        #: THE OTHER HALF OF A FRESH INSTALL, and it is a TASK rather than
+        #: a selection — which is why it is declared here instead of as a
+        #: second `bulk`.
+        #:
+        #: Chipset, Realtek audio, Wi-Fi and Bluetooth drivers are not
+        #: software anyone downloads by name. They arrive from Windows
+        #: Update's driver channel, and on a new machine that channel is
+        #: not scanned until Windows decides to; USOClient StartScan asks
+        #: it to. There is no AppId to tick, so it cannot be a row in a
+        #: list whose every other row is a winget id.
+        #:
+        #: IT LIVES HERE BECAUSE THIS IS THE PILLAR FOR THE STATE IT
+        #: SERVES. Pillar 3 is reached with something already broken —
+        #: a device in Device Manager with a yellow bang is exactly that
+        #: state — and it used to be a standalone dashboard card next to
+        #: "Install All Essential Dependencies", which was the same
+        #: errand's other half sitting outside the hub that owns it.
+        #: `admin` is deliberately absent: the Update Orchestrator runs as
+        #: SYSTEM and takes the request either way, so gating it would
+        #: raise a UAC prompt that buys nothing.
+        "action": {
+            "task": "DriverSync",
+            "label": "Fetch Missing Hardware Drivers",
+            "hint": "Asks Windows Update for the chipset, audio, Wi-Fi and "
+                    "Bluetooth drivers this board needs — the ones a fresh "
+                    "install leaves as 'Unknown device'. Installs nothing "
+                    "from the list below.",
+            "timeout": 900,
+        },
         "groups": [
             ("⚙️ Core Runtimes & Dependencies", [
                 ("Pulse.VCRedistAIO", "Visual C++ Runtimes (All Versions, x86 + x64)",
@@ -584,56 +613,30 @@ CATEGORIES = [
                 # behaved completely differently from its neighbours would
                 # be the worse lie.
             ]},
-            # -- THE FOUNDATION, AS ACTIONS RATHER THAN A LIST ------------
+            # -- THE BAND THAT USED TO SIT HERE, AND WHY IT DOES NOT ------
             #
-            # Both cards here serve the state Pillar 3 exists for: something
-            # is already broken. A user in that state is not browsing, so
-            # neither card opens a catalog — one deploys the whole
-            # dependency layer, the other asks Windows Update for the
-            # vendor drivers a fresh install has not fetched yet.
+            # "DEPENDENCIES & DRIVERS" held two cards, and both were the
+            # Runtimes & Hardware Drivers pillar restated on the dashboard.
             #
-            # NETWORK & CONNECTIVITY USED TO BE THE SECOND CARD HERE, and
-            # it has moved to Utilities & Tools. It was the one card in
-            # Software Management that installed nothing: adapter
-            # diagnostics, a driver-age check and a Winsock rebuild are
-            # SYSTEM DIAGNOSTICS, and filing them under the module whose
-            # every other card acquires or removes software made "where do
-            # I check my adapters?" a question about installing something.
-            {"title": "DEPENDENCIES & DRIVERS", "items": [
-                # A SEPARATE CARD as well as a button inside the Runtimes
-                # pillar, because the two are reached from different states:
-                # someone browsing runtimes wants to choose, and someone
-                # whose game just refused to start wants it fixed without
-                # reading a list. It runs its own task, so it needs no
-                # dialog to ask anything first — `confirm` still names what
-                # it will do before it does it.
-                {"icon": "⚡", "glyph": "download", "title": "Install All Essential Dependencies",
-                 "desc": "One pass for the whole foundation — every Visual C++ "
-                         "runtime, DirectX legacy, .NET 8, .NET Framework 3.5 "
-                         "and OpenAL.",
-                 "task": "InstallEssentialRuntimes", "timeout": 3600,
-                 "confirm": True},
-                # THE OTHER HALF OF A FRESH INSTALL, and the half this
-                # module could not reach. The catalog installs software;
-                # chipset, Realtek audio, Wi-Fi and Bluetooth drivers are
-                # not software anyone downloads by name — they arrive from
-                # Windows Update's driver channel, and on a new machine
-                # that channel is not scanned until Windows decides to.
-                # USOClient StartScan asks it to, now.
-                #
-                # NOT admin-gated: the Update Orchestrator runs as SYSTEM
-                # and the scan request is made through it, so an
-                # unelevated Pulse can ask for exactly the same scan an
-                # elevated one can. Gating it would raise a UAC prompt
-                # that buys nothing — the same reasoning that keeps the
-                # two read-only network tools out of the gate list.
-                {"icon": "🖥️", "glyph": "sync",
-                 "title": "Fetch Missing Hardware Drivers",
-                 "desc": "Asks Windows Update for the chipset, audio, Wi-Fi and "
-                         "Bluetooth drivers this board needs — the ones a fresh "
-                         "install leaves as 'Unknown device'.",
-                 "task": "DriverSync", "timeout": 900},
-            ]},
+            #   INSTALL ALL ESSENTIAL DEPENDENCIES was the pillar's own
+            #   `bulk` action with a card around it. Both queue the same
+            #   five packages; the difference was that the card ran them
+            #   blind through InstallEssentialRuntimes while the button
+            #   TICKS them, so the user can read what is about to be
+            #   installed before pressing Deploy. Two doors to one room,
+            #   and the one on the dashboard was the worse door.
+            #
+            #   FETCH MISSING HARDWARE DRIVERS was not duplicated — it was
+            #   ORPHANED. It is the same errand as the runtimes ("this
+            #   machine is missing something it needs to work") and it sat
+            #   outside the hub that owns that errand. It is declared on
+            #   the pillar now (see its `action` key) rather than deleted:
+            #   removing the card without rehoming the task would have
+            #   quietly cost a feature, which decluttering is not.
+            #
+            # The band went with them. A titled band holding nothing is a
+            # heading for an empty room, and Software Management has four
+            # other bands that each still hold something.
             # -- WHAT IS ALREADY ON THE MACHINE ---------------------------
             #
             # v1.1: all three were sub-items of a hub called "System Tools

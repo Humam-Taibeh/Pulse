@@ -3604,19 +3604,38 @@ def recommendation_badge_qss(t: dict, recommendation: str,
 
 
 def startup_row_qss(t: dict) -> str:
-    """One item inside the Startup Manager's list — dims (via the
-    `disabled_item` dynamic property, deliberately not Qt's own `disabled`
-    name, which drives the unrelated :disabled pseudo-state) once its
-    toggle is switched off, so the eye reads enabled vs. disabled at a
-    glance without hunting for the switch state."""
+    """One item inside the Startup Manager's list, and one row inside the
+    Bloatware Purge — dims (via the `disabled_item` dynamic property,
+    deliberately not Qt's own `disabled` name, which drives the unrelated
+    :disabled pseudo-state) once its toggle is switched off or its package
+    turns out not to be installed, so the eye reads live vs. inert at a
+    glance without hunting for the control.
+
+    THE THIRD ROW FACTORY, and until v16 the one that still disagreed.
+    dev_hub_row_qss and action_row_qss were unified onto row_hover_fill /
+    ROW_HOVER_LINE; this one hovered by BORDER ALONE, at a weight (0.30)
+    nothing chose. Border-only hover reads as inert next to a GlassCard —
+    it is the exact defect dev_hub_row_qss's own note records having
+    fixed — and a Startup Manager row behaving differently from a Software
+    Catalog row eight pixels away is the drift these constants exist to
+    stop. It also named RADIUS['plaque'], the tier for icon WELLS, for a
+    surface that is a card.
+    """
     return f"""
         QFrame {{
             background: {t['card']}; border: 1px solid {t['card_line']};
-            border-radius: {RADIUS['plaque']}px;
+            border-radius: {RADIUS['card']}px;
         }}
-        QFrame:hover {{ border: 1px solid {alpha(t['accent'], 0.30)}; }}
+        QFrame:hover {{
+            background: {row_hover_fill(t)};
+            border: 1px solid {alpha(t['accent'], ROW_HOVER_LINE)};
+        }}
         QFrame[disabled_item="true"] {{
             background: {t['panel']}; border: 1px solid {t['panel_line']};
+        }}
+        QFrame[disabled_item="true"]:hover {{
+            background: {blend(t['panel'], t['card_hover'])};
+            border: 1px solid {alpha(t['accent'], ROW_HOVER_LINE)};
         }}
     """
 

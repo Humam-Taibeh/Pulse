@@ -1219,56 +1219,68 @@ def test_glyph_icon_falls_back_rather_than_rendering_nothing(qapp):
 # ============================================================
 #  THE SELECTOR SURFACES  (v16)
 # ============================================================
+#: Every factory in the app that draws A ROW IN A LIST. All three, named
+#: here so a fourth cannot be added without this file noticing.
+_ROW_FACTORIES = [
+    ("dev_hub_row_qss", lambda t: TH.dev_hub_row_qss(t)),
+    ("action_row_qss", lambda t: TH.action_row_qss(t, t["accent"])),
+    ("startup_row_qss", lambda t: TH.startup_row_qss(t)),
+]
+
+
 class TestEveryListRowHoversTheSameWay:
-    """ONE HOVER RECIPE, and it used to be two.
+    """ONE HOVER RECIPE, and it used to be three.
 
-    The app has exactly two row factories - dev_hub_row_qss (the Software
-    Catalog and the Update Center) and action_row_qss (a hub's offered
-    actions). They disagreed: the action row LIFTED its fill by blending
-    card_hover over card and firmed its border to alpha(accent, 0.40); the
-    selector row REPLACED its fill with card_hover outright and firmed to
-    0.35.
+    The app has exactly three row factories - dev_hub_row_qss (the
+    Software Catalog and the Update Center), action_row_qss (a hub's
+    offered actions) and startup_row_qss (the Startup Manager and the
+    Bloatware Purge). All three disagreed:
 
-    The replacement was the half that was actually wrong. `background:
-    card_hover` in a :hover rule does not tint the card, it swaps the
-    card's fill for the tint (see theme.blend's note) - so two hovered
-    rows eight pixels apart in one dialog landed on different tones, one
-    of them not even on the card tier any more.
+        action_row   LIFTED its fill by blending card_hover over card,
+                     and firmed its border to alpha(accent, 0.40)
+        dev_hub_row  REPLACED its fill with card_hover, firmed to 0.35
+        startup_row  moved its BORDER ALONE, at 0.30
+
+    The replacement was one defect and the border-only hover another.
+    `background: card_hover` in a :hover rule does not tint the card, it
+    swaps the card's fill for the tint (see theme.blend's note), so a
+    hovered row landed off the card tier entirely; and a border-only hover
+    reads as inert next to a GlassCard, which is the exact thing
+    dev_hub_row_qss's own note records having fixed years earlier. Three
+    row types, three answers, none of them chosen.
     """
 
     @pytest.mark.parametrize("mode", ["dark", "light"])
-    def test_both_factories_lift_the_card_rather_than_replacing_it(self, mode):
+    def test_every_factory_lifts_the_card_rather_than_replacing_it(self, mode):
         t = TH.tokens(mode)
         lifted = TH.row_hover_fill(t)
         assert lifted != t["card_hover"], (
             "the lift and the raw tint are the same string; this test "
             "cannot tell a blend from a swap")
-        for name, qss in (("dev_hub_row_qss", TH.dev_hub_row_qss(t)),
-                          ("action_row_qss",
-                           TH.action_row_qss(t, t["accent"]))):
-            hover = qss.split(":hover")[1]
+        for name, build in _ROW_FACTORIES:
+            hover = build(t).split(":hover")[1]
             assert lifted in hover, (
                 f"{mode}: {name} does not use the shared hover fill")
 
     @pytest.mark.parametrize("mode", ["dark", "light"])
-    def test_both_factories_firm_the_border_by_the_same_weight(self, mode):
+    def test_every_factory_firms_the_border_by_the_same_weight(self, mode):
         t = TH.tokens(mode)
         line = TH.alpha(t["accent"], TH.ROW_HOVER_LINE)
-        for name, qss in (("dev_hub_row_qss", TH.dev_hub_row_qss(t)),
-                          ("action_row_qss",
-                           TH.action_row_qss(t, t["accent"]))):
-            hover = qss.split(":hover")[1]
+        for name, build in _ROW_FACTORIES:
+            hover = build(t).split(":hover")[1]
             assert line in hover, (
                 f"{mode}: {name} firms its hover border by a weight of its "
                 "own instead of ROW_HOVER_LINE")
 
-    def test_a_selector_row_is_a_card_not_a_control(self):
-        """The row named the BUTTON tier. Both resolve to 12 and always
-        have, so nothing was visibly wrong - until v16 moved the ramp's
-        top step and nothing in the file said which tier this surface was
-        meant to follow."""
-        t = TH.tokens("dark")
-        assert f"border-radius: {TH.RADIUS['card']}px" in TH.dev_hub_row_qss(t)
+    @pytest.mark.parametrize("name,build", _ROW_FACTORIES)
+    def test_a_list_row_is_a_card_not_a_control_or_a_well(self, name, build):
+        """dev_hub_row named the BUTTON tier and startup_row named the
+        ICON-WELL tier. All three resolve to 12 and always have, so
+        nothing was visibly wrong - until v16 moved the ramp's top step
+        and nothing in either file said which tier the surface followed."""
+        qss = build(TH.tokens("dark"))
+        assert f"border-radius: {TH.RADIUS['card']}px" in qss, (
+            f"{name} does not name the card tier")
 
 
 class TestTheTwoSelectorListsShareOneRhythm:

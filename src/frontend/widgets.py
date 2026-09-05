@@ -7944,6 +7944,20 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
     winget deploy. (There was a second outcome, `local_installer`, for a
     row wizard's "Local File" path; that path is gone — see
     ToolInstallWizardDialog.)
+
+    THERE IS A SECOND ACCEPTED OUTCOME, `requested_task`, and exactly one
+    pillar declares it. Runtimes & Hardware Drivers owns an errand with no
+    AppId to tick: asking Windows Update for the chipset, audio, Wi-Fi and
+    Bluetooth drivers a fresh install has not fetched. That cannot be a row
+    in a list whose every other row is a winget id, and it cannot be a
+    `bulk` either, because `bulk` TICKS rows and there are none to tick.
+
+    So a section may declare an `action` — a task, a label and a hint —
+    and pressing it accepts with `requested_task` set and `selected_ids`
+    empty. The caller reads whichever is populated. It used to be a
+    standalone dashboard card sitting beside "Install All Essential
+    Dependencies"; both were this pillar restated outside itself, and only
+    one of them was a duplicate (see the note in menu_structure.py).
     """
 
     #: The "no sub-category" tab. Empty string so it can be compared with a
@@ -7955,6 +7969,9 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         super().__init__(parent)
         self._t = t
         self.selected_ids: list[str] = []
+        #: The task a declared section `action` asks for, or "". Set only
+        #: on Accepted, and mutually exclusive with `selected_ids`.
+        self.requested_task: str = ""
         self._rows: dict[str, DevHubRow] = {}
         self._row_tab: dict[str, str] = {}                 # id -> its tab key
         self._dependents: dict[str, list[str]] = {}        # requires_id -> [ids]
@@ -8063,6 +8080,23 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
             self._bulk_btn.setToolTip(self._bulk["hint"])
             self._bulk_btn.clicked.connect(self._select_bulk_group)
             toolbar.addWidget(self._bulk_btn)
+
+        # THE DECLARED TASK ACTION, and it sits with the other two link
+        # controls rather than in the footer on purpose: the footer is
+        # where the DECISION this dialog was opened to make gets
+        # committed, and this is not that decision — it is a different
+        # errand that happens to belong to the same pillar. Given the
+        # accent weight of a footer button it would compete with "Deploy
+        # Selected" for the eye of someone who came here to install
+        # something.
+        self._action = (section or {}).get("action") if self._scoped else None
+        if self._action:
+            self._action_btn = QPushButton(self._action["label"])
+            self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._action_btn.setStyleSheet(TH.link_button_qss(t, accent))
+            self._action_btn.setToolTip(self._action["hint"])
+            self._action_btn.clicked.connect(self._request_action)
+            toolbar.addWidget(self._action_btn)
 
         toolbar.addStretch()
 
@@ -8246,6 +8280,22 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
                 row.checkbox.setChecked(True)
         if self._bulk["group"] in self._tab_buttons:
             self._set_tab(self._bulk["group"])
+
+    def _request_action(self):
+        """Accept with the section's task instead of a selection.
+
+        THE TICKS ARE DISCARDED, and that is stated rather than assumed:
+        `selected_ids` stays empty, so the caller runs the task and
+        nothing else. Asking Windows Update for drivers and installing
+        five runtimes are two operations, and running both off one press
+        would be the "one button, two effects" problem the footer's single
+        primary exists to avoid.
+        """
+        if not self._action:
+            return
+        self.requested_task = str(self._action["task"])
+        self.selected_ids = []
+        self.accept()
 
     def _refresh_runtime_suggestion(self, runtime_id: str):
         """Recompute a runtime row's highlight from scratch: on whenever it
@@ -11624,6 +11674,40 @@ class StartupManagerDialog(PulseDialog):
             "recommended", "warn",
             "Show only the enabled items this audit recommends disabling")
         summary.addStretch()
+
+        # THE TOOLBAR ENDS WITH ITS ACTIONS, exactly as the Update
+        # Center's does. Both dialogs are "scan, then act on rows", and
+        # they disagreed about where the controls for that live: the
+        # Update Center puts Select All / Deselect All / Rescan in one
+        # left cluster at the top, and this one had Rescan alone in the
+        # bottom-left corner, diagonally opposite the chips that filter
+        # the thing it re-reads.
+        #
+        # OPTIMIZE IS A LINK HERE, AND IT USED TO BE A BANNER. It was a
+        # full-width accented button between the chips and the list, which
+        # on a clean machine rendered as "⚡ Optimize Startup — all clear":
+        # the loudest control on the dialog, spanning it edge to edge, to
+        # say that it had nothing to do. It is offered when there is
+        # something to offer and simply absent otherwise — which states
+        # "all clear" by the honest route, and gives the list back the
+        # ~48px the banner was holding.
+        self._optimize_btn = QPushButton("Optimize Startup")
+        self._optimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._optimize_btn.setStyleSheet(TH.link_button_qss(t, t["warn"]))
+        self._optimize_btn.setToolTip(
+            "Disables every currently-enabled item the audit recommends "
+            "disabling, one by one. Never touches a System Critical item.")
+        self._optimize_btn.clicked.connect(self._start_optimize)
+        self._optimize_btn.hide()
+        summary.addWidget(self._optimize_btn)
+
+        self._rescan_btn = QPushButton("Rescan")
+        self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rescan_btn.setStyleSheet(TH.link_button_qss(t, accent))
+        self._rescan_btn.setToolTip(
+            "Re-read the Run keys and Startup folders from disk.")
+        self._rescan_btn.clicked.connect(self._start_scan)
+        summary.addWidget(self._rescan_btn)
         lay.addLayout(summary)
 
         # Says what the current filter is hiding. Empty (and hidden) on the
@@ -11632,15 +11716,6 @@ class StartupManagerDialog(PulseDialog):
         self._filter_note.setStyleSheet(TH.label_qss(t, "caption"))
         self._filter_note.hide()
         lay.addWidget(self._filter_note)
-
-        self._optimize_btn = QPushButton("⚡  Optimize Startup")
-        self._optimize_btn.setFixedHeight(TH.CONTROL_H)
-        self._optimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._optimize_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
-        self._optimize_btn.setToolTip(
-            "Disables every currently-enabled item the audit recommends disabling, one by one.")
-        self._optimize_btn.clicked.connect(self._start_optimize)
-        lay.addWidget(self._optimize_btn)
 
         scroll = FitScroll()
         scroll.setStyleSheet(TH.scroll_area_qss(t))
@@ -11651,19 +11726,15 @@ class StartupManagerDialog(PulseDialog):
         scroll.setWidget(self._host)
         lay.addWidget(scroll, 1)
 
-        row = QHBoxLayout()
-        rescan = QPushButton("Rescan")
-        rescan.setCursor(Qt.CursorShape.PointingHandCursor)
-        rescan.setStyleSheet(TH.link_button_qss(t, accent))
-        rescan.clicked.connect(self._start_scan)
-        row.addWidget(rescan)
-        row.addStretch()
+        # ONE CONTROL IN THE FOOTER, and it is the way out. Rescan moved
+        # up to the toolbar with the chips (see the note there), which
+        # leaves the action bar saying exactly what a self-contained
+        # dialog's action bar should: every toggle already took effect,
+        # there is nothing to commit, you are done.
         close = QPushButton("Close")
-        size_dialog_button(close)
         close.setStyleSheet(TH.dialog_secondary_go_qss(t, accent))
         close.clicked.connect(self.accept)
-        row.addWidget(close)
-        lay.addLayout(row)
+        dialog_footer(lay, close)
         return page
 
     # -- scan lifecycle -----------------------------------------------
@@ -11838,10 +11909,14 @@ class StartupManagerDialog(PulseDialog):
             # stays live regardless, because it is the way back.
             btn.setEnabled(key == "all" or counts[key] > 0)
 
+        # SHOWN OR ABSENT, never present-and-inert. A control that
+        # announces it has nothing to do is a banner, and "⚡ Optimize
+        # Startup — all clear" was that sentence rendered as the loudest
+        # thing on the dialog. The chips already report the count; this
+        # appears when acting on it is possible.
         recommended = counts["recommended"]
-        self._optimize_btn.setEnabled(recommended > 0)
-        self._optimize_btn.setText(
-            f"⚡  Optimize Startup ({recommended})" if recommended else "⚡  Optimize Startup — all clear")
+        self._optimize_btn.setVisible(recommended > 0)
+        self._optimize_btn.setText(f"Optimize Startup ({recommended})")
 
     # -- toggle queue (sequential — one PowerShell process at a time) --
     def _on_toggle_requested(self, item_id: str, want_enabled: bool):
