@@ -485,18 +485,58 @@ def _contrast(a: QColor, b: QColor) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def _readable_brand_color(brand: QColor, surface: QColor, dark: bool) -> QColor:
-    """`brand`, walked along its own hue until it clears _MIN_CONTRAST
-    against `surface` — see the module docstring's contrast-guard note.
+#: Saturation at or below which a brand mark has NO HUE TO PRESERVE.
+#:
+#: The whole reason the guard walks LIGHTNESS along a fixed hue is that a
+#: brand's hue is the part that must survive being made readable: MSI's
+#: red has to stay red. A mark drawn in black, white or grey has no such
+#: constraint — 0.10 is comfortably above the rounding noise a hex like
+#: #010101 produces and far below any colour a brand would call its own.
+_ACHROMATIC_SAT = 0.10
 
-    Lightness is stepped rather than solved analytically because HSL
-    lightness and WCAG luminance are not the same curve; twenty small
-    steps land within a hundredth of the floor and cost microseconds once
-    per (app, theme) thanks to the pixmap cache.
+
+def _readable_brand_color(brand: QColor, surface: QColor, dark: bool,
+                          ink: QColor | None = None) -> QColor:
+    """`brand`, made readable against `surface`.
+
+    TWO KINDS OF UNREADABLE MARK, and they want opposite treatments.
+
+    A CHROMATIC one is walked along its own hue until it clears
+    _MIN_CONTRAST, because the hue is the part that has to survive. That
+    is the original guard and it is unchanged. Lightness is stepped rather
+    than solved analytically because HSL lightness and WCAG luminance are
+    not the same curve; twenty small steps land within a hundredth of the
+    floor and cost microseconds once per (app, theme) thanks to the pixmap
+    cache.
+
+    AN ACHROMATIC one — black, white, grey — is resolved to `ink`, the
+    theme's own high-contrast foreground, and this is a FIX rather than a
+    shortcut. Walking stops at the FLOOR: it returns the first candidate
+    that clears 2.6, which for Cursor's #000000 mark on obsidian is
+    #666666. A mid grey is a readable colour and it is not a readable
+    MARK — the cube came out looking switched off, which is exactly how it
+    was reported, and the same "the guard stops at the floor rather than
+    going all the way" the Antigravity note in tools/fetch_app_icons.py
+    describes.
+
+    The floor is the right stopping point when a hue is being preserved,
+    because every step past it distorts the brand further. It is the wrong
+    one when there is no hue: a black mark's brand information is "maximum
+    contrast ink", so the faithful rendition on a dark canvas is the
+    canvas's brightest text tone, not the dimmest grey that technically
+    passes. Every desktop app store inverts a black mark on dark rather
+    than greying it toward the background.
+
+    `ink` is optional so a caller with no theme in hand (and the tests
+    that predate this) gets the old walk; when it is supplied but would
+    itself fail against the surface, the walk is used too.
     """
     if _contrast(brand, surface) >= _MIN_CONTRAST:
         return brand
     h, s, lightness, a = brand.getHslF()
+    if (ink is not None and s <= _ACHROMATIC_SAT
+            and _contrast(ink, surface) >= _MIN_CONTRAST):
+        return QColor(ink)
     if h < 0:
         h = 0.0            # achromatic: getHslF reports hue -1
     for step in range(1, 21):
@@ -572,26 +612,70 @@ def _well_color(surface: QColor | None, dark: bool) -> QColor:
     return QColor(0, 0, 0, 12)
 
 
+#: The last-resort plate: a near-white tile under a mark that nothing
+#: quieter can rescue. Near-white rather than pure, because a hard #ffffff
+#: tile on the light theme's porcelain canvas reads as a hole punched in
+#: the row.
+#:
+#: READ THE NOTE ON _rescue_well BEFORE REACHING FOR THIS. On the DARK
+#: theme it is a glaring white square in a column of quiet ones, and
+#: tests/test_contract.py asserts that no mark this repo ships reaches it
+#: there. It stays because "nothing quieter works" is a state a future
+#: asset can be in, and an invisible mark is worse than a loud one.
+#:
+#: ON THE LIGHT THEME IT IS VISUALLY A NO-OP — #f7f8fa at 0.96 over white
+#: is within a shade of the resting plate — and that is why several marks
+#: reach it there with no visible consequence. Do NOT "fix" that by
+#: blazing dark instead: the marks that trip the floor on porcelain are
+#: saturated multi-hue logos (Chrome, Spotify, VLC) that are perfectly
+#: legible on it, and the mean-luminance test simply misjudges them. A
+#: directional plate was tried and would have put a near-black tile under
+#: thirteen of them. The one mark genuinely at risk on light —
+#: OpenWebUI's pure-white artwork — is a classification problem rather
+#: than a plate problem and is not solved here.
+_RESCUE_PLATE = "#f7f8fa"
+
+
 def _rescue_well(renderer: QSvgRenderer, size: int,
                  surface: QColor | None, dark: bool) -> QColor:
-    """The well tone for one mark, brightened when the mark needs it.
+    """The well tone for one mark, moved only as far as the mark needs.
 
     THE GEOMETRY IS ALWAYS THE SAME AND ONLY THE TONE MOVES, which is the
     resolution of two requirements that look opposed: every icon should be
-    presented identically, AND a near-black mark has to stay visible on a
-    near-black canvas. Making the plate appear only for the marks that need
-    rescuing (what this module did before) satisfies the second and breaks
-    the first — the column ends up with tiles under some logos and not
-    others, at different sizes, which is exactly the inconsistency the
-    uniform well exists to remove.
+    presented identically, AND a dark mark has to stay visible on a dark
+    canvas. Making the plate appear only for the marks that need rescuing
+    (what this module did before) satisfies the second and breaks the
+    first — the column ends up with tiles under some logos and not others,
+    at different sizes, which is exactly the inconsistency the uniform
+    well exists to remove.
 
-    So the plate is unconditional and its COLOUR is measured. Ollama,
-    Notion, Steam, 7-Zip and Epic are all essentially #000000 artwork; on
-    obsidian they get the near-white plate an app store would give them,
-    and every other mark keeps the quiet neutral.
+    THREE TONES, TRIED IN ORDER OF HOW LITTLE THEY DISTURB THE COLUMN, and
+    that ordering is v16's fix.
 
-    Near-white rather than pure: a hard #ffffff tile on the light theme's
-    porcelain canvas reads as a hole punched in the row.
+      1. THE RESTING NEUTRAL, which is what almost every mark takes.
+
+      2. THE BARE SURFACE — the well's lift removed, so the mark sits
+         directly on the dialog's own ground. On the dark theme the
+         resting well LIFTS with white (see _well_color), which is help
+         for a bright mark and active harm for a dark one: it raises the
+         backdrop toward the very tone the mark is struggling against.
+         Simply not lifting is enough for VirtualBox's #2f61b4, measured
+         at 2.55 against the lifted plate and 3.06 against the bare
+         surface. Visually it is a plate that reads a shade deeper than
+         its neighbours, which at this size is barely a difference at all.
+
+      3. THE NEAR-WHITE PLATE, and only when neither of the above clears
+         the floor. No mark this repo ships reaches it on the dark theme
+         any more, which is what tests/test_contract.py pins.
+
+    STEP 2 IS WHAT USED TO BE MISSING, and its absence is why 7-Zip,
+    VirtualBox, Epic Games and Cinebench shipped as solid white squares in
+    a column where Chrome, Spotify and VLC sat on the quiet neutral: the
+    old code tried the resting tone, and on failing it jumped straight to
+    near-white. Three of those four were not even full-colour artwork —
+    they are black silhouettes that the manifest mislabelled, and they are
+    fixed at the source (see tools/fetch_app_icons.py) rather than by
+    bolting a tile behind them.
     """
     resting = _well_color(surface, dark)
     if surface is None:
@@ -599,13 +683,20 @@ def _rescue_well(renderer: QSvgRenderer, size: int,
     luminance = _mark_luminance(renderer, size)
     if luminance is None:
         return resting
-    # Measured against what the mark will ACTUALLY sit on: the resting
-    # well composited over the row, not the row alone.
-    plate = _composite(resting, surface)
-    hi, lo = max(luminance, _luminance(plate)), min(luminance, _luminance(plate))
-    if (hi + 0.05) / (lo + 0.05) >= _MIN_CONTRAST:
+
+    def clears(tone: QColor) -> bool:
+        # Measured against what the mark will ACTUALLY sit on: the tone
+        # composited over the row, not the tone alone.
+        plate = _luminance(_composite(tone, surface))
+        hi, lo = max(luminance, plate), min(luminance, plate)
+        return (hi + 0.05) / (lo + 0.05) >= _MIN_CONTRAST
+
+    if clears(resting):
         return resting
-    rescue = QColor("#f7f8fa")
+    bare = QColor(0, 0, 0, 0)
+    if clears(bare):
+        return bare
+    rescue = QColor(_RESCUE_PLATE)
     rescue.setAlphaF(0.96)
     return rescue
 
@@ -883,8 +974,15 @@ def app_icon(app_name: str, px: int, t: dict, app_id: str = "") -> QPixmap:
             brand = QColor(entry.get("hex", "#000000"))
             if not brand.isValid():
                 brand = QColor("#888888")
+            # `text` is the theme's own high-contrast foreground, and it
+            # is what an ACHROMATIC brand mark resolves to — see
+            # _readable_brand_color. Passed rather than hard-coded so the
+            # ink follows the palette the row is actually painted on.
+            ink = _parse_color(t.get("text", ""),
+                               "#eef1f6" if dark else "#15191f")
             pm = _brand_pixmap(app_id, px,
-                               _readable_brand_color(brand, surface, dark),
+                               _readable_brand_color(brand, surface, dark,
+                                                     ink),
                                surface, dark)
     if pm is None:
         path = _installed_icon_path(app_name)

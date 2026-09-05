@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -99,7 +100,16 @@ ICON_MAP: dict[str, str | None] = {
     "Python.Python.3.12": "python",
     "EclipseAdoptium.Temurin.21.JDK": "eclipseadoptium",
     "OpenJS.NodeJS.LTS": "nodedotjs",
-    "MSYS2.MSYS2": "mingww64",          # the toolchain's own mark
+    # None, and this WAS "mingww64". Two things were wrong with it and
+    # only the second was visible. MinGW-w64 is a toolchain MSYS2 can
+    # install, not MSYS2 — so the row named a different project — and
+    # because this pass and LOGO_MAP's write the SAME path, a Simple Icons
+    # silhouette landed under a manifest record claiming full-colour
+    # artwork, which is the misclassification is_silhouette exists to stop.
+    # MSYS2's own purple badge has no entry in any open set, so it is
+    # drawn: see DRAWN_MAP. This must stay None or pass one will clobber
+    # the committed file on every run.
+    "MSYS2.MSYS2": None,
     "Git.Git": "git",
     "Microsoft.VisualStudioCode": None,
     "Anysphere.Cursor": None,
@@ -244,13 +254,21 @@ LOGO_MAP: dict[str, str] = {
     # own rule forbids, and it was reported as a placeholder because in
     # context it was unrecognisable.
     "EclipseAdoptium.Temurin.21.JDK": "thesvg-color:eclipse-adoptium",
-    "OpenJS.NodeJS.LTS": "logos:nodejs-icon",
-    # ALSO A CORRECTION. This was "logos:gnu" - the GNU project's gnu
-    # head, defensible for a GCC toolchain and 18KB of detailed line art
-    # that resolves to a grey smudge at 20px. MinGW-w64 publishes its own
-    # mark; it names the toolchain actually being installed, and it
-    # survives being small.
-    "MSYS2.MSYS2": "thesvg-color:mingw-w64",
+    # THE FULL-BODIED HEXAGON, and this is a CORRECTION. It was
+    # "logos:nodejs-icon", which is Node's hexagon drawn as a single flat
+    # #539e43 silhouette — one green shape with the internal facet edges
+    # cut out of it. At 20px those cut-outs close up and the mark reads as
+    # a plain green hexagon with no Node in it. devicon's copy is the
+    # official three-face isometric solid (light top-left face, mid body,
+    # shaded right), which is the mark people actually recognise and which
+    # survives being small because the faces are TONES rather than gaps.
+    "OpenJS.NodeJS.LTS": "devicon:nodejs",
+    # MSYS2 MOVED TO DRAWN_MAP — read the entry there before moving it
+    # back. It sat here as "thesvg-color:mingw-w64", which was itself a
+    # correction of "logos:gnu" and still named the wrong thing twice
+    # over: MinGW-w64 is a toolchain MSYS2 can install, not MSYS2, and the
+    # asset is a BLACK SILHOUETTE mislabelled as colour artwork, so the
+    # row rendered as a solid black lattice on a white rescue tile.
     "Git.Git": "logos:git-icon",
     "Microsoft.VisualStudioCode": "logos:visual-studio-code",
     # BoxIcons Logos' rendition of Cursor's cube mark - a curated
@@ -337,27 +355,86 @@ ICONIFY_SVG = "https://api.iconify.design/{prefix}/{name}.svg"
 #: LOGO_MAP: the fetched mark then wins, because this pass runs last only
 #: so that it cannot be clobbered by a download that does not exist.
 #:
-#: RARLab.WinRAR and CreativeTechnology.OpenAL are deliberately NOT here.
-#: Their gaps have different causes - a copyleft licence, and a wordmark
-#: geometry that cannot survive a 20px square - both of which could close
-#: properly, and neither is worth spending this exception on.
+#: WINRAR AND OPENAL JOINED IN v16, and the note that used to exclude
+#: them was right about the causes and wrong about the conclusion.
+#:
+#: It read: "their gaps have different causes - a copyleft licence, and a
+#: wordmark geometry that cannot survive a 20px square - both of which
+#: could close properly, and neither is worth spending this exception on."
+#: Both halves were re-measured rather than taken on trust, and both hold:
+#:
+#:   WINRAR. Iconify has four hits. `openmoji:winrar` is the books-and-
+#:   belt mark and OpenMoji is CC-BY-SA - a SHARE-ALIKE licence, which is
+#:   the one thing an MIT-licensed repository cannot bundle without
+#:   changing what it is. `reicon:winrar` is a `currentColor` outline of
+#:   the same subject with no provenance either of us can verify. Neither
+#:   is usable, and that will not change.
+#:
+#:   OPENAL. `devicon:openal` and `thesvg-color:openal` are the same
+#:   asset: the red "openAL" WORDMARK with a microphone standing in for
+#:   the "A". Rendered into a 20px box it is four illegible letterforms —
+#:   confirmed by rendering it rather than by inspecting the path data.
+#:
+#: WHAT CHANGED IS THE CONCLUSION. "Not worth spending the exception on"
+#: was a judgement made when the two rows were the only ones without a
+#: mark. They now sit in pillars where every other row has one, which is
+#: the same "a list with no icons in it" argument that justified the
+#: original nine — and it is stronger here, because both rows sit BESIDE
+#: marks rather than in a group of blanks, so the gap reads as a failure
+#: to load rather than as an honest absence.
+#:
+#: BLUESTACKS IS THE CLOSEST THING HERE TO A RENDITION, and it is called
+#: out rather than left for a reader to notice. The other entries are
+#: pictograms of what a tool MEASURES; this one is a layered four-colour
+#: stack with a lens in the top layer, which is recognisably the shape and
+#: palette of the vendor's own mark rather than a neutral picture of
+#: "layers". It is here deliberately and at the maintainer's explicit
+#: instruction, it carries `drawn: true` like everything else in this map
+#: so nothing downstream can mistake it for vendor artwork, and it should
+#: be the FIRST entry deleted the day BlueStacks publishes a mark to an
+#: open set. Do not take it as the precedent for the next one.
 DRAWN_MAP: dict[str, tuple[str, str]] = {
     # AppId: (title, the product's own established colour)
     "Microsoft.DirectX": ("DirectX", "#0f7bd4"),
-    "BlueStack.BlueStacks": ("BlueStacks", "#8bc53f"),
+    "BlueStack.BlueStacks": ("BlueStacks", "#3fa72f"),
     "CPUID.CPU-Z": ("CPU-Z", "#3f51b5"),
     "CPUID.HWMonitor": ("HWMonitor", "#f09e1a"),
     "TechPowerUp.GPU-Z": ("GPU-Z", "#2e9e4f"),
     "CrystalDewWorld.CrystalDiskInfo": ("CrystalDiskInfo", "#2aa9e0"),
     "REALiX.HWiNFO": ("HWiNFO64", "#1e62a8"),
     "Geeks3D.FurMark.2": ("FurMark", "#e8452c"),
-    "Maxon.CinebenchR23": ("Cinebench", "#8e44ad"),
+    "Maxon.CinebenchR23": ("Cinebench", "#a862d4"),
+    # A purple badge carrying a white M and an orange 2 — MSYS2's own
+    # colours, and a pictogram of the thing rather than of what it
+    # measures, because a build environment measures nothing. It replaces
+    # a fetched MinGW-w64 mark that named a different project.
+    "MSYS2.MSYS2": ("MSYS2", "#8a5b8e"),
+    # Stacked archive volumes bound with a strap — a picture of what the
+    # tool DOES (bundling several files into one bound object), in the
+    # blue/green/purple the product has used for its own volume stacks
+    # for two decades. See the licence note above for why the authentic
+    # mark cannot be bundled.
+    "RARLab.WinRAR": ("WinRAR", "#1f6fb4"),
+    # A speaker radiating two arcs: positional audio, which is what the
+    # library provides. In OpenAL's own cyan/blue. See the note above for
+    # why the authentic wordmark cannot be used at this size.
+    "CreativeTechnology.OpenAL": ("OpenAL", "#2aa9e0"),
 }
 
-#: Brand hex for LOGO_MAP entries that turn out to be SILHOUETTES (drawn
-#: with `currentColor`) rather than full-colour artwork. These take the
-#: Simple Icons treatment — recoloured through the contrast guard — so
-#: they need the brand's own colour the same way those do.
+#: Brand hex for LOGO_MAP entries that turn out to be SILHOUETTES rather
+#: than full-colour artwork (see is_silhouette). These take the Simple
+#: Icons treatment — recoloured through the contrast guard — so they need
+#: the brand's own colour the same way those do.
+#:
+#: THE DEFAULT IS #000000 AND IT IS LOAD-BEARING, which it was not when
+#: this map was written. 7-Zip, Epic Games and Ollama all publish
+#: genuinely black marks and all three now land here rather than on the
+#: colour path; black is their real brand ink, and the guard resolves an
+#: ACHROMATIC brand to the theme's own foreground rather than walking it
+#: to the dimmest grey that passes (see appicons._readable_brand_color).
+#: So they come out as bright ink on obsidian and black on porcelain,
+#: which is what an app store does with a black mark. An entry belongs
+#: below only when a silhouette's brand colour is NOT black.
 MONOCHROME_LOGO_HEX: dict[str, str] = {
     # Cursor's mark is a monochrome cube; black is its own brand colour,
     # and the guard lifts it off obsidian exactly as it does for Steam,
@@ -379,6 +456,44 @@ MONOCHROME_LOGO_HEX: dict[str, str] = {
     # here is the vendor's; so now is the ink.
     "Google.Antigravity": "#3186ff",
 }
+
+
+#: Any declaration in an SVG that actually names a colour. `none`,
+#: `currentColor` and `inherit` are deliberately excluded: the first two
+#: are the marks of a SILHOUETTE (a shape with no ink of its own) and the
+#: third names nothing.
+_DECLARES_COLOUR = re.compile(
+    r"(?:fill|stroke|stop-color)\s*[:=]\s*\"?\s*"
+    r"(?!none\b)(?!currentColor\b)(?!inherit\b)[^\"';\s>]+")
+
+
+def is_silhouette(svg: str) -> bool:
+    """Does this artwork carry NO colour of its own?
+
+    THE `currentColor` TEST ALONE WAS WRONG, and four marks shipped
+    wrong because of it. A brand-logo set publishes two shapes of
+    monochrome mark: one that says `fill="currentColor"` (which this
+    always caught) and one that says NOTHING AT ALL — a bare `<path d=
+    "..."/>`, which the SVG spec paints in the initial fill value, black.
+    thesvg-color:7zip, thesvg-color:epic-games-light,
+    thesvg-color:mingw-w64 and devicon:ollama are all the second kind:
+    silhouettes wearing a colour set's prefix.
+
+    The consequence was not subtle. Flagged `color: true`, a mark takes
+    the render-as-drawn path, which deliberately does not touch colours —
+    so it painted solid black, and the runtime's rescue plate fired and
+    bolted a near-white tile behind it. Four rows in a dark-theme catalog
+    became glaring white squares beside Chrome, Spotify and VLC sitting
+    quietly on the neutral well. Classified correctly they go through the
+    contrast guard instead and come out as readable ink on both themes,
+    which is what every other silhouette in the set already did.
+
+    Reading the file is the right instrument here for the reason the
+    `color` flag exists at all: the pass below fetches artwork it has
+    never seen, so the classification has to be derived from what actually
+    arrived rather than declared alongside the URL.
+    """
+    return "currentColor" in svg or not _DECLARES_COLOUR.search(svg)
 
 
 _SVG_NS = "http://www.w3.org/2000/svg"
@@ -579,15 +694,13 @@ def main() -> int:
             handle.write(data)
         fetched += 1
         # DETECTED, not assumed. Some brand-logo sets publish a mark as a
-        # single path filled with `currentColor` — a SILHOUETTE wearing a
-        # colour set's prefix. Flagging one of those `color: true` would
-        # send it down the render-as-drawn path, where "currentColor"
-        # resolves to black and the mark disappears into a dark canvas
-        # with a rescue plaque bolted behind it. Reading the file decides
-        # correctly for every entry, including ones added later.
+        # SILHOUETTE wearing a colour set's prefix — see is_silhouette,
+        # which also explains why the obvious test (`"currentColor" in
+        # body`) is only half of the rule and which four marks shipped as
+        # white squares because of the missing half.
         with open(path, "rb") as handle:
             body = handle.read().decode("utf-8", "ignore")
-        monochrome = "currentColor" in body
+        monochrome = is_silhouette(body)
         record = {
             "file": f"{safe}.svg",
             "source": icon_id,

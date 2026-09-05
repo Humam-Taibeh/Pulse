@@ -385,10 +385,29 @@ class TestAppIcons:
         """`color: true` means "render as drawn"; its absence means
         "recolour through the contrast guard". Getting this backwards is
         silent and ugly in opposite directions — a gradient logo flattened
-        to one blob, or a `currentColor` silhouette rendered as pure black
-        on obsidian with a rescue plaque bolted behind it.
+        to one blob, or a silhouette rendered as pure black on obsidian
+        with a rescue plaque bolted behind it.
+
+        THE TEST ASKS THE TOOL, and that is a v16 fix rather than a tidy-
+        up. It re-implemented the rule as `"currentColor" in body`, which
+        is what the fetcher was ALSO doing — so the two agreed, and both
+        were half right, and the agreement is precisely what made the
+        defect invisible from here. A brand-logo set publishes two shapes
+        of monochrome mark; the second declares no fill at all and the SVG
+        spec paints it black. Four marks shipped flagged `color: true`
+        while being solid black silhouettes, each with a near-white rescue
+        tile bolted behind it on the dark theme.
+
+        Importing tools.fetch_app_icons.is_silhouette means the manifest
+        is checked against the ONE definition that produced it, so a
+        future refinement cannot leave a stale copy of the rule here
+        quietly passing.
         """
         import json
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "tools"))
+        from fetch_app_icons import is_silhouette
+
         manifest = json.load(open(
             os.path.join(_ROOT, "assets/appicons/manifest.json"),
             encoding="utf-8"))
@@ -396,12 +415,64 @@ class TestAppIcons:
         for app_id, entry in manifest.items():
             path = os.path.join(_ROOT, "assets/appicons", entry["file"])
             body = open(path, encoding="utf-8", errors="ignore").read()
-            uses_current = "currentColor" in body
-            if entry.get("color") and uses_current:
-                wrong.append(f"{app_id}: flagged colour but uses currentColor")
-            if not entry.get("color") and not uses_current and "source" in entry:
+            silhouette = is_silhouette(body)
+            if entry.get("color") and silhouette:
+                wrong.append(
+                    f"{app_id}: flagged colour, but the artwork declares no "
+                    "colour of its own")
+            if not entry.get("color") and not silhouette and "source" in entry:
                 wrong.append(f"{app_id}: full-colour artwork not flagged colour")
         assert not wrong, "mark classification is wrong:\n  " + "\n  ".join(wrong)
+
+    def test_no_mark_needs_a_white_tile_on_the_dark_theme(self):
+        """THE WHITE SQUARES, pinned as the measurement that made them a
+        defect rather than a matter of taste.
+
+        appicons._rescue_well offers a mark three plate tones and takes the
+        first that clears the contrast floor: the resting neutral, then the
+        bare dialog surface (the well's lift removed), then a near-white
+        tile. The third is a genuinely necessary escape hatch — an
+        invisible mark is worse than a loud one — and on the dark theme it
+        is also a glaring white card in a column of quiet ones. 7-Zip,
+        VirtualBox, Epic Games, Ollama, MSYS2 and Cinebench all reached it,
+        which is six white cards beside Chrome, Spotify and VLC.
+
+        Three of those were silhouettes mislabelled as colour artwork and
+        are fixed at the source; VirtualBox clears on the bare surface,
+        which is the tier that did not exist; MSYS2 and Cinebench are
+        drawn marks and were redrawn. So the escape hatch stays reachable
+        in principle and is reached by nothing, and this is what says so —
+        by ASKING THE RUNTIME rather than by listing the six, so a mark
+        added tomorrow is measured too.
+        """
+        from PySide6.QtSvg import QSvgRenderer
+
+        from frontend import theme as TH
+        from utils import appicons, resources
+
+        t = TH.tokens("dark")
+        surface = appicons._parse_color(t["dialog_bg"], "#16181d")
+        blazing = []
+        for app_id, entry in sorted(appicons._manifest().items()):
+            if not entry.get("color"):
+                continue          # recoloured through the guard, no plate
+            path = resources.find_resource(
+                f"assets/appicons/{entry['file']}")
+            renderer = QSvgRenderer(path)
+            appicons._keep_aspect(renderer)
+            tone = appicons._rescue_well(renderer, 72, surface, True)
+            # BY OPACITY, not by lightness. The resting well on the dark
+            # theme is white at alpha 18 — a faint lift whose .name() is
+            # "#ffffff" and whose lightness is 1.0 — so a lightness test
+            # flags all forty marks and proves nothing. The rescue tile is
+            # the only tone in the ramp that is nearly OPAQUE (0.96); the
+            # resting lift is 18/255 and the bare surface is 0.
+            if tone.alpha() > 200:
+                blazing.append(
+                    f"{app_id} -> {tone.name()} at alpha {tone.alpha()}")
+        assert not blazing, (
+            "marks wearing a white card on the dark theme:\n  "
+            + "\n  ".join(blazing))
 
     def test_silhouette_marks_carry_a_brand_hex(self):
         """A recoloured mark needs a colour to be recoloured TO."""

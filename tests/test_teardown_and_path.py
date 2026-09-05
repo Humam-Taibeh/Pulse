@@ -1039,6 +1039,35 @@ class TestBrandMarks:
         # letterboxes into a 20px square about four pixels tall — so the
         # square silhouette is genuinely the better artwork here.
         "XP8CLZL93F5Z4P",
+        # -- v16: THREE MARKS THAT WERE ALWAYS SILHOUETTES AND WERE
+        #    LABELLED FULL-COLOUR. This is a classification fix, not a
+        #    downgrade: the ARTWORK is unchanged and is still the vendor's
+        #    own. What changed is that the manifest stopped claiming it
+        #    carries colour.
+        #
+        #    The old classifier asked one question — `"currentColor" in
+        #    body` — and a brand-logo set publishes two shapes of
+        #    monochrome mark. The second says NOTHING at all: a bare
+        #    `<path d="..."/>`, which the SVG spec paints in the initial
+        #    fill value, black. All three below are that kind.
+        #
+        #    The consequence was visible and was reported: flagged
+        #    `color: true` they took the render-as-drawn path, painted
+        #    solid black, and the runtime bolted a near-white rescue tile
+        #    behind each one — three glaring white squares in a dark-theme
+        #    catalog beside Chrome, Spotify and VLC sitting quietly on the
+        #    neutral well. Classified correctly they go through the
+        #    contrast guard and come out as readable ink on both themes.
+        #    See tools/fetch_app_icons.is_silhouette.
+        #
+        # 7-Zip's mark is a black plaque with the name cut out of it.
+        "7zip.7zip",
+        # thesvg-color:epic-games-LIGHT is the dark-ink variant by name —
+        # the one drawn FOR light backgrounds — so black is not an
+        # accident of the file, it is which of the two was chosen.
+        "EpicGames.EpicGamesLauncher",
+        # devicon's llama is line art with no fill declared anywhere.
+        "Ollama.Ollama",
     }
 
     def test_almost_every_bundled_mark_is_full_colour(self):
@@ -1089,7 +1118,18 @@ class TestBrandMarks:
     def test_the_named_brands_carry_their_real_artwork(self):
         """The specific ones the sprint called out, each checked by AppId
         so a renamed catalog entry fails loudly rather than silently
-        dropping back to a silhouette."""
+        dropping back to the neutral glyph.
+
+        WHAT IS ASSERTED IS PROVENANCE, NOT THE `color` FLAG, and that is
+        a v16 correction of this test rather than a relaxation of it. The
+        flag says how the runtime PAINTS a mark — as drawn, or recoloured
+        through the contrast guard — and it was being read here as though
+        it meant "this is the vendor's artwork". Those are different
+        claims, and reading one for the other is what let Epic Games sit
+        in this list while being a black silhouette mislabelled as colour
+        (see MONOCHROME_BY_DESIGN). The vendor's mark being monochrome is
+        not a defect; painting it as though it were not is.
+        """
         manifest = self._manifest()
         for app_id in ("Google.Chrome", "Valve.Steam",
                        "EpicGames.EpicGamesLauncher",
@@ -1099,15 +1139,42 @@ class TestBrandMarks:
                        # at logos:eclipse-icon, the Eclipse IDE's circle —
                        # a different product from the same foundation.
                        "EclipseAdoptium.Temurin.21.JDK",
-                       # Likewise MSYS2, which carried the GNU project's
-                       # gnu head: 18KB of line art that resolved to a grey
-                       # smudge at 20px.
-                       "MSYS2.MSYS2",
+                       # THE FULL-BODIED ISOMETRIC HEXAGON. logos:nodejs-
+                       # icon is the hexagon drawn as one flat silhouette
+                       # with the facet edges cut out of it; at 20px those
+                       # cut-outs close and it reads as a plain green
+                       # hexagon. devicon's is the three-face solid.
+                       "OpenJS.NodeJS.LTS",
                        "Microsoft.DotNet.DesktopRuntime.8",
                        "Guru3D.Afterburner"):
             entry = manifest.get(app_id)
-            assert entry and entry.get("color"), (
-                f"{app_id} is not a full-colour mark: {entry}")
+            assert entry, f"{app_id} has no bundled mark at all"
+            assert entry.get("source") and not entry.get("drawn"), (
+                f"{app_id} is no longer fetched vendor artwork: {entry}")
+
+    def test_msys2_stopped_naming_a_different_project(self):
+        """MSYS2 was in the list above and has left it, which is the whole
+        point of moving it here rather than deleting the assertion.
+
+        It carried "thesvg-color:mingw-w64" — a correction of an earlier
+        "logos:gnu", and still wrong in the same way both times: MinGW-w64
+        is a toolchain MSYS2 can install, not MSYS2. It was also a black
+        silhouette mislabelled as colour, so the row painted a solid black
+        lattice on a white rescue tile.
+
+        No open set has MSYS2's own purple badge — Iconify's federated
+        search returns zero for "msys2" — so it is DRAWN, in MSYS2's
+        colours, and labelled as drawn. A fetched mark naming a different
+        project is the one outcome this must not go back to.
+        """
+        entry = self._manifest().get("MSYS2.MSYS2")
+        assert entry, "MSYS2 lost its mark entirely"
+        assert entry.get("drawn") and entry["source"] == "pulse-drawn", (
+            f"MSYS2 is claiming fetched artwork again: {entry}")
+        body = open(os.path.join(_ROOT, "assets/appicons", entry["file"]),
+                    encoding="utf-8").read()
+        assert "MinGW" not in body and "gnu" not in body.lower(), (
+            "the MSYS2 asset still names another project")
 
     def test_no_mark_uses_currentcolor(self):
         """`color: true` means "render as drawn". A file that is actually a
@@ -1123,46 +1190,54 @@ class TestBrandMarks:
                 wrong.append(app_id)
         assert not wrong, f"flagged full-colour but drawn as silhouettes: {wrong}"
 
-    #: Catalog rows with NO BUNDLED MARK AT ALL, and the reason each is a
-    #: gap. A CLOSED list, so the two tests below can fail in BOTH
-    #: directions rather than only the one anyone thought of.
+    #: Catalog rows with NO BUNDLED MARK AT ALL. A CLOSED list, so the
+    #: tests below can fail in BOTH directions rather than only the one
+    #: anyone thought of.
     #:
-    #: THIS USED TO HOLD EIGHT ENTRIES and now holds two, because the six
-    #: that were gaps for a "no mark exists anywhere" reason — BlueStacks,
-    #: DirectX, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo — now carry
-    #: PULSE-DRAWN marks. Nothing was found for them; the search was
-    #: re-run across every collection Iconify aggregates and still returns
-    #: zero. What changed is the decision, not the availability: nine grey
-    #: parcels in a nine-row group read as a broken list rather than as an
-    #: honest fallback, so the marks are drawn and LABELLED as drawn. See
-    #: test_contract.py::test_no_mark_is_a_lookalike, which is the guard
-    #: that keeps that exception narrow, and DRAWN_MAP in
-    #: tools/fetch_app_icons.py for the full reasoning.
+    #: IT IS EMPTY NOW, and the history is the point. It held eight
+    #: entries, then two, and the two that survived — WinRAR and OpenAL —
+    #: were kept out for reasons a drawn mark did not answer: for the
+    #: other six nothing existed anywhere, while for these two something
+    #: existed and was merely unusable. That distinction was worth holding
+    #: while it meant something.
     #:
-    #: The two that remain are here for reasons a drawn mark does not
-    #: answer, and both could still close properly:
+    #: It stopped meaning something when the rest of both pillars filled
+    #: in. A blank sitting BESIDE thirty-seven marks does not read as an
+    #: honest absence, it reads as an icon that failed to load — and the
+    #: two causes were both re-measured before the decision changed rather
+    #: than taken on trust:
     #:
-    #:   THE MARK EXISTS BUT THE LICENCE DOES NOT FIT — WinRAR. Its real
-    #:   stacked-books logo is in OpenMoji (CC BY-SA 4.0); taking it would
-    #:   put a copyleft obligation on an MIT app for one row. The only
-    #:   permissive "winrar" is a generic archive pictogram wearing the
-    #:   name, which is a lookalike and still forbidden.
+    #:   WINRAR — `openmoji:winrar` is the real books-and-belt mark and
+    #:   OpenMoji is CC BY-SA 4.0, a share-alike licence an MIT app cannot
+    #:   bundle for one row. `reicon:winrar` is an unattributed
+    #:   `currentColor` outline of the same subject. Neither is usable and
+    #:   neither will become so.
     #:
-    #:   THE MARK EXISTS BUT THE GEOMETRY DOES NOT — OpenAL. Every
-    #:   published mark is a WORDMARK at roughly 128x24; the runtime draws
-    #:   into a 20px square (see appicons._MARK_RATIO), where a wordmark
-    #:   is an illegible smear. This one closes the day a square mark
-    #:   exists, and is worth distinguishing from "none exists" for that
-    #:   reason.
-    NO_AUTHENTIC_MARK = frozenset({
+    #:   OPENAL — `devicon:openal` and `thesvg-color:openal` are the same
+    #:   asset, the red "openAL" WORDMARK with a microphone for the "A".
+    #:   Rendered into a 20px square (appicons._MARK_RATIO) it is four
+    #:   illegible letterforms. Confirmed by RENDERING it, not by reading
+    #:   the path data.
+    #:
+    #: So both now carry PULSE-DRAWN pictograms — bound archive volumes,
+    #: and a speaker radiating arcs — in the products' own colours and
+    #: flagged `drawn: true`. The guard that mattered has not gone
+    #: anywhere: it moved from "these two must stay absent" to "these two
+    #: must never acquire a FETCHED mark", which is the assertion below
+    #: and the one that was always doing the work.
+    NO_AUTHENTIC_MARK = frozenset()
+
+    #: The two whose authentic artwork exists and cannot be bundled, with
+    #: the reason each is unusable. See NO_AUTHENTIC_MARK above.
+    UNUSABLE_AUTHENTIC_MARK = frozenset({
         "RARLab.WinRAR", "CreativeTechnology.OpenAL",
     })
 
     def test_every_catalog_app_has_a_mark_or_is_a_known_exception(self):
         """THE DIRECTION NOTHING CHECKED. The manifest was verified against
-        the files it names, and the six unmarked apps were pinned as
-        absent — but nothing ever asked whether the OTHER catalog rows had
-        marks at all.
+        the files it names, and the unmarked apps were pinned as absent —
+        but nothing ever asked whether the OTHER catalog rows had marks at
+        all.
 
         So adding an app to SOFTWARE_CATALOG and forgetting its SVG was
         silent: the row rendered the neutral package glyph, which is a
@@ -1191,29 +1266,31 @@ class TestBrandMarks:
         assert not orphans, (
             f"bundled marks for apps not in the catalog: {orphans}")
 
-    def test_nothing_was_taken_for_the_brands_with_no_mark(self):
-        """WinRAR and OpenAL still have no bundled mark, and each must stay
-        absent for its OWN reason rather than acquiring a convenient one.
+    def test_nothing_was_fetched_for_the_brands_whose_artwork_is_unusable(self):
+        """WinRAR and OpenAL may carry a DRAWN mark and must never carry a
+        FETCHED one.
 
         The failure this guards is not carelessness, it is convenience: a
-        keyword search offers a plausible-looking file for both (a generic
-        archive pictogram for WinRAR, a wordmark for OpenAL), and either
+        keyword search offers a plausible-looking file for both — a generic
+        archive pictogram for WinRAR, a wordmark for OpenAL — and either
         would silently close the gap with something that is not the
-        vendor's mark or is not legible at 20px.
+        vendor's mark, or is not legible at 20px, or carries a share-alike
+        licence into an MIT bundle.
 
-        A DRAWN mark would not be an acceptable answer here either, which
-        is why this survived the change that emptied most of this set: the
-        nine drawn marks exist because nothing at all was available, while
-        for these two something exists and is merely unusable — a licence
-        to respect and a geometry to fix, not a hole to paper over.
+        A drawn mark cannot make any of those three mistakes, because it
+        SAYS what it is: `drawn: true` and `source: "pulse-drawn"` in the
+        same field a fetched mark uses to name its collection. That is the
+        whole difference this assertion turns on.
         """
         manifest = self._manifest()
-        for app_id in sorted(self.NO_AUTHENTIC_MARK):
-            assert app_id not in manifest, (
-                f"{app_id} acquired a mark — check it is really that "
-                "vendor's logo and not a keyword lookalike, that its "
-                "licence is CC0/MIT rather than copyleft, and that it is "
-                "square enough to read at 20px")
+        for app_id in sorted(self.UNUSABLE_AUTHENTIC_MARK):
+            entry = manifest.get(app_id)
+            assert entry, f"{app_id} lost its mark"
+            assert entry.get("drawn") and entry["source"] == "pulse-drawn", (
+                f"{app_id} acquired a FETCHED mark: {entry} — check it is "
+                "really that vendor's logo and not a keyword lookalike, "
+                "that its licence is CC0/MIT rather than copyleft, and "
+                "that it is square enough to read at 20px")
 
     def test_every_icon_is_one_size_in_one_well(self, window, qapp):
         """Uniform GEOMETRY is what makes a column of logos read as a set.

@@ -1,7 +1,7 @@
 {
  "7zip.7zip": {
-  "color": true,
   "file": "7zip.7zip.svg",
+  "hex": "#000000",
   "source": "thesvg-color:7zip",
   "title": "7Zip"
  },
@@ -39,7 +39,7 @@
   "color": true,
   "drawn": true,
   "file": "BlueStack.BlueStacks.svg",
-  "hex": "#8bc53f",
+  "hex": "#3fa72f",
   "source": "pulse-drawn",
   "title": "BlueStacks"
  },
@@ -64,6 +64,14 @@
   "hex": "#f09e1a",
   "source": "pulse-drawn",
   "title": "HWMonitor"
+ },
+ "CreativeTechnology.OpenAL": {
+  "color": true,
+  "drawn": true,
+  "file": "CreativeTechnology.OpenAL.svg",
+  "hex": "#2aa9e0",
+  "source": "pulse-drawn",
+  "title": "OpenAL"
  },
  "CrystalDewWorld.CrystalDiskInfo": {
   "color": true,
@@ -92,8 +100,8 @@
   "title": "Eclipse Adoptium"
  },
  "EpicGames.EpicGamesLauncher": {
-  "color": true,
   "file": "EpicGames.EpicGamesLauncher.svg",
+  "hex": "#000000",
   "source": "thesvg-color:epic-games-light",
   "title": "Epic Games Light"
  },
@@ -143,15 +151,17 @@
  },
  "MSYS2.MSYS2": {
   "color": true,
+  "drawn": true,
   "file": "MSYS2.MSYS2.svg",
-  "source": "thesvg-color:mingw-w64",
-  "title": "Mingw W64"
+  "hex": "#8a5b8e",
+  "source": "pulse-drawn",
+  "title": "MSYS2"
  },
  "Maxon.CinebenchR23": {
   "color": true,
   "drawn": true,
   "file": "Maxon.CinebenchR23.svg",
-  "hex": "#8e44ad",
+  "hex": "#a862d4",
   "source": "pulse-drawn",
   "title": "Cinebench"
  },
@@ -182,16 +192,16 @@
   "title": "Notion Icon"
  },
  "Ollama.Ollama": {
-  "color": true,
   "file": "Ollama.Ollama.svg",
+  "hex": "#000000",
   "source": "devicon:ollama",
   "title": "Ollama"
  },
  "OpenJS.NodeJS.LTS": {
   "color": true,
   "file": "OpenJS.NodeJS.LTS.svg",
-  "source": "logos:nodejs-icon",
-  "title": "Nodejs Icon"
+  "source": "devicon:nodejs",
+  "title": "Nodejs"
  },
  "OpenWebUI.OpenWebUI": {
   "color": true,
@@ -228,6 +238,14 @@
   "file": "Python.Python.3.12.svg",
   "source": "logos:python",
   "title": "Python"
+ },
+ "RARLab.WinRAR": {
+  "color": true,
+  "drawn": true,
+  "file": "RARLab.WinRAR.svg",
+  "hex": "#1f6fb4",
+  "source": "pulse-drawn",
+  "title": "WinRAR"
  },
  "REALiX.HWiNFO": {
   "color": true,
