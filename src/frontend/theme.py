@@ -959,6 +959,52 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # U+E74E, the same Save glyph as
                                                   # 'save')
     'clock':         ("\uE823", "\u25f4"),        # Timestamp toggle
+    # --- bloatware rows (v16) ---
+    # ONE MARK PER APP, for the one dialog that decides about apps ONE AT
+    # A TIME. Every row in the Bloatware Purge used to wear its catalog
+    # GROUP's glyph, so twenty-five promo rows were twenty-five identical
+    # trash cans and recognising Clipchamp from Candy Crush meant reading
+    # every label. Fourteen of those rows carry real brand artwork now
+    # (see BLOAT_LOGO_MAP in tools/fetch_app_icons.py); the entries below
+    # are what the rest fall through to.
+    #
+    # THESE ARE PICTOGRAMS OF WHAT AN APP IS, not renditions of anybody's
+    # logo — the same distinction DRAWN_MAP draws, and a much easier one
+    # to hold here because a Fluent glyph is visibly Microsoft's icon font
+    # rather than a brand mark. A thermometer is not the Weather app's
+    # logo and could not be mistaken for it.
+    #
+    # Every codepoint below was verified by the ADVANCE-WIDTH test this
+    # table's header documents, and it earned its keep again: U+EB1F and
+    # U+E900 both looked like plausible answers for "sports" and "news"
+    # and are both .notdef.
+    'video':         ("\uE714", "\U0001f3ac"),    # Movies & TV, streaming stubs
+    'music':         ("\uE8D6", "\U0001f3b5"),    # Groove Music
+    'phone':         ("\uE8EA", "\U0001f4f1"),    # Phone Link and its host
+    'mail':          ("\uE715", "\u2709\ufe0f"),  # Mail and Calendar
+    'weather':       ("\uE9CA", "\U0001f321\ufe0f"),  # Weather (a thermometer)
+    'news':          ("\uE809", "\U0001f4f0"),    # News (a columned page)
+    'finance':       ("\uE8C7", "\U0001f4b3"),    # Finance
+    'sports':        ("\uE805", "\U0001f3c3"),    # Sports
+    'map':           ("\uE826", "\U0001f5fa\ufe0f"),  # Windows Maps (offline)
+    'people':        ("\uE716", "\U0001f465"),    # People
+    'help':          ("\uE897", "\u2753"),        # Get Help
+    'feedback':      ("\uED15", "\U0001f4ac"),    # Feedback Hub
+    'tip':           ("\uEA80", "\U0001f4a1"),    # Tips / Get Started
+    # A squared grid rather than the puzzle piece 'puzzle' already
+    # carries: the emoji is what renders when the OS icon font is
+    # absent, and two entries falling back to the same picture is
+    # the codepoint clash this table forbids, one tier down.
+    'widgets':       ("\uECA5", "\u25a6"),        # The Widgets board
+    'palette':       ("\uE790", "\U0001f3a8"),    # Paint 3D
+    'note':          ("\uE932", "\U0001f4dd"),    # Sticky Notes
+    'mic':           ("\uE720", "\U0001f3a4"),    # Cortana
+    'cube':          ("\uF158", "\U0001f9ca"),    # 3D Builder
+    'sparkle':       ("\uF4A5", "\u2728"),        # Mixed Reality Portal
+    # The purge's CLEAN state — see widgets.BloatwarePurgeDialog's clean
+    # page. A filled circle with a check in it, which is the mark every
+    # desktop system uses for "this finished and there is nothing wrong".
+    'checkcircle':   ("\uEC61", "\u2705"),        # "Your system is clean"
 }
 
 

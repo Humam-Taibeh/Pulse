@@ -1258,13 +1258,24 @@ class TestBrandMarks:
             f"{sorted(self.NO_AUTHENTIC_MARK - unmarked)}")
 
     def test_no_bundled_mark_outlives_the_app_it_was_fetched_for(self):
-        """The other half: an SVG for an app the catalog has since dropped
-        is dead weight in the bundle and a logo Pulse ships for software it
-        no longer offers."""
+        """The other half: an SVG for an app EITHER catalog has since
+        dropped is dead weight in the bundle and a logo Pulse ships for
+        software it no longer offers.
+
+        TWO CATALOGS SINCE v16. The purge renders its own list of ~48
+        entries and those rows carry bundled marks too, namespaced
+        `Bloat.<Id>` so the two key spaces cannot answer for each other.
+        Both are checked against their own source, which is what keeps
+        this failing in the direction it was written for: a mark whose app
+        is gone.
+        """
+        from conftest import bloat_catalog_ids
         from frontend.menu_structure import catalog_app_ids
-        orphans = sorted(set(self._manifest()) - set(catalog_app_ids()))
+        known = set(catalog_app_ids()) | {
+            "Bloat." + entry_id for entry_id in bloat_catalog_ids()}
+        orphans = sorted(set(self._manifest()) - known)
         assert not orphans, (
-            f"bundled marks for apps not in the catalog: {orphans}")
+            f"bundled marks for apps in neither catalog: {orphans}")
 
     def test_nothing_was_fetched_for_the_brands_whose_artwork_is_unusable(self):
         """WinRAR and OpenAL may carry a DRAWN mark and must never carry a

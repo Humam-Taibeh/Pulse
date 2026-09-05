@@ -52,6 +52,31 @@ function Resolve-BloatwareTargets {
         the GUI can render "not detected" rows rather than silently
         shortening its own list.
 
+        FOUR SOURCES, AND `Presence` NAMES WHICH ONE ANSWERED. A package
+        can be on this machine in four different senses, and reporting
+        them as one boolean was the defect this parameter set exists to
+        fix:
+
+          INSTALLED   registered for a user profile. The obvious one, and
+                      the only one the scan used to be able to see
+                      unelevated.
+          STAGED      provisioned for future profiles. Removing tiers 1+2
+                      is what makes a purge survive a feature update, and
+                      an unelevated scan that cannot see this tier is
+                      reporting on half the machine.
+          PINNED      present on the Start menu without being registered
+                      for THIS profile - the cloud stub Windows 11 lays
+                      down for a promotional app before anyone opens it.
+                      A user looking at a Disney+ tile and reading "NOT
+                      PRESENT" has been told something plainly false.
+          DESKTOP     an MSI/EXE leftover found in the uninstall hive,
+                      which is how the codec tier is found at all.
+
+    .PARAMETER Startup
+        Package names the Start menu is offering. See `Presence` above:
+        this is the tier that makes a pinned stub visible to a scan with
+        no rights at all.
+
     .PARAMETER SelectedIds
         Exactly the entries to act on. EMPTY MEANS "every non-optional
         entry", which is what a headless `-Task RemoveBloatware` does; it
@@ -64,12 +89,36 @@ function Resolve-BloatwareTargets {
         [string[]]$Installed = @(),
         [string[]]$Provisioned = @(),
         [string[]]$Desktop = @(),
+        [string[]]$Startup = @(),
         [string[]]$SelectedIds = @(),
         [string[]]$Protected = @()
     )
 
     $Explicit = @($SelectedIds | Where-Object { $_ })
     $Results = @()
+
+    # ONE ENTRY, SEVERAL NAMES. A `Match` may carry alternatives separated
+    # by "|", because a single product routinely ships under more than one
+    # package name across Windows versions: the Xbox console companion is
+    # Microsoft.XboxApp on 10 and Microsoft.GamingApp on 11, and Phone Link
+    # is Microsoft.YourPhone then MicrosoftWindows.CrossDevice.
+    #
+    # THE ALTERNATIVE WAS TWO CATALOG ENTRIES AND IT IS WORSE. This file
+    # already carries the scar: "*CandyCrush*" beside "king.com.*" matched
+    # the same packages twice, so the GUI drew two rows for one app and a
+    # user who unticked one still had it removed by the other. One row,
+    # several patterns, keeps the catalog's "one entry is one decision"
+    # promise intact.
+    #
+    # "|" is safe as the separator because it is not a wildcard character
+    # in PowerShell's -like: the operator understands *, ?, [ and ], and
+    # nothing else.
+    function Local:Expand-MatchPatterns {
+        param([string]$Pattern)
+        if (-not $Pattern) { return @() }
+        return @($Pattern -split "\|" | ForEach-Object { $_.Trim() } |
+                 Where-Object { $_ })
+    }
 
     foreach ($Entry in $Catalog) {
         $Match = if ($Entry.ContainsKey("Match")) { [string]$Entry.Match } else { "" }
@@ -79,27 +128,56 @@ function Resolve-BloatwareTargets {
         $HitInstalled = @()
         $HitProvisioned = @()
         $HitDesktop = @()
+        $HitStartup = @()
         $Blocked = @()
 
-        if ($Match) {
+        $Patterns = @(Expand-MatchPatterns -Pattern $Match)
+        if ($Patterns.Count -gt 0) {
             # A candidate is anything the catalog pattern matches; a TARGET
             # is a candidate no protected pattern claims. Splitting the two
             # is what lets the caller report "skipped, protected" instead
             # of silently doing nothing.
-            foreach ($Name in @($Installed | Where-Object { $_ -like $Match })) {
+            $Hits = { param($Pool)
+                @($Pool | Where-Object {
+                    $Name = $_
+                    @($Patterns | Where-Object { $Name -like $_ }).Count -gt 0
+                })
+            }
+            foreach ($Name in @(& $Hits $Installed)) {
                 if (Test-ProtectedPackage -Name $Name -Protected $Protected) { $Blocked += $Name }
                 else { $HitInstalled += $Name }
             }
-            foreach ($Name in @($Provisioned | Where-Object { $_ -like $Match })) {
+            foreach ($Name in @(& $Hits $Provisioned)) {
                 if (Test-ProtectedPackage -Name $Name -Protected $Protected) { $Blocked += $Name }
                 else { $HitProvisioned += $Name }
+            }
+            # PROTECTED APPLIES HERE TOO. A Start menu entry is a real
+            # handle on a real package, so a catalog wildcard that reached
+            # the Store or the shell through this tier would be exactly
+            # the accident $Script:BloatProtected exists to stop.
+            foreach ($Name in @(& $Hits $Startup)) {
+                if (Test-ProtectedPackage -Name $Name -Protected $Protected) { $Blocked += $Name }
+                else { $HitStartup += $Name }
             }
         }
         if ($DesktopName) {
             $HitDesktop = @($Desktop | Where-Object { $_ -like $DesktopName })
         }
 
-        $Detected = ($HitInstalled.Count + $HitProvisioned.Count + $HitDesktop.Count) -gt 0
+        $Detected = ($HitInstalled.Count + $HitProvisioned.Count +
+                     $HitDesktop.Count + $HitStartup.Count) -gt 0
+        # THE STRONGEST CLAIM THE EVIDENCE SUPPORTS, in that order. A
+        # package that is both installed and pinned is INSTALLED - the
+        # weaker word would understate what removing it does - and one
+        # that is only pinned is exactly the case the old boolean could
+        # not express. "absent" rather than an empty string so the GUI
+        # never has to treat a missing field as a state.
+        $Presence =
+            if     ($HitInstalled.Count   -gt 0) { "installed" }
+            elseif ($HitDesktop.Count     -gt 0) { "installed" }
+            elseif ($HitProvisioned.Count -gt 0) { "staged" }
+            elseif ($HitStartup.Count     -gt 0) { "pinned" }
+            else                                 { "absent" }
         $Selected = if ($Explicit.Count -gt 0) { $Explicit -contains $Entry.Id } else { -not $Optional }
 
         $Results += [pscustomobject]@{
@@ -112,8 +190,10 @@ function Resolve-BloatwareTargets {
             Installed   = @($HitInstalled | Sort-Object -Unique)
             Provisioned = @($HitProvisioned | Sort-Object -Unique)
             Desktop     = @($HitDesktop | Sort-Object -Unique)
+            Startup     = @($HitStartup | Sort-Object -Unique)
             Blocked     = @($Blocked | Sort-Object -Unique)
             Detected    = $Detected
+            Presence    = $Presence
             Selected    = [bool]$Selected
         }
     }
@@ -163,6 +243,87 @@ function Get-InstalledDesktopBloat {
     return $Found
 }
 
+function Get-StagedPackageNames {
+    <#
+    .SYNOPSIS
+        Staged (provisioned) package names, read from the registry rather
+        than from DISM. NO ELEVATION REQUIRED.
+
+    .DESCRIPTION
+        THE SCAN WAS DECLARING A BLIND SPOT IT DID NOT HAVE.
+        Get-AppxProvisionedPackage -Online needs Administrator, so an
+        unelevated scan set $Script:BloatProvisionedReadable = $false and
+        told the user that apps which would return after a feature update
+        were not listed. That was honest about the DISM call and wrong
+        about the machine: HKLM\...\Appx\AppxAllUserStore\Applications
+        holds the same staged set and is READABLE BY EVERYONE. Measured on
+        an unelevated shell it returns 33 entries where DISM returned
+        "Access is denied".
+
+        The key names are package FULL names -
+        `Microsoft.GamingApp_2608.1001.17.0_neutral_~_8wekyb3d8bbwe` - so
+        the family segment is split off the front, which is the form the
+        catalog's Match patterns are written against.
+
+        Used as a FALLBACK, not a replacement. DISM is the authoritative
+        answer when it is available; this is what an unelevated scan says
+        instead of nothing.
+    #>
+    $Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications"
+    $Names = @()
+    try {
+        foreach ($Key in @(Get-ChildItem -Path $Path -ErrorAction Stop)) {
+            $Full = [string]$Key.PSChildName
+            if (-not $Full) { continue }
+            $Names += ($Full -split "_")[0]
+        }
+    } catch {
+        Write-Log "Get-StagedPackageNames: could not read the staged package store - $($_.Exception.Message)"
+    }
+    return @($Names | Where-Object { $_ } | Sort-Object -Unique)
+}
+
+function Get-StartMenuPackageNames {
+    <#
+    .SYNOPSIS
+        Package names the Start menu is offering, whether or not they are
+        registered for this profile. NO ELEVATION REQUIRED.
+
+    .DESCRIPTION
+        THE CLOUD STUB, and the reason a user could be looking at a
+        Disney+ tile while the scan said "NOT PRESENT". Windows 11 pins
+        promotional apps on the Start menu before anyone opens them; until
+        first launch there is no registered package for this profile, so
+        Get-AppxPackage does not report one and neither did Pulse.
+        Measured on the developer's own machine: Get-StartApps returns
+        `Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App` for an Xbox
+        app that Get-AppxPackage does not list at all.
+
+        Get-StartApps hands back an AppID of the form
+        `Family_PublisherHash!ApplicationId` for a packaged app and a plain
+        file path for a desktop shortcut. Only the first form carries a
+        package identity, so the rest are dropped rather than guessed at.
+
+        Failure is silent and empty: the cmdlet ships in the StartLayout
+        module on Windows 10 and 11, and a machine without it simply loses
+        this tier rather than the whole scan.
+    #>
+    $Names = @()
+    try {
+        foreach ($App in @(Get-StartApps -ErrorAction Stop)) {
+            $AppId = [string]$App.AppID
+            if ($AppId -notlike "*!*") { continue }   # a path, not a package
+            $Family = ($AppId -split "!")[0]
+            if (-not $Family) { continue }
+            # Family is `Name_PublisherHash`; the catalog matches on Name.
+            $Names += ($Family -split "_")[0]
+        }
+    } catch {
+        Write-Log "Get-StartMenuPackageNames: Get-StartApps is unavailable - $($_.Exception.Message)"
+    }
+    return @($Names | Where-Object { $_ } | Sort-Object -Unique)
+}
+
 function Get-BloatwareInventory {
     <# The catalog, resolved against what is actually on this machine.
        One AppX enumeration for the whole scan rather than one per entry:
@@ -196,16 +357,28 @@ function Get-BloatwareInventory {
         $Provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop |
                          ForEach-Object { $_.DisplayName })
     } catch {
-        $Script:BloatProvisionedReadable = $false
-        Write-Log "Get-BloatwareInventory: could not enumerate provisioned packages - $($_.Exception.Message)"
+        # THE REGISTRY KNOWS, EVEN WHEN DISM WILL NOT SAY. See
+        # Get-StagedPackageNames: the staged set is readable by everyone
+        # from HKLM, so an unelevated scan is only blind here if this
+        # falls through too. The caveat is raised for the second case
+        # alone now, which is what stops the dialog telling a user its
+        # answer is partial when it is complete.
+        Write-Log "Get-BloatwareInventory: DISM refused the provisioned list ($($_.Exception.Message)); reading the staged package store instead."
+        $Provisioned = @(Get-StagedPackageNames)
+        $Script:BloatProvisionedReadable = $Provisioned.Count -gt 0
     }
 
     $Desktop = @()
     try { $Desktop = @(Get-InstalledDesktopBloat | ForEach-Object { $_.DisplayName }) }
     catch { Write-Log "Get-BloatwareInventory: could not read the uninstall hives - $($_.Exception.Message)" }
 
+    # The Start menu tier. Cheap, unprivileged, and the only source that
+    # sees a promotional stub before anyone has opened it.
+    $Startup = @(Get-StartMenuPackageNames)
+
     return @(Resolve-BloatwareTargets -Catalog $Script:BloatCatalog `
                 -Installed $Installed -Provisioned $Provisioned -Desktop $Desktop `
+                -Startup $Startup `
                 -SelectedIds $SelectedIds -Protected $Script:BloatProtected)
 }
 

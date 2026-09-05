@@ -35,6 +35,126 @@
   "source": "thesvg-color:itunes",
   "title": "Itunes"
  },
+ "Bloat.Clipchamp": {
+  "color": true,
+  "file": "Bloat.Clipchamp.svg",
+  "source": "thesvg-color:microsoft-clipchamp",
+  "title": "Microsoft Clipchamp"
+ },
+ "Bloat.Copilot": {
+  "color": true,
+  "file": "Bloat.Copilot.svg",
+  "source": "thesvg-color:microsoft-copilot",
+  "title": "Microsoft Copilot"
+ },
+ "Bloat.CopilotWeb": {
+  "color": true,
+  "file": "Bloat.CopilotWeb.svg",
+  "source": "thesvg-color:microsoft-copilot",
+  "title": "Microsoft Copilot"
+ },
+ "Bloat.Facebook": {
+  "color": true,
+  "file": "Bloat.Facebook.svg",
+  "source": "logos:facebook",
+  "title": "Facebook"
+ },
+ "Bloat.Instagram": {
+  "color": true,
+  "file": "Bloat.Instagram.svg",
+  "source": "thesvg-color:instagram",
+  "title": "Instagram"
+ },
+ "Bloat.LinkedIn": {
+  "color": true,
+  "file": "Bloat.LinkedIn.svg",
+  "source": "logos:linkedin-icon",
+  "title": "Linkedin Icon"
+ },
+ "Bloat.Messenger": {
+  "color": true,
+  "file": "Bloat.Messenger.svg",
+  "source": "logos:messenger",
+  "title": "Messenger"
+ },
+ "Bloat.OneNoteWin10": {
+  "color": true,
+  "file": "Bloat.OneNoteWin10.svg",
+  "source": "thesvg-color:microsoft-onenote",
+  "title": "Microsoft Onenote"
+ },
+ "Bloat.OutlookNew": {
+  "color": true,
+  "file": "Bloat.OutlookNew.svg",
+  "source": "thesvg-color:microsoft-outlook",
+  "title": "Microsoft Outlook"
+ },
+ "Bloat.Skype": {
+  "color": true,
+  "file": "Bloat.Skype.svg",
+  "source": "logos:skype",
+  "title": "Skype"
+ },
+ "Bloat.SpotifyStub": {
+  "color": true,
+  "file": "Bloat.SpotifyStub.svg",
+  "source": "logos:spotify-icon",
+  "title": "Spotify Icon"
+ },
+ "Bloat.TeamsPersonal": {
+  "color": true,
+  "file": "Bloat.TeamsPersonal.svg",
+  "source": "logos:microsoft-teams",
+  "title": "Microsoft Teams"
+ },
+ "Bloat.TikTok": {
+  "color": true,
+  "file": "Bloat.TikTok.svg",
+  "source": "thesvg-color:tiktok-light",
+  "title": "Tiktok Light"
+ },
+ "Bloat.Todos": {
+  "color": true,
+  "file": "Bloat.Todos.svg",
+  "source": "thesvg-color:microsoft-todo",
+  "title": "Microsoft Todo"
+ },
+ "Bloat.XboxApp": {
+  "color": true,
+  "file": "Bloat.XboxApp.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
+ "Bloat.XboxGameOverlay": {
+  "color": true,
+  "file": "Bloat.XboxGameOverlay.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
+ "Bloat.XboxGamingOverlay": {
+  "color": true,
+  "file": "Bloat.XboxGamingOverlay.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
+ "Bloat.XboxIdentity": {
+  "color": true,
+  "file": "Bloat.XboxIdentity.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
+ "Bloat.XboxSpeech": {
+  "color": true,
+  "file": "Bloat.XboxSpeech.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
+ "Bloat.XboxTCUI": {
+  "color": true,
+  "file": "Bloat.XboxTCUI.svg",
+  "source": "thesvg-color:xbox",
+  "title": "Xbox"
+ },
  "BlueStack.BlueStacks": {
   "color": true,
   "drawn": true,

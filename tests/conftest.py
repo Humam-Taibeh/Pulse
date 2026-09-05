@@ -282,3 +282,40 @@ def show_dialog(qapp, dialog, timeout_ms: int = 3000, settle_ms: int = 60):
         f"{timeout_ms}ms of show()")
     settle(qapp, settle_ms)
     return dialog
+
+
+# ============================================================
+#  THE BLOATWARE CATALOG, READ FROM POWERSHELL
+# ============================================================
+#: $Script:BloatCatalog is the SECOND catalog in this repo, and since v16
+#: it is a second key space for bundled icons too (BLOAT_LOGO_MAP in
+#: tools/fetch_app_icons.py). Three test files need its Ids — the purge's
+#: own tests, and the two provenance guards that assert no bundled mark
+#: outlives the app it was fetched for — so the parser lives here rather
+#: than being copied a third time.
+#:
+#: Parsed rather than imported for the reason every other backend mirror
+#: in this suite is parsed: the catalog is PowerShell, pytest is Python,
+#: and shelling out to read a data table would make a fast test slow.
+def bloat_catalog_ids() -> set[str]:
+    """Every `Id` in $Script:BloatCatalog.
+
+    Raises rather than returning an empty set on a parse miss: a mirror
+    that silently matches nothing makes every assertion built on it pass
+    for the wrong reason, which is the failure mode this suite has been
+    bitten by twice (see the comment on _backend_admin_tasks in
+    test_contract.py and _protected_patterns in test_bloatware.py).
+    """
+    import re
+    path = os.path.join(_ROOT, "src", "backend", "modules", "01-Catalogs.ps1")
+    with open(path, encoding="utf-8-sig") as handle:
+        source = handle.read()
+    start = source.index("$Script:BloatCatalog = @(")
+    end = source.index("$Script:BloatProtected", start)
+    ids = set(re.findall(r'Id\s*=\s*"([^"]+)"', source[start:end]))
+    if len(ids) < 20:
+        raise AssertionError(
+            f"the bloatware catalog parser matched {len(ids)} entries; the "
+            "literal's shape has changed and every mirror built on it is "
+            "now testing air")
+    return ids

@@ -641,7 +641,11 @@ $Script:BloatCatalog = @(
     @{ Id = "ZuneVideo";        Name = "Movies & TV";             Group = "promo";  Match = "Microsoft.ZuneVideo";        Note = "Legacy video player." }
 
     # ---- B. REDUNDANT WINDOWS CORE AND TELEMETRY BLOAT --------------
-    @{ Id = "PhoneLink";        Name = "Phone Link";              Group = "core";   Match = "*YourPhone*";                Note = "Android/iPhone linking. Removing it ends notification mirroring." }
+    #  RENAMED THE SAME WAY. Phone Link was Microsoft.YourPhone and is
+    #  MicrosoftWindows.CrossDevice on current Windows 11 builds; the old
+    #  pattern alone reported a machine with Phone Link installed as not
+    #  having it.
+    @{ Id = "PhoneLink";        Name = "Phone Link";              Group = "core";   Match = "*YourPhone*|MicrosoftWindows.CrossDevice"; Note = "Android/iPhone linking. Removing it ends notification mirroring." }
     @{ Id = "PhoneExperience";  Name = "Phone Link host";         Group = "core";   Match = "*PhoneExperienceHost*";      Note = "Phone Link's background host. Remove alongside Phone Link." }
     @{ Id = "Copilot";          Name = "Microsoft Copilot";       Group = "core";   Match = "*Windows.Copilot*";          Note = "The Copilot app. The taskbar button is a separate tweak." }
     @{ Id = "CopilotWeb";       Name = "Copilot (web wrapper)";   Group = "core";   Match = "Microsoft.Copilot";          Note = "The Store wrapper build shipped on newer 11 images." }
@@ -669,7 +673,15 @@ $Script:BloatCatalog = @(
     @{ Id = "XboxGamingOverlay";Name = "Xbox Gaming Overlay";     Group = "gaming"; Optional = $true; Match = "Microsoft.XboxGamingOverlay";      Note = "Game Bar itself, including its screen capture." }
     @{ Id = "XboxSpeech";       Name = "Xbox Speech To Text";     Group = "gaming"; Optional = $true; Match = "Microsoft.XboxSpeechToTextOverlay"; Note = "Live captions inside Xbox games." }
     @{ Id = "XboxIdentity";     Name = "Xbox Identity Provider";  Group = "gaming"; Optional = $true; Match = "Microsoft.XboxIdentityProvider";   Note = "Store game sign-in. Removing it can lock you out of installed games." }
-    @{ Id = "XboxApp";          Name = "Xbox app";                Group = "gaming"; Optional = $true; Match = "Microsoft.XboxApp";                Note = "The legacy Xbox console companion." }
+    #  BOTH NAMES, AND THE SECOND IS THE ONE THAT SHIPS. The console
+    #  companion is Microsoft.XboxApp on Windows 10 and
+    #  Microsoft.GamingApp on 11. Measured rather than assumed: on a
+    #  current build the Start menu offers
+    #  `Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App` while
+    #  Get-AppxPackage lists no XboxApp at all - so matching only the
+    #  retired name printed "NOT PRESENT" beside a visible Xbox tile.
+    #  See Expand-MatchPatterns for why this is one row rather than two.
+    @{ Id = "XboxApp";          Name = "Xbox app";                Group = "gaming"; Optional = $true; Match = "Microsoft.XboxApp|Microsoft.GamingApp"; Note = "The Xbox console companion - Microsoft.GamingApp on Windows 11, Microsoft.XboxApp on 10." }
 
     # ---- D. THIRD-PARTY DESKTOP LEFTOVERS ---------------------------
     #  Desktop = the registry DisplayName to look for under the Uninstall

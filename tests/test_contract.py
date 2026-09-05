@@ -240,6 +240,13 @@ class TestStateProbe:
                     "report 'unknown' forever")
 
 
+#: The namespace bundled marks for the PURGE's catalog live in. Keeping
+#: the two key spaces apart in one manifest is what lets a `Bloat.Skype`
+#: and a hypothetical winget `Skype` coexist without either silently
+#: answering for the other.
+_BLOAT_PREFIX = "Bloat."
+
+
 class TestAppIcons:
     """The Software Management brand-icon contract.
 
@@ -502,9 +509,19 @@ class TestAppIcons:
 
 
     def test_every_mapped_app_is_a_real_catalog_entry(self):
-        """tools/fetch_app_icons.py's map is keyed by winget AppId. A key
-        that matches no catalog app is a typo that silently downloads an
-        asset nothing will ever read."""
+        """tools/fetch_app_icons.py's maps are keyed by catalog id. A key
+        that matches no catalog entry is a typo that silently downloads an
+        asset nothing will ever read.
+
+        TWO KEY SPACES SINCE v16, checked separately rather than pooled.
+        ICON_MAP and LOGO_MAP are keyed by winget AppId and must name a
+        row in SOFTWARE_CATALOG; BLOAT_LOGO_MAP is keyed by
+        `Bloat.<BloatCatalog Id>` and must name a row in the PURGE's
+        catalog. Pooling the two would let a winget typo pass by matching
+        a bloatware entry, which is exactly the class of mistake this
+        exists to catch — and the prefix is what keeps the two apart in
+        the manifest as well as here.
+        """
         tool = open(os.path.join(_ROOT, "tools/fetch_app_icons.py"),
                     encoding="utf-8").read()
         body = tool[tool.index("ICON_MAP"):tool.index("def _get(")]
@@ -515,9 +532,20 @@ class TestAppIcons:
         dev_hub_ids = set(re.findall(r'^\s+\("([^"]+)",', menu, re.M))
         app_ids = set(re.findall(r'\("([^"]+)",\s*"[^"]*",', menu))
         catalog = dev_hub_ids | app_ids
-        orphans = sorted(mapped - catalog)
+
+        winget = {a for a in mapped if not a.startswith(_BLOAT_PREFIX)}
+        orphans = sorted(winget - catalog)
         assert not orphans, (
             f"ICON_MAP names app id(s) no catalog entry uses: {orphans}")
+
+        from conftest import bloat_catalog_ids
+        bloat = {a for a in mapped if a.startswith(_BLOAT_PREFIX)}
+        assert bloat, "BLOAT_LOGO_MAP did not parse"
+        stray = sorted(a for a in bloat
+                       if a[len(_BLOAT_PREFIX):] not in bloat_catalog_ids())
+        assert not stray, (
+            f"BLOAT_LOGO_MAP names purge id(s) the catalog does not have: "
+            f"{stray}")
 
 
 _CATALOGS = os.path.join(_ROOT, "src/backend/modules/01-Catalogs.ps1")

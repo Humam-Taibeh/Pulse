@@ -10900,17 +10900,110 @@ class BloatRow(QFrame):
     unticked. Hiding them would leave the user unable to tell "Pulse does
     not remove this" from "this is already gone", which is the difference
     between a clean machine and an incomplete catalog.
+
+    THE BADGE REPORTS WHICH SENSE OF "HERE" APPLIES. A package can be on
+    this machine in four ways and they are not the same fact — see
+    `Presence` on Resolve-BloatwareTargets. A pinned Start-menu stub is
+    the case that made this necessary: it is visibly on the machine, it
+    was reported as "NOT PRESENT", and a user looking at a Disney+ tile
+    while Pulse denied it existed had been told something plainly false.
     """
 
-    #: The plaque glyph per catalog group. One mark per LAYER rather than
-    #: per app: fifty distinct icons would be a spectrum, which is exactly
-    #: what the palette pass removed from the rest of the app.
+    #: The plaque glyph per catalog GROUP. The fallback, not the answer —
+    #: see _APP_GLYPHS.
     _GLYPHS = {
         "promo":  "delete",
         "core":   "layers",
         "gaming": "game",
         "codec":  "disk",
     }
+
+    #: Catalog Id -> its own pictogram, for the rows with no bundled brand
+    #: mark. Read AFTER the manifest and BEFORE the group glyph.
+    #:
+    #: ONE MARK PER APP, and this is a reversal. The group glyph was
+    #: chosen on the reasoning that "fifty distinct icons would be a
+    #: spectrum, which is exactly what the palette pass removed from the
+    #: rest of the app" — right about a COLOUR spectrum and wrong about
+    #: this list, because the palette pass was about tinting rows by
+    #: category while this is about telling one app from another. What it
+    #: actually produced was twenty-five identical trash cans in the promo
+    #: section, so recognising Clipchamp from Candy Crush meant reading
+    #: every label in a dialog whose whole job is deciding about apps one
+    #: at a time.
+    #:
+    #: NOT LOGOS, and not claimed to be. Fourteen rows carry real brand
+    #: artwork (BLOAT_LOGO_MAP in tools/fetch_app_icons.py); these are
+    #: Fluent pictograms of what the app IS, in the app's own icon font,
+    #: which nothing could mistake for a vendor's mark. Disney+ and Prime
+    #: Video are here rather than in the manifest for exactly that reason:
+    #: every published mark for either is a WORDMARK, illegible at 20px,
+    #: and a lookalike is worse than an honest pictogram.
+    _APP_GLYPHS = {
+        # -- promo -----------------------------------------------------
+        "PrimeVideo": "video",
+        "DisneyPlus": "video",
+        "ZuneVideo": "video",
+        "ZuneMusic": "music",
+        "KingGames": "game",
+        "MarchOfEmpires": "game",
+        "Sudoku": "game",
+        "Solitaire": "game",
+        "Paint3D": "palette",
+        "Builder3D": "cube",
+        "MixedReality": "sparkle",
+        "StickyNotes": "note",
+        "OfficeHub": "document",
+        # -- core ------------------------------------------------------
+        "PhoneLink": "phone",
+        "PhoneExperience": "phone",
+        "Cortana": "mic",
+        "MailCalendar": "mail",
+        "BingWeather": "weather",
+        "BingNews": "news",
+        "BingFinance": "finance",
+        "BingSports": "sports",
+        "Maps": "map",
+        "FeedbackHub": "feedback",
+        "GetHelp": "help",
+        "Tips": "tip",
+        "People": "people",
+        "Widgets": "widgets",
+        # -- codec -----------------------------------------------------
+        "KLiteCodec": "disk",
+    }
+
+    #: `Presence` -> (badge text, its tone). The backend reports the
+    #: STRONGEST claim its evidence supports; this turns that into the one
+    #: word a user needs.
+    #:
+    #: "PINNED" IS THE WHOLE POINT OF THE MAP. Before it there were two
+    #: states, DETECTED and NOT PRESENT, and a Start-menu stub had to be
+    #: filed under one of them — so it was filed under the wrong one.
+    _PRESENCE = {
+        "installed": ("INSTALLED", "warn"),
+        "staged":    ("STAGED", "warn"),
+        "pinned":    ("PINNED", "accent"),
+        "absent":    ("NOT PRESENT", "neutral"),
+    }
+
+    #: What each badge means, spelled out. A one-word chip that the user
+    #: has to guess at is a decoration.
+    _PRESENCE_HINTS = {
+        "installed": "Registered on this machine and running when opened.",
+        "staged": "Not installed for you, but staged for new profiles — "
+                  "this is the copy that returns after a Windows update.",
+        "pinned": "Offered on the Start menu without being installed yet. "
+                  "Windows downloads it the first time anyone opens the "
+                  "tile; removing it takes the tile away too.",
+        "absent": "Pulse checks for this one and did not find it here.",
+    }
+
+    #: This row rasterises a brand mark at the SCREEN's device-pixel ratio
+    #: for the entries that have one, so it has to be redrawn when that
+    #: ratio changes. Same contract DevHubRow declares — see
+    #: PulseDialog.rescale_marks.
+    RATIO_BAKED = True
 
     def __init__(self, entry: dict, t: dict):
         super().__init__()
@@ -10919,21 +11012,47 @@ class BloatRow(QFrame):
         self.detected = bool(entry.get("Detected"))
         self.optional = bool(entry.get("Optional"))
         self._name = str(entry.get("Name") or self.entry_id)
+        #: Which sense of "here" applies. Defaulted from `Detected` rather
+        #: than assumed present, so a payload from an older backend still
+        #: renders a coherent row instead of a blank badge.
+        self.presence = str(entry.get("Presence")
+                            or ("installed" if self.detected else "absent"))
+        if self.presence not in self._PRESENCE:
+            self.presence = "installed" if self.detected else "absent"
+        #: The bundled mark for this entry, when there is one. "Bloat." so
+        #: a purge row and a winget row can never collide in the manifest.
+        self._mark_id = f"Bloat.{self.entry_id}"
+        self._has_mark = self._mark_id in appicons.manifest_ids()
 
         outer = QHBoxLayout(self)
         row_padding(outer)
         outer.setSpacing(TH.SPACE["md"])
 
-        # THE SHARED 36px WELL, the same object a card and a nav entry
-        # wear (see theme.PLAQUE_SIZE) rather than this dialog's own idea
-        # of an icon.
-        self.plaque = IconPlaque("")
-        self.plaque.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
-        glyph_key = self._GLYPHS.get(self.group, "delete")
-        char, is_fluent = TH.glyph(glyph_key)
-        self._plaque_font = TH.icon_font(TH.ICON["plaque"]) if is_fluent else None
-        self.plaque.setText(char)
-        outer.addWidget(self.plaque, 0, Qt.AlignmentFlag.AlignVCenter)
+        # THREE TIERS, THE SAME ORDER THE REST OF THE APP USES: the
+        # vendor's own mark where one exists and survives 20px, this
+        # app's pictogram where it does not, and the catalog group's glyph
+        # as the floor. Both branches occupy the SHARED 36px well (see
+        # theme.PLAQUE_SIZE), so the column reads as one set whichever
+        # tier answered.
+        self.plaque: IconPlaque | None = None
+        self._mark: QLabel | None = None
+        self._plaque_font = None
+        if self._has_mark:
+            self._mark = QLabel()
+            self._mark.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
+            self._mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._mark.setStyleSheet("background: transparent; border: none;")
+            outer.addWidget(self._mark, 0, Qt.AlignmentFlag.AlignVCenter)
+        else:
+            self.plaque = IconPlaque("")
+            self.plaque.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
+            glyph_key = self._APP_GLYPHS.get(
+                self.entry_id, self._GLYPHS.get(self.group, "delete"))
+            char, is_fluent = TH.glyph(glyph_key)
+            self._plaque_font = (TH.icon_font(TH.ICON["plaque"])
+                                 if is_fluent else None)
+            self.plaque.setText(char)
+            outer.addWidget(self.plaque, 0, Qt.AlignmentFlag.AlignVCenter)
 
         col = QVBoxLayout()
         col.setSpacing(TH.SPACE["xxs"])
@@ -10945,7 +11064,9 @@ class BloatRow(QFrame):
         self.checkbox.setEnabled(self.detected)
         name_row.addWidget(self.checkbox)
 
-        self._badge = QLabel("DETECTED" if self.detected else "NOT PRESENT")
+        label, self._badge_tone = self._PRESENCE[self.presence]
+        self._badge = QLabel(label)
+        self._badge.setToolTip(self._PRESENCE_HINTS[self.presence])
         name_row.addWidget(self._badge)
 
         self._optional_badge: QLabel | None = None
@@ -10959,7 +11080,12 @@ class BloatRow(QFrame):
         col.addLayout(name_row)
 
         note = str(entry.get("Note") or "")
-        packages = list(entry.get("Installed") or []) + list(entry.get("Provisioned") or [])
+        # THE START-MENU TIER COUNTS HERE TOO. A pinned stub has a real
+        # package name and it is exactly the row where "what am I actually
+        # removing?" is hardest to answer from the friendly name alone.
+        packages = (list(entry.get("Installed") or [])
+                    + list(entry.get("Provisioned") or [])
+                    + list(entry.get("Startup") or []))
         if packages:
             # The real package names, once, at caption weight. A purge is
             # the one operation where "what exactly are you about to
@@ -10989,13 +11115,16 @@ class BloatRow(QFrame):
     def apply_theme(self, t: dict):
         self.setProperty("disabled_item", not self.detected)
         self.setStyleSheet(TH.startup_row_qss(t))
-        accent = t["accent"] if self.detected else t["text_faint"]
-        self.plaque.apply_theme(t, accent)
-        if self._plaque_font is not None:
-            self.plaque.setFont(self._plaque_font)
+        if self._mark is not None:
+            self._mark.setPixmap(appicons.app_icon(
+                self._name, TH.PLAQUE_SIZE, t, app_id=self._mark_id))
+        if self.plaque is not None:
+            accent = t["accent"] if self.detected else t["text_faint"]
+            self.plaque.apply_theme(t, accent)
+            if self._plaque_font is not None:
+                self.plaque.setFont(self._plaque_font)
         self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
-        self._badge.setStyleSheet(
-            TH.micro_chip_qss(t, "warn" if self.detected else "neutral"))
+        self._badge.setStyleSheet(TH.micro_chip_qss(t, self._badge_tone))
         if self._optional_badge is not None:
             self._optional_badge.setStyleSheet(TH.micro_chip_qss(t, "accent"))
         self._note.setStyleSheet(TH.label_qss(t, "caption"))
@@ -11080,6 +11209,8 @@ class BloatwarePurgeDialog(PulseDialog):
         self._stack.addWidget(self._error_page)
         self._results_page = self._build_results_page()
         self._stack.addWidget(self._results_page)
+        self._clean_page = self._build_clean_page()
+        self._stack.addWidget(self._clean_page)
         self._stack.setCurrentWidget(self._loading_page)
 
         self._footer = dialog_footer(lay, self._cancel_btn, self._purge_btn)
@@ -11125,6 +11256,92 @@ class BloatwarePurgeDialog(PulseDialog):
         lay.addWidget(self._error_label)
         lay.addStretch()
         return page
+
+    def _build_clean_page(self) -> QWidget:
+        """WHAT A CLEAN MACHINE SEES, and it used to see the catalog.
+
+        THE OLD BEHAVIOUR WAS A COMPROMISE THAT SATISFIED NEITHER HALF.
+        With nothing detected the dialog forced "show packages that
+        aren't installed" ON, disabled the toggle so it could not be
+        turned off, and rendered all forty-eight rows — every one of them
+        greyed, unticked and captioned NOT PRESENT — with a one-line
+        "this system is clean" label underneath them. So the good news was
+        the smallest text on screen, at the bottom, under three sections
+        of evidence for it, and the one control that could have hidden
+        that evidence had been switched off and locked.
+
+        The answer goes above the evidence. The evidence stays one click
+        away, which is what the link at the bottom is for: "does Pulse
+        know about TikTok?" is a fair question and it is still answerable
+        without reading the source.
+        """
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+
+        # PAINTED, not an emoji at hero size. Every other empty state in
+        # the app renders a colour emoji, which arrives in whatever the
+        # platform font decides and lands beside fourteen monochrome line
+        # icons; this is the same well/glyph object the rest of the app
+        # uses, at three times the size, in the OK tone.
+        badge = IconPlaque("")
+        badge.setFixedSize(TH.PLAQUE_SIZE * 2, TH.PLAQUE_SIZE * 2)
+        char, is_fluent = TH.glyph("checkcircle")
+        badge.setText(char)
+        # SIZED IN BOTH BRANCHES. Setting the font only on the Fluent path
+        # left the EMOJI fallback at the label's default ~13px inside a
+        # 72px well — a speck in a box, on exactly the machines that have
+        # no icon font to fall back from. The mark is the same size either
+        # way; only the family differs.
+        px = TH.ICON["plaque"] * 2
+        font = TH.icon_font(px) if is_fluent else None
+        if font is None:
+            font = badge.font()
+            font.setPixelSize(px)
+        badge.setFont(font)
+        badge.apply_theme(t, t["ok"])
+        self._clean_badge = badge
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(badge)
+        row.addStretch()
+        lay.addLayout(row)
+
+        headline = QLabel("Your system is clean")
+        headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        headline.setStyleSheet(TH.label_qss(t, "dialog"))
+        lay.addWidget(headline)
+
+        self._clean_note = QLabel("")
+        self._clean_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._clean_note.setWordWrap(True)
+        self._clean_note.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._clean_note)
+        lay.addStretch()
+
+        # THE EVIDENCE, one click away rather than on screen by default.
+        self._inspect_btn = QPushButton("")
+        self._inspect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._inspect_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._inspect_btn.setToolTip(
+            "Show every package Pulse checks for, including the ones that "
+            "are not on this machine.")
+        self._inspect_btn.clicked.connect(self._inspect_catalog)
+        link_row = QHBoxLayout()
+        link_row.addStretch()
+        link_row.addWidget(self._inspect_btn)
+        link_row.addStretch()
+        lay.addLayout(link_row)
+        return page
+
+    def _inspect_catalog(self):
+        """Show the catalog from the clean page. Ticking the toggle IS the
+        transition — see _sync_visibility, which owns the mapping between
+        that checkbox and which page is on screen."""
+        self._show_absent.setChecked(True)
 
     def _build_results_page(self) -> QWidget:
         t = self._t
@@ -11179,11 +11396,11 @@ class BloatwarePurgeDialog(PulseDialog):
         self._scroll.setWidget(host)
         lay.addWidget(self._scroll, 1)
 
-        self._empty = QLabel("Nothing catalogued is installed — this system is clean.")
-        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty.setStyleSheet(TH.empty_state_qss(t))
-        self._empty.hide()
-        lay.addWidget(self._empty)
+        # (The "nothing catalogued is installed" label that used to sit
+        #  here is gone. It said the same thing as the subtitle above the
+        #  list and as the clean page that now replaces the list outright,
+        #  and it said it in the one position where the good news is least
+        #  likely to be read: below three sections of evidence against it.)
 
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setStyleSheet(TH.dialog_cancel_qss(t))
@@ -11270,10 +11487,14 @@ class BloatwarePurgeDialog(PulseDialog):
             # section's contents.
             self._sections.append((header, built, present))
 
-        self._empty.setVisible(detected == 0)
-        self._scroll.setVisible(detected > 0 or bool(self._rows))
+        self._catalogued = len(self._rows)
+        # ON A CLEAN MACHINE THE SUBTITLE DESCRIBES THE SCAN, not the
+        # verdict — the clean page below states the verdict, at the
+        # dialog-title weight, and saying it twice on one screen makes
+        # the second one look like a different claim.
         summary = (
-            "Nothing catalogued is installed on this machine."
+            "Checked every installed, staged and Start-menu package "
+            "against the Pulse catalog."
             if detected == 0 else
             f"{detected} catalogued package(s) found. Ticked packages are "
             "removed for every profile, deprovisioned so they cannot return "
@@ -11291,12 +11512,21 @@ class BloatwarePurgeDialog(PulseDialog):
         # thirty boxes to agree would be theatre. The optional section is
         # the exception and stays untouched.
         self._select_all(True)
-        if detected == 0:
-            # Nothing to fold away, and nothing to fold it behind.
-            self._show_absent.setChecked(True)
-            self._show_absent.setEnabled(False)
+        self._clean_note.setText(
+            f"None of the {self._catalogued} packages Pulse checks for is "
+            "installed, staged for future profiles, or pinned to your Start "
+            "menu." + (f"  {self._caveat}" if self._caveat else ""))
+        self._inspect_btn.setText(
+            f"Show all {self._catalogued} packages Pulse checks for")
+        # THE TOGGLE STAYS LIVE ON A CLEAN MACHINE, and that is the fix.
+        # It used to be forced on and DISABLED here, which is how a
+        # control the user pressed did nothing: with nothing detected the
+        # dialog had already decided the answer and taken the switch away.
+        # It is off by default in both states now, and _sync_visibility
+        # maps it to a page rather than to a set of hidden rows.
+        self._show_absent.setEnabled(True)
+        self._show_absent.setChecked(False)
         self._sync_visibility()
-        self._stack.setCurrentWidget(self._results_page)
         self._scroll.refresh()
 
     def _add_header(self, text: str) -> QLabel:
@@ -11308,17 +11538,34 @@ class BloatwarePurgeDialog(PulseDialog):
         return label
 
     def _sync_visibility(self):
-        """Show what is here; show the rest only when asked.
+        """Show what is here; show the rest only when asked — and when
+        there is nothing here at all, show neither.
 
-        On a machine where NOTHING was detected the toggle is forced on
-        and disabled: an empty list under a "1 of 25 present" header would
-        read as the dialog having failed to load, and there is nothing to
-        bury it under anyway."""
-        show_all = self._show_absent.isChecked() or not self._any_detected()
+        ONE CHECKBOX, TWO JOBS, AND THEY ARE THE SAME JOB. On a machine
+        with bloatware the toggle folds the absent rows away; on a clean
+        one every row is absent, so folding them away leaves nothing, and
+        "nothing" is what the clean page is. Mapping the checkbox to a
+        PAGE rather than to a set of row visibilities is what lets both
+        states share one control instead of the old arrangement, where the
+        clean machine got the switch forced on and disabled.
+        """
+        show_all = self._show_absent.isChecked()
+        clean = not self._any_detected() and not show_all
+        # THE FOOTER FOLLOWS THE PAGE. "Safe Purge" is disabled on a clean
+        # machine either way, and a disabled destructive button under
+        # "Your system is clean" is a control offering to do the one thing
+        # the page just said there is nothing of. Cancel becomes Close for
+        # the same reason: there is no selection to abandon.
+        self._purge_btn.setVisible(not clean)
+        self._cancel_btn.setText("Close" if clean else "Cancel")
+        if clean:
+            self._stack.setCurrentWidget(self._clean_page)
+            return
         for header, rows, present in self._sections:
             for row in rows:
                 row.setVisible(show_all or row.detected)
             header.setVisible(show_all or present > 0)
+        self._stack.setCurrentWidget(self._results_page)
         self._scroll.refresh()
 
     def _any_detected(self) -> bool:

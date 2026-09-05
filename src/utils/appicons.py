@@ -939,6 +939,19 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
 # ============================================================
 #  PUBLIC ENTRY POINT
 # ============================================================
+def manifest_ids() -> frozenset[str]:
+    """Every app id this build ships a mark for.
+
+    A CALLER NEEDS THIS BEFORE IT BUILDS A WIDGET, which is why it is not
+    just "call app_icon and see". app_icon always returns SOMETHING — the
+    neutral glyph is a legitimate answer — so a row that wants to choose
+    between a brand mark and its own pictogram cannot learn which it is
+    getting by asking for one. widgets.BloatRow decides which of two
+    icon widgets to construct, and it has to decide first.
+    """
+    return frozenset(_manifest())
+
+
 def app_icon(app_name: str, px: int, t: dict, app_id: str = "") -> QPixmap:
     """The row icon for `app_name` (and `app_id`, when the caller has it).
 

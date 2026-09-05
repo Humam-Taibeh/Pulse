@@ -17,6 +17,74 @@ long after `VERSION` had become the single source.
 
 ## [Unreleased]
 
+### Fixed — the Bloatware Purge was reporting the wrong machine
+
+- **Two catalog patterns named products that had been renamed.** The Xbox
+  console companion is `Microsoft.XboxApp` on Windows 10 and
+  `Microsoft.GamingApp` on 11; Phone Link is `Microsoft.YourPhone` and then
+  `MicrosoftWindows.CrossDevice`. Matching only the retired name printed
+  **NOT PRESENT** beside a visible Xbox tile. A `Match` may now carry
+  alternatives separated by `|` — one row, several names, which keeps the
+  catalog's "one entry is one decision" promise. (Two entries would not:
+  this file already carries the scar from `*CandyCrush*` beside `king.com.*`
+  matching the same packages twice.)
+
+- **The scan declared a blind spot it did not have.**
+  `Get-AppxProvisionedPackage -Online` needs Administrator, so an unelevated
+  scan reported that staged packages could not be read — honest about the
+  DISM call and wrong about the machine.
+  `HKLM\…\Appx\AppxAllUserStore\Applications` holds the same set and is
+  readable by everyone; measured on an unelevated shell it returns 33
+  entries where DISM returned *Access is denied*. The caveat is now raised
+  only when that fallback fails too.
+
+- **A Start-menu stub was invisible to every source the scan had.** Windows
+  11 pins promotional apps before anyone opens them, so until first launch
+  there is no registered package and `Get-AppxPackage` reports nothing.
+  `Get-StartApps` sees them, needs no rights, and is now the fourth tier.
+  A user looking at a Disney+ tile while Pulse denied it existed had been
+  told something plainly false.
+
+- **`Presence` replaces a boolean that could not express any of this.** Each
+  row reports the strongest claim its evidence supports — `installed`,
+  `staged`, `pinned` or `absent` — and the badge says which, with a tooltip
+  explaining what it means. `$Script:BloatProtected` applies to the new tier
+  exactly as it does to the others.
+
+### Fixed — the "show packages that aren't installed" toggle did nothing
+
+- On a clean machine the dialog forced the toggle **on**, **disabled** it,
+  and rendered all forty-eight rows greyed and captioned NOT PRESENT, with a
+  one-line "this system is clean" label underneath. So the good news was the
+  smallest text on screen, at the bottom, under three sections of evidence
+  against it — and pressing the toggle did nothing because it had been
+  switched off and locked. (The detection defects above are why a normal
+  machine reached that state at all.)
+- The checkbox maps to a **page** now rather than to a set of row
+  visibilities, so one control serves both states: off is the clean page,
+  on is the catalog. The redundant bottom label is gone, and the subtitle
+  describes the scan instead of repeating the verdict.
+
+### Added — every bloatware row looks like itself
+
+- The plaque glyph was chosen per catalog **group**, so twenty-five promo
+  rows were twenty-five identical trash cans in the one dialog whose whole
+  job is deciding about apps one at a time. Three tiers now, the same order
+  the rest of the app uses: the vendor's own mark where one exists and
+  survives 20px (14 fetched into `BLOAT_LOGO_MAP`, namespaced `Bloat.<Id>`
+  so the purge's key space cannot collide with winget's), this app's Fluent
+  pictogram where it does not, and the group glyph as the floor — which
+  nothing now reaches.
+- **Disney+ and Prime Video deliberately have no mark.** Every published
+  logo for either is a *wordmark*, illegible in a 20px square; the same rule
+  rejected `logos:instagram`, `logos:linkedin`, `logos:spotify` and
+  `logos:tiktok` in favour of their `-icon` variants. Nothing is invented
+  and no lookalike is taken.
+- A **"Your system is clean"** empty state — a painted mark at the plaque
+  well's own scale rather than an emoji, the verdict at dialog-title weight,
+  what was checked and in which senses, and one link to the catalog for
+  anyone asking "does Pulse know about TikTok?".
+
 ### Removed — three controls that reopened a decision the user had made
 
 - **The catalog's `Filter apps…` field.** It narrowed fifteen to twenty
@@ -83,6 +151,31 @@ long after `VERSION` had become the single source.
   on light.
 
 ### Changed — marks, and the surfaces they sit on
+
+- **Two dashboard cards** that were the Runtimes pillar restated outside
+  itself. *Install All Essential Dependencies* was that pillar's own
+  one-click action with a card around it, running the same five packages
+  blind where the button ticks them first; its dispatcher case had that one
+  caller and is gone too. *Fetch Missing Hardware Drivers* was not
+  duplicated but **orphaned** — the same errand as the runtimes, sitting
+  outside the hub that owns it — so the pillar declares it as an `action`
+  and `SoftwareCatalogDialog` grew a second accepted outcome for tasks with
+  no AppId to tick. The band went with them.
+- **The Startup Manager's toolbar**, standardised against the Update
+  Center: Rescan moves from the bottom-left corner, diagonally opposite the
+  chips that filter the list it re-reads, up beside them. The footer keeps
+  only Close.
+- **The Optimize banner is a link.** A full-width accented button between
+  the chips and the list, rendering on a clean machine as *"⚡ Optimize
+  Startup — all clear"* — the loudest control on the dialog, present only to
+  announce it had nothing to do. It appears when there is something to
+  optimize and is absent otherwise; the capability and its "never sweep a
+  System Critical item" safeguard are unchanged.
+- **`startup_row_qss` joins the shared hover recipe.** It was the third row
+  factory and the last one disagreeing: it moved its *border alone* at a
+  weight of 0.30, which is the "reads as inert next to a GlassCard" defect
+  `dev_hub_row_qss`'s own note records having fixed, and it named the
+  icon-well radius tier for a surface that is a card.
 
 - **Node.js** takes `devicon:nodejs`, the three-face isometric solid. It
   was `logos:nodejs-icon`: the hexagon drawn as one flat silhouette with

@@ -316,6 +316,72 @@ ICONIFY_SVG = "https://api.iconify.design/{prefix}/{name}.svg"
 
 
 # ============================================================
+#  THE BLOATWARE ROWS  (a second catalog, the same three tiers)
+# ============================================================
+#: Bloatware catalog Id -> Iconify id, for the rows the PURGE dialog
+#: renders. Keys are prefixed "Bloat." so a manifest entry can never
+#: collide with a winget AppId and so a reader can tell at a glance which
+#: catalog a mark belongs to.
+#:
+#: WHY THESE ROWS NEEDED ANYTHING. Every row in the purge wore the same
+#: mark: one Fluent glyph per catalog GROUP, so twenty-five "promo" rows
+#: were twenty-five identical trash cans. That is defensible as a
+#: fallback and indefensible as the whole answer, because the purge is
+#: the one dialog where the user is deciding about apps ONE AT A TIME and
+#: recognising them by sight is most of the decision.
+#:
+#: THE SAME RULE AS LOGO_MAP APPLIES, and it does most of the work here:
+#: a WORDMARK is not usable at 20px, however authentic. Every candidate
+#: below was RENDERED before it was accepted, and the ones that were
+#: rejected were rejected for that reason rather than for provenance:
+#:
+#:   logos:instagram        the script "Instagram" wordmark
+#:   logos:linkedin         the "LinkedIn" wordmark  (the -icon variant
+#:                          is the blue "in" square, and is used)
+#:   logos:spotify          the "Spotify" wordmark   (likewise -icon)
+#:   logos:tiktok           the "TikTok" wordmark    (thesvg-color's
+#:                          -light variant is the note, and is used)
+#:   thesvg-color:disney*   every Disney+ mark on offer is the script
+#:                          wordmark; there is no square one
+#:   thesvg-color:prime-video   the "prime video" wordmark, likewise
+#:
+#: Disney+ and Prime Video therefore have NO mark here and fall through to
+#: the per-app Fluent pictogram in widgets.BloatRow — which is the honest
+#: answer for a streaming stub whose only artwork is a piece of lettering.
+#: Nothing is invented for them, and no lookalike is taken.
+#:
+#: SIX ROWS SHARE THE XBOX SPHERE, deliberately: the gaming tier is six
+#: components of one product (TCUI, the two overlays, speech, identity,
+#: the app itself) and they ship under one mark. Six copies of it is what
+#: the vendor's own branding looks like.
+BLOAT_LOGO_MAP: dict[str, str] = {
+    # -- promo stubs with real, square brand artwork ----------------
+    "Bloat.Instagram": "thesvg-color:instagram",
+    "Bloat.Facebook": "logos:facebook",
+    "Bloat.Messenger": "logos:messenger",
+    "Bloat.TikTok": "thesvg-color:tiktok-light",
+    "Bloat.LinkedIn": "logos:linkedin-icon",
+    "Bloat.SpotifyStub": "logos:spotify-icon",
+    "Bloat.Skype": "logos:skype",
+    "Bloat.OneNoteWin10": "thesvg-color:microsoft-onenote",
+    "Bloat.Clipchamp": "thesvg-color:microsoft-clipchamp",
+    "Bloat.TeamsPersonal": "logos:microsoft-teams",
+    "Bloat.OutlookNew": "thesvg-color:microsoft-outlook",
+    "Bloat.Todos": "thesvg-color:microsoft-todo",
+    # -- core ---------------------------------------------------------
+    "Bloat.Copilot": "thesvg-color:microsoft-copilot",
+    "Bloat.CopilotWeb": "thesvg-color:microsoft-copilot",
+    # -- the gaming tier, one product in six pieces --------------------
+    "Bloat.XboxTCUI": "thesvg-color:xbox",
+    "Bloat.XboxGameOverlay": "thesvg-color:xbox",
+    "Bloat.XboxGamingOverlay": "thesvg-color:xbox",
+    "Bloat.XboxSpeech": "thesvg-color:xbox",
+    "Bloat.XboxIdentity": "thesvg-color:xbox",
+    "Bloat.XboxApp": "thesvg-color:xbox",
+}
+
+
+# ============================================================
 #  THIRD SOURCE: PULSE-DRAWN MARKS  (NOT vendor logos)
 # ============================================================
 #: winget AppId -> a mark COMMITTED BY HAND to assets/appicons/, for the
@@ -641,7 +707,11 @@ def main() -> int:
     # app that somehow appears in both: the vendor's real colour artwork is
     # a better answer than a recoloured silhouette of it.
     colour_failures: list[str] = []
-    for app_id, icon_id in sorted(LOGO_MAP.items()):
+    # BOTH CATALOGS THROUGH ONE PASS. The purge's rows want exactly the
+    # treatment a catalog row gets — fetched, flattened, classified by
+    # reading the file — so they go through the same loop rather than a
+    # near-copy of it that would drift the first time either changed.
+    for app_id, icon_id in sorted({**LOGO_MAP, **BLOAT_LOGO_MAP}.items()):
         prefix, _, name = icon_id.partition(":")
         if not prefix or not name:
             colour_failures.append(f"{app_id}: malformed icon id {icon_id!r}")

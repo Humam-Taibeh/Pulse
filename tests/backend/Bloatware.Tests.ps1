@@ -1,4 +1,4 @@
-#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
+﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
 .SYNOPSIS
     Pester coverage for the bloatware purge's classification and matching
@@ -78,12 +78,24 @@ BeforeAll {
         'K-Lite Codec Pack 18.0.5 Standard'
         'Mozilla Firefox (x64 en-US)'
     )
+    # THE START MENU TIER. A promotional app is pinned before anyone opens
+    # it, so it is on the machine in every sense a user cares about and in
+    # none that Get-AppxPackage reports. Disney+ here is installed nowhere
+    # else in this fixture, which is what makes it the case under test;
+    # the Store is here to prove the protected list still applies to a
+    # tier that did not exist when that list was written.
+    $script:Startup = @(
+        'Disney'
+        'Microsoft.GamingApp'
+        'Microsoft.WindowsStore'           # protected
+    )
 
     function script:Resolve {
         param([string[]]$SelectedIds = @())
         return @(Resolve-BloatwareTargets -Catalog $Script:BloatCatalog `
             -Installed $script:Installed -Provisioned $script:Provisioned `
-            -Desktop $script:Desktop -SelectedIds $SelectedIds `
+            -Desktop $script:Desktop -Startup $script:Startup `
+            -SelectedIds $SelectedIds `
             -Protected $Script:BloatProtected)
     }
 
@@ -282,5 +294,96 @@ Describe "A catalog pattern that grows a match on the shell" {
         $rows[0].Installed | Should -Not -Contain 'Microsoft.WindowsStore'
         $rows[0].Installed | Should -Contain 'Microsoft.WindowsNotepad' -Because `
             "only the protected package is withheld; the rest of the match still resolves"
+    }
+}
+
+Describe "Presence: the four senses of 'this is on the machine'" {
+
+    It "reports a pinned Start-menu stub as present" {
+        # THE DEFECT THIS EXISTS FOR. Disney+ is installed nowhere in the
+        # fixture and pinned on the Start menu, which is exactly how a
+        # promotional app arrives - and it used to render as NOT PRESENT
+        # beside a tile the user was looking at.
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'DisneyPlus' })[0]
+        $row.Detected  | Should -BeTrue
+        $row.Presence  | Should -Be 'pinned'
+        $row.Installed | Should -BeNullOrEmpty
+        $row.Startup   | Should -Contain 'Disney'
+    }
+
+    It "names the strongest claim the evidence supports" {
+        # Installed beats pinned: the weaker word would understate what
+        # removing it does.
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'BingNews' })[0]
+        $row.Presence | Should -Be 'installed'
+
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'Maps' })[0]
+        $row.Presence | Should -Be 'staged' -Because `
+            "staged-but-not-installed is the tier that returns after a feature update"
+
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'TikTok' })[0]
+        $row.Presence | Should -Be 'absent'
+    }
+
+    It "gives a desktop leftover the installed sense" {
+        # K-Lite has no AppX identity at all; it is found through the
+        # uninstall hive, and it is unambiguously installed.
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'KLiteCodec' })[0]
+        $row.Presence | Should -Be 'installed'
+    }
+
+    It "still refuses a protected package found through the Start menu" {
+        # The protected list predates this tier. A catalog wildcard
+        # reaching the Store through a route the list was not applied to
+        # would be exactly the accident it exists to stop.
+        $rows = @(script:Resolve)
+        foreach ($row in $rows) {
+            $row.Startup | Should -Not -Contain 'Microsoft.WindowsStore' -Because `
+                "$($row.Id) claimed the Store through the Start menu tier"
+        }
+    }
+
+    It "reports every row with a presence, never a blank" {
+        foreach ($row in @(script:Resolve)) {
+            $row.Presence | Should -BeIn @('installed', 'staged', 'pinned', 'absent') `
+                -Because "$($row.Id) must name which sense of 'here' applies"
+        }
+    }
+}
+
+Describe "One entry, several package names" {
+
+    It "matches a product that was renamed between Windows versions" {
+        # The Xbox console companion is Microsoft.XboxApp on 10 and
+        # Microsoft.GamingApp on 11. Matching only the retired name
+        # printed NOT PRESENT beside a visible Xbox tile.
+        $row = @(script:Resolve | Where-Object { $_.Id -eq 'XboxApp' })[0]
+        $row.Detected | Should -BeTrue
+        $row.Startup  | Should -Contain 'Microsoft.GamingApp'
+    }
+
+    It "keeps it as ONE row rather than two" {
+        # The scar this file already carries: "*CandyCrush*" beside
+        # "king.com.*" matched the same packages twice, so the GUI drew
+        # two rows for one app and unticking one still removed it.
+        $rows = @(script:Resolve | Where-Object { $_.Id -eq 'XboxApp' })
+        $rows.Count | Should -Be 1
+    }
+
+    It "still matches the old name on its own" {
+        $rows = @(Resolve-BloatwareTargets -Catalog $Script:BloatCatalog `
+            -Installed @('Microsoft.XboxApp') -Protected $Script:BloatProtected)
+        $row = @($rows | Where-Object { $_.Id -eq 'XboxApp' })[0]
+        $row.Detected  | Should -BeTrue
+        $row.Installed | Should -Contain 'Microsoft.XboxApp'
+    }
+
+    It "does not let one alternative leak into a neighbouring entry" {
+        # A "|" split that went wrong would silently widen every pattern
+        # in the catalog rather than erroring.
+        $rows = @(Resolve-BloatwareTargets -Catalog $Script:BloatCatalog `
+            -Installed @('Microsoft.GamingApp') -Protected $Script:BloatProtected)
+        $hit = @($rows | Where-Object { $_.Detected } | ForEach-Object { $_.Id })
+        $hit | Should -Be @('XboxApp')
     }
 }
