@@ -87,12 +87,21 @@ def pytest_collection_modifyitems(config, items):
     """Enforce what the `native` marker has always CLAIMED.
 
     The marker and the offscreen check both existed, but nothing ever
-    joined them: under QT_QPA_PLATFORM=offscreen the 21 native tests ran
+    joined them: under QT_QPA_PLATFORM=offscreen the native tests ran
     anyway and failed en masse, because an offscreen window has no
     non-client area to hit-test and no DWM to query. pytest.ini and
     requirements-dev.txt documented them as "skipped headless", so the
     suite's own contract was false — and any CI runner without a desktop
     session would have reported a red build for an entirely healthy tree.
+
+    THE COUNT IS DELIBERATELY NOT STATED HERE. This paragraph used to say
+    "the 21 native tests", which was true when it was written and was off
+    by roughly a factor of five by the time anyone re-read it — the last
+    recorded headless run skipped 102 of 1,202 collected. A number that
+    only a run can establish does not belong in a docstring that no run
+    checks: `pytest --collect-only -m native` answers it in a second, and
+    ci.yml's guard asserts the property that actually matters (that the
+    subset was not skipped wholesale) rather than its size.
     """
     if not is_headless():
         return
