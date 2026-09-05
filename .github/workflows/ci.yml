@@ -26,8 +26,21 @@ on:
   workflow_call:
 
 # A new push to the same branch makes an in-flight run obsolete.
+#
+# github.workflow IS IN THE KEY BECAUSE THIS WORKFLOW IS ALSO CALLED. In a
+# reusable workflow both github.ref and github.workflow resolve to the
+# CALLER's - so without the workflow name, release.yml's `verify` job on
+# master shared a group with master's own push run and cancelled it.
+# Observed, not theorised: run 64 was cancelled by the first dry run of
+# release.yml, leaving master's latest CI run reading "cancelled" and the
+# README's live badge rendering that.
+#
+# It does not arise on a real tag push, where the caller's ref is
+# refs/tags/vX.Y.Z - only when a dry run is dispatched on the same branch
+# that is already building, which is exactly what the README tells people
+# to do before cutting a tag.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
