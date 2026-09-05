@@ -272,29 +272,54 @@ jobs:
           $tag = $env:PULSE_TAG
           $setup = "dist\PULSE_Setup_v$version.exe"
 
-          # RE-RUNNABLE, because the case this has to survive is a publish
-          # that got half way. The concurrency group above refuses to
-          # cancel this job for exactly that reason, but a network failure
-          # between the two asset uploads is not something a concurrency
-          # setting can prevent - and `gh release create` on an existing
-          # tag fails outright, so without this a partial release could
-          # only be finished by hand.
-          gh release view $tag 2>$null | Out-Null
-          $exists = ($LASTEXITCODE -eq 0)
-          $global:LASTEXITCODE = 0
+          # THE PREFERENCE HAS TO BE RELAXED AROUND gh, and this is not
+          # defensive habit - it is the single most likely way this step
+          # fails. A `shell: powershell` step runs with
+          # $ErrorActionPreference = 'Stop' prepended by the runner, and in
+          # Windows PowerShell that turns ANY line a NATIVE command writes
+          # to stderr into a TERMINATING error. gh writes upload progress
+          # there, and writes "release not found" there for the view below
+          # that is SUPPOSED to fail on a first publish. So the step could
+          # abort on gh's ordinary output while the release it was creating
+          # succeeded - leaving a tag whose assets did or did not attach,
+          # decided by a race nobody can read from the log.
+          #
+          # tools/build_release.ps1 documents the identical hazard around
+          # its PyInstaller and ISCC calls and resolves it the same way:
+          # the exit code is the only honest success signal for a native
+          # command, so relax the preference and test that instead.
+          $previous = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          try {
+            # RE-RUNNABLE, because the case this has to survive is a
+            # publish that got half way. The concurrency group above
+            # refuses to cancel this job for exactly that reason, but a
+            # network failure between the two asset uploads is not
+            # something a concurrency setting can prevent - and `gh
+            # release create` on an existing tag fails outright, so
+            # without this a partial release could only be finished by
+            # hand.
+            gh release view $tag 2>$null | Out-Null
+            $exists = ($LASTEXITCODE -eq 0)
+            $global:LASTEXITCODE = 0
 
-          if ($exists) {
-            Write-Output "Release $tag already exists; replacing its assets."
-            gh release upload $tag $setup 'dist\SHA256SUMS' --clobber
+            if ($exists) {
+              Write-Output "Release $tag already exists; replacing its assets."
+              gh release upload $tag $setup 'dist\SHA256SUMS' --clobber
+            }
+            else {
+              gh release create $tag $setup 'dist\SHA256SUMS' `
+                --title "Pulse v$version" `
+                --notes-file release-notes.md `
+                --latest
+            }
+            $code = $LASTEXITCODE
           }
-          else {
-            gh release create $tag $setup 'dist\SHA256SUMS' `
-              --title "Pulse v$version" `
-              --notes-file release-notes.md `
-              --latest
+          finally {
+            $ErrorActionPreference = $previous
           }
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Publishing $tag failed ($LASTEXITCODE)."
+          if ($code -ne 0) {
+            Write-Error "Publishing $tag failed ($code)."
             exit 1
           }
           Write-Output "Published $tag with the installer and SHA256SUMS."
