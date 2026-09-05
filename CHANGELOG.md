@@ -19,6 +19,16 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [0.0.1] - 2026-09-05
+
+THROWAWAY. This section, this version and the tag that carries them exist
+only to exercise .github/workflows/release.yml's publish step end to end
+before a real release depends on it. The branch, tag and release are all
+deleted immediately afterwards; nothing here describes shipping software.
+
+
+---
+
 ## [10.10.0] — 2026-09-05
 
 A MINOR bump rather than a patch, and the reason is the shape of the
