@@ -26,7 +26,7 @@
  "Apache.NetBeans": {
   "color": true,
   "file": "Apache.NetBeans.svg",
-  "source": "logos:netbeans",
+  "source": "devicon:netbeans",
   "title": "Netbeans"
  },
  "Apple.iTunes": {
@@ -35,11 +35,43 @@
   "source": "thesvg-color:itunes",
   "title": "Itunes"
  },
+ "BlueStack.BlueStacks": {
+  "color": true,
+  "drawn": true,
+  "file": "BlueStack.BlueStacks.svg",
+  "hex": "#8bc53f",
+  "source": "pulse-drawn",
+  "title": "BlueStacks"
+ },
  "Brave.Brave": {
   "color": true,
   "file": "Brave.Brave.svg",
   "source": "logos:brave",
   "title": "Brave"
+ },
+ "CPUID.CPU-Z": {
+  "color": true,
+  "drawn": true,
+  "file": "CPUID.CPU-Z.svg",
+  "hex": "#3f51b5",
+  "source": "pulse-drawn",
+  "title": "CPU-Z"
+ },
+ "CPUID.HWMonitor": {
+  "color": true,
+  "drawn": true,
+  "file": "CPUID.HWMonitor.svg",
+  "hex": "#f09e1a",
+  "source": "pulse-drawn",
+  "title": "HWMonitor"
+ },
+ "CrystalDewWorld.CrystalDiskInfo": {
+  "color": true,
+  "drawn": true,
+  "file": "CrystalDewWorld.CrystalDiskInfo.svg",
+  "hex": "#2aa9e0",
+  "source": "pulse-drawn",
+  "title": "CrystalDiskInfo"
  },
  "Discord.Discord": {
   "color": true,
@@ -65,6 +97,14 @@
   "source": "thesvg-color:epic-games-light",
   "title": "Epic Games Light"
  },
+ "Geeks3D.FurMark.2": {
+  "color": true,
+  "drawn": true,
+  "file": "Geeks3D.FurMark.2.svg",
+  "hex": "#e8452c",
+  "source": "pulse-drawn",
+  "title": "FurMark"
+ },
  "Git.Git": {
   "color": true,
   "file": "Git.Git.svg",
@@ -73,7 +113,7 @@
  },
  "Google.Antigravity": {
   "file": "Google.Antigravity.svg",
-  "hex": "#000000",
+  "hex": "#3186ff",
   "source": "bxl:google-antigravity",
   "title": "Google Antigravity"
  },
@@ -106,6 +146,22 @@
   "file": "MSYS2.MSYS2.svg",
   "source": "thesvg-color:mingw-w64",
   "title": "Mingw W64"
+ },
+ "Maxon.CinebenchR23": {
+  "color": true,
+  "drawn": true,
+  "file": "Maxon.CinebenchR23.svg",
+  "hex": "#8e44ad",
+  "source": "pulse-drawn",
+  "title": "Cinebench"
+ },
+ "Microsoft.DirectX": {
+  "color": true,
+  "drawn": true,
+  "file": "Microsoft.DirectX.svg",
+  "hex": "#0f7bd4",
+  "source": "pulse-drawn",
+  "title": "DirectX"
  },
  "Microsoft.DotNet.DesktopRuntime.8": {
   "color": true,
@@ -164,14 +220,22 @@
  "Pulse.VCRedistAIO": {
   "color": true,
   "file": "Pulse.VCRedistAIO.svg",
-  "source": "logos:c-plusplus",
-  "title": "C Plusplus"
+  "source": "logos:visual-studio",
+  "title": "Visual Studio"
  },
  "Python.Python.3.12": {
   "color": true,
   "file": "Python.Python.3.12.svg",
   "source": "logos:python",
   "title": "Python"
+ },
+ "REALiX.HWiNFO": {
+  "color": true,
+  "drawn": true,
+  "file": "REALiX.HWiNFO.svg",
+  "hex": "#1e62a8",
+  "source": "pulse-drawn",
+  "title": "HWiNFO64"
  },
  "RockstarGames.Launcher": {
   "color": true,
@@ -185,6 +249,14 @@
   "source": "logos:spotify-icon",
   "title": "Spotify Icon"
  },
+ "TechPowerUp.GPU-Z": {
+  "color": true,
+  "drawn": true,
+  "file": "TechPowerUp.GPU-Z.svg",
+  "hex": "#2e9e4f",
+  "source": "pulse-drawn",
+  "title": "GPU-Z"
+ },
  "Telegram.TelegramDesktop": {
   "color": true,
   "file": "Telegram.TelegramDesktop.svg",
@@ -194,7 +266,7 @@
  "Valve.Steam": {
   "color": true,
   "file": "Valve.Steam.svg",
-  "source": "logos:steam",
+  "source": "thesvg-color:steam",
   "title": "Steam"
  },
  "VideoLAN.VLC": {

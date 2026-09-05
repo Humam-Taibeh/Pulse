@@ -101,10 +101,19 @@ $Apps_Essentials = @(
     @("AnyDesk.AnyDesk", "AnyDesk"),
     @("Oracle.VirtualBox", "Oracle VirtualBox"),
     @("Apple.iTunes", "iTunes"),
-    @("BlueStacks.BlueStacks", "BlueStacks 5"),
     @("Valve.Steam", "Steam"),
     @("EpicGames.EpicGamesLauncher", "Epic Games"),
-    @("RockstarGames.Launcher", "Rockstar Games Launcher")
+    @("RockstarGames.Launcher", "Rockstar Games Launcher"),
+    # BlueStacks is an ANDROID GAMING EMULATOR and sits with the launchers,
+    # not beside VirtualBox under utilities/virtualization. Both run
+    # another OS; only one of them is installed to play a game.
+    #
+    # The ID was ALSO wrong for the whole life of the row: winget has no
+    # "BlueStacks.BlueStacks". The real package is "BlueStack.BlueStacks"
+    # (singular publisher segment - now.gg, Inc.), so every tick of this
+    # row queued an id winget resolves to nothing and the deploy reported
+    # a clean skip. Verified against the live source.
+    @("BlueStack.BlueStacks", "BlueStacks 5")
 )
 # Word/Excel/PowerPoint/Outlook/OneNote/Access/Publisher ship as ONE
 # Click-to-Run bundle with no per-app winget package - the only winget
@@ -211,11 +220,25 @@ $Apps_Hardware = @(
     @("Guru3D.Afterburner", "MSI Afterburner")
 )
 # Purely diagnostic/monitoring utilities - nothing here changes a setting.
+#
+#  The last three answer a question the first four cannot. CPU-Z and GPU-Z
+#  IDENTIFY parts and HWMonitor reads sensors at one moment; none of them
+#  says whether the machine survives being worked, which is the question
+#  behind "it crashes in games" and "it throttles after ten minutes".
+#  HWiNFO64 is the reference sensor reading, FurMark loads the GPU until
+#  it either holds its clocks or does not, and Cinebench turns "is this
+#  slow?" into a number comparable with the same chip elsewhere.
+#
+#  Ids verified against the live winget source: FurMark ships as .1 and .2
+#  side by side (2 is current), and Cinebench's only winget package is R23.
 $Apps_Tools = @(
     @("CPUID.CPU-Z", "CPU-Z"),
     @("TechPowerUp.GPU-Z", "GPU-Z"),
     @("CrystalDewWorld.CrystalDiskInfo", "CrystalDiskInfo"),
-    @("CPUID.HWMonitor", "HWMonitor")
+    @("CPUID.HWMonitor", "HWMonitor"),
+    @("REALiX.HWiNFO", "HWiNFO64"),
+    @("Geeks3D.FurMark.2", "FurMark"),
+    @("Maxon.CinebenchR23", "Cinebench R23")
 )
 
 #  The whole of Pillar 3 in on-screen order - what console mode's App
@@ -298,10 +321,10 @@ $Script:DownloadUrls = @{
     "AnyDesk.AnyDesk"               = "https://anydesk.com/en/downloads/windows"
     "Oracle.VirtualBox"             = "https://www.virtualbox.org/wiki/Downloads"
     "Apple.iTunes"                  = "https://www.apple.com/itunes/download/"
-    "BlueStacks.BlueStacks"         = "https://www.bluestacks.com/download.html"
     "Valve.Steam"                   = "https://store.steampowered.com/about/"
     "EpicGames.EpicGamesLauncher"   = "https://store.epicgames.com/en-US/download"
     "RockstarGames.Launcher"        = "https://socialclub.rockstargames.com/rockstar-games-launcher"
+    "BlueStack.BlueStacks"          = "https://www.bluestacks.com/download.html"
     # -- Pillar 2: developer, AI & engineering stack ----------------
     "Python.Python.3.12"            = "https://www.python.org/downloads/"
     "EclipseAdoptium.Temurin.21.JDK" = "https://adoptium.net/temurin/releases/"
@@ -333,6 +356,9 @@ $Script:DownloadUrls = @{
     "TechPowerUp.GPU-Z"             = "https://www.techpowerup.com/gpuz/"
     "CrystalDewWorld.CrystalDiskInfo" = "https://crystalmark.info/en/software/crystaldiskinfo/"
     "CPUID.HWMonitor"               = "https://www.cpuid.com/softwares/hwmonitor.html"
+    "REALiX.HWiNFO"                 = "https://www.hwinfo.com/download/"
+    "Geeks3D.FurMark.2"             = "https://geeks3d.com/furmark/"
+    "Maxon.CinebenchR23"            = "https://www.maxon.net/en/cinebench"
     # -- outside the catalog, still deployable ----------------------
     # Edge and OneDrive have their own remove/restore cards in Software
     # Management; OneDrive is also the console hub's own category.

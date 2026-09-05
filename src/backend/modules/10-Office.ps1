@@ -444,7 +444,7 @@ function Invoke-GuiOfficeODTInstall {
     # class, so a real "setup [1].exe" - what a browser names a second
     # download of the same file - matched nothing and was rejected as
     # missing before the deployment could start. Same reasoning as
-    # Disable-StartupItem's Move-Item and Invoke-GuiLocalInstall.
+    # Disable-StartupItem's Move-Item.
     if (-not (Test-Path -LiteralPath $SetupPath -PathType Leaf)) {
         Write-ErrorX "Setup file not found: $SetupPath"
         return $false

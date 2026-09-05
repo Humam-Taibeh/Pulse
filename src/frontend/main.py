@@ -1683,6 +1683,11 @@ class PulseApp(QMainWindow):
         self._nav_buttons: list[NavButton] = []
         self._status_state = "ready"
         self._glass_applied = False
+        #: The QScreen whose logicalDotsPerInchChanged we are subscribed to,
+        #: or None. Held because that signal belongs to a SCREEN rather
+        #: than to the application, so the subscription has to be moved
+        #: when the window changes monitor — see _watch_screen_dpi.
+        self._dpi_screen = None
         #: True once windowHandle().screenChanged is connected. The handle
         #: does not exist until the window is shown, so the connection is
         #: made in showEvent and this keeps it to exactly one.
@@ -2862,7 +2867,6 @@ class PulseApp(QMainWindow):
 
         app_ids: list[str] | None = None
         office_paths: tuple[str, str] | None = None
-        local_installer: tuple[str, str] | None = None
 
         # -- v1.1 smart install check for the bundled-app restores ---------
         # "Install / Restore" used to run winget unconditionally, so on a
@@ -2891,13 +2895,10 @@ class PulseApp(QMainWindow):
                 f"{app_name} is not currently installed. Choose how to put "
                 "it back.", url, self.theme.t)
             if self._exec_dialog(wizard) != QDialog.DialogCode.Accepted:
-                return          # cancelled, or Path B opened the browser
-            if wizard.mode == "local" and wizard.local_path:
-                local_installer = (app_id, wizard.local_path)
-                item = {**item, "task": "InstallLocalFile"}
-            # mode == "winget" falls through to the normal Restore* task,
-            # which already handles the backup-restore half that a bare
-            # winget install would skip.
+                return          # cancelled, or the website opened instead
+            # Accepted falls through to the normal Restore* task, which
+            # already handles the backup-restore half a bare winget
+            # install would skip.
 
         if item.get("startup_manager"):
             # Fully self-contained: scans, groups by recommendation and
@@ -2931,12 +2932,7 @@ class PulseApp(QMainWindow):
             dialog = UpdateCenterDialog(self, self.ps1_path, self.theme.t)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
-            if dialog.local_installer:
-                # A row's "⋯" wizard resolved to Path C (a local file) —
-                # same contract as every other selector's row wizard.
-                local_installer = dialog.local_installer
-                item = {**item, "task": "InstallLocalFile"}
-            elif dialog.selected_ids:
+            if dialog.selected_ids:
                 app_ids = dialog.selected_ids
             else:
                 self.toasts.show("info", "No updates were selected — nothing to update.", 3500)
@@ -2955,13 +2951,7 @@ class PulseApp(QMainWindow):
                 [section] if section else SOFTWARE_CATALOG)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
-            if dialog.local_installer:
-                # A per-app "⋯" wizard resolved to Path C (a local file) —
-                # run the generic single-installer task instead of the bulk
-                # InstallCatalogApps deploy.
-                local_installer = dialog.local_installer
-                item = {**item, "task": "InstallLocalFile"}
-            elif dialog.selected_ids:
+            if dialog.selected_ids:
                 app_ids = dialog.selected_ids
             else:
                 self.toasts.show(
@@ -3017,13 +3007,11 @@ class PulseApp(QMainWindow):
             # separates them.
             dry_run = dialog.preview
 
-        self._start_task(item, card, app_ids, office_paths, local_installer,
-                         dry_run=dry_run)
+        self._start_task(item, card, app_ids, office_paths, dry_run=dry_run)
 
     def _start_task(self, item: dict, card: GlassCard | None,
                      app_ids: list[str] | None = None,
                      office_paths: tuple[str, str] | None = None,
-                     local_installer: tuple[str, str] | None = None,
                      dry_run: bool = False):
         self._running_card = card
         # remembered so the run's history can be banked once it settles
@@ -3063,8 +3051,7 @@ class PulseApp(QMainWindow):
             dry_run=dry_run,
             app_ids=app_ids,
             office_setup=office_paths[0] if office_paths else None,
-            office_config=office_paths[1] if office_paths else None,
-            local_installer_path=local_installer[1] if local_installer else None)
+            office_config=office_paths[1] if office_paths else None)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
@@ -3395,6 +3382,7 @@ class PulseApp(QMainWindow):
             if handle is not None:
                 handle.screenChanged.connect(self._on_screen_changed)
                 self._screen_hooked = True
+                self._watch_screen_dpi()
         if not self._glass_applied:
             self._glass_applied = True
             hwnd = int(self.winId())
@@ -3592,8 +3580,87 @@ class PulseApp(QMainWindow):
         """
         if self._shutting_down or not self._ui_ready:
             return
+        self._watch_screen_dpi()
+        self._rescale_for_screen()
+
+    def _watch_screen_dpi(self):
+        """Listen for a SCALE change on the screen we are currently on.
+
+        screenChanged alone is not the whole signal, and the half it
+        misses is the one a user is most likely to produce deliberately:
+        changing the scaling of the monitor Pulse is already sitting on,
+        in Settings > Display. No screen change occurs — it is the same
+        QScreen throughout — so nothing re-rendered, and every ratio-baked
+        pixmap stayed at the old scale until the next theme toggle.
+
+        The connection has to MOVE with the window, because
+        logicalDotsPerInchChanged belongs to a QScreen rather than to the
+        application: staying subscribed to the old monitor would report
+        changes to a display Pulse is no longer on and miss changes to the
+        one it is. So the previous connection is dropped first.
+
+        Disconnect is guarded because Qt raises RuntimeError when asked to
+        undo a connection that is already gone — which is exactly what a
+        screen being unplugged does.
+        """
+        handle = self.windowHandle()
+        screen = handle.screen() if handle is not None else None
+        if screen is self._dpi_screen:
+            return
+        if self._dpi_screen is not None:
+            try:
+                self._dpi_screen.logicalDotsPerInchChanged.disconnect(
+                    self._on_screen_changed)
+            except (RuntimeError, TypeError):
+                pass
+        self._dpi_screen = screen
+        if screen is not None:
+            screen.logicalDotsPerInchChanged.connect(self._on_screen_changed)
+
+    def _rescale_for_screen(self):
+        """Redraw everything that was rasterised for the previous display.
+
+        THE CACHE IS DROPPED FIRST. It is keyed on the ratio, so a stale
+        entry could never be served to the new screen anyway — but without
+        the clear, a move back and forth would find the pre-move entry
+        still valid and skip the re-render this exists to force.
+
+        RE-APPLYING THE THEME covers the shell, and deliberately so: both
+        ratio-baked pixmaps on the pages (the sidebar's search glyph via
+        theme.glyph_icon, every row's mark via appicons.app_icon) are
+        already regenerated inside _apply_theme, because both also depend
+        on the palette. That path is exercised on every theme toggle, so
+        this reuses a well-travelled route rather than adding a second,
+        thinner one that would drift out of step with it.
+
+        THE OPEN SHEETS ARE NOT ON THE PAGES, which is the part the theme
+        pass cannot reach. A sheet is a separate top-level window, and
+        three things about it are stale after a scale change:
+
+          * its GEOMETRY, because the host's body is now a different
+            number of logical pixels — a sheet left at the old size sits
+            over the title bar or stops short of the window edge;
+          * its FROST, a pixmap captured at the old device-pixel ratio and
+            blitted 1:1, which Qt now has to resample;
+          * its ROW MARKS, for the same reason the pages' are.
+
+        Cheap enough to do unconditionally: a scale change is a
+        user-scale event, not a per-frame one, and the alternative
+        (comparing ratios and skipping when equal) would miss a monitor
+        whose scaling was changed in Settings while Pulse sat on it —
+        which is precisely the case _watch_screen_dpi exists to catch.
+        """
         appicons.invalidate_cache()
         self._apply_theme(self.theme.t)
+        for sheet in PulseDialog.open_dialogs():
+            refit_dialog(sheet)
+            sheet.rescale_marks(self.theme.t)
+            # AFTER the refit, never before: the frost is registered to the
+            # pixels behind the sheet's final rectangle, so capturing at
+            # the old geometry renders the wrong region and paintEvent
+            # stretches the mistake over the whole backdrop. Same ordering
+            # _present_dialog documents.
+            sheet._capture_backdrop()
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -3605,6 +3672,45 @@ class PulseApp(QMainWindow):
         # calls _sync_window_state() once the widgets exist.
         if event.type() == QEvent.Type.WindowStateChange and self._ui_ready:
             self._sync_window_state()
+            self._sync_sheet_visibility()
+
+    def _sync_sheet_visibility(self):
+        """Take the open sheets down with the window, and bring them back.
+
+        THE ORPHAN OVERLAY. A Pulse sheet is a frameless TOP-LEVEL window
+        (see widgets.PulseDialog), and nothing in Qt or in Windows
+        minimizes a second top-level window when the first one goes down:
+        Qt does not, and the frameless hint means there is no owner
+        relationship for the OS to act on either. Measured, not assumed —
+        with the catalog open, showMinimized() left the sheet visible at
+        its original coordinates. The app disappeared and a lone frosted
+        panel stayed on the desktop, over whatever was behind it, with no
+        title bar and no taskbar button of its own.
+
+        MOVE AND RESIZE ARE ALREADY HANDLED and this is the third member
+        of that family (moveEvent -> reanchor_dialog, resizeEvent ->
+        refit_dialog). It is the only one of the three that needs its own
+        list, because a parked sheet is deliberately still registered as
+        open — see PulseDialog.park.
+
+        AERO SNAP NEEDS NOTHING HERE, which is worth stating because it is
+        the case that looks like it should. Snapping changes the window's
+        state INSIDE Windows' move/size loop, and it also changes the
+        geometry — so resizeEvent fires and refits every open sheet, which
+        is the whole requirement. The state change only matters when it
+        crosses into or out of MINIMIZED, which is what this reads.
+
+        Restored oldest-first so a nested wizard lands back on top of the
+        sheet it was opened from, rather than behind it.
+        """
+        if self._shutting_down:
+            return
+        if self.isMinimized():
+            for sheet in PulseDialog.open_dialogs():
+                sheet.park()
+        else:
+            for sheet in PulseDialog.parked_dialogs():
+                sheet.unpark()
 
     def _task_is_running(self) -> bool:
         """A single PowerShellTask is in flight (the one-at-a-time slot)."""

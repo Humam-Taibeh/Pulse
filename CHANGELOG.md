@@ -19,6 +19,262 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.10.0] — 2026-09-05
+
+A MINOR bump rather than a patch, and the reason is the shape of the
+release rather than its size: the tripartite catalog, the `-WhatIf`
+preview system and the module integrity manifest all landed since 10.9.4
+without a version of their own, and this release adds a backend task, a
+new module surface and nine new bundled assets on top of them. 10.9.5
+would have been a lie about all of it.
+
+### Fixed — eight brand marks shipped as solid black blocks
+
+- **The icon fetcher was writing a manifest record that did not describe
+  the file it named.** `tools/fetch_app_icons.py` runs two passes over the
+  same output path: Simple Icons first (monochrome silhouettes), then
+  `LOGO_MAP` (the vendors' real full-colour artwork). The second pass
+  guarded its download with `if args.force or not os.path.isfile(path)` —
+  correct in the first pass, wrong in the second, because the first pass
+  had *just created that file*. So the download was skipped and the
+  manifest was written anyway, claiming the LOGO_MAP source and
+  `color: true` over a Simple Icons silhouette.
+
+  `color: true` means "render as drawn, do not touch the colours", and a
+  Simple Icons path carries no fill at all, so it defaults to black. Eight
+  marks therefore painted a solid black shape and never reached the
+  contrast guard that exists to prevent exactly that — because the
+  manifest had told the runtime they were not silhouettes. AnyDesk,
+  Oracle VirtualBox, Visual C++, .NET Framework 3.5, Temurin and MSYS2
+  were all affected; Steam and NetBeans were wrong for their own separate
+  reasons below.
+
+  The classification test could not see it either, and that is worth
+  recording: it checks the artwork for `currentColor`, and a Simple Icons
+  path has no fill attribute rather than a `currentColor` one. Both halves
+  looked locally consistent. Only the *pairing* was wrong.
+
+- **Steam is the authentic blue-gradient disc.** It was `logos:steam`, a
+  single `#1a1918` silhouette — Steam as a near-black circle. The colour
+  artwork exists under MIT (`thesvg-color:steam`) and Qt could not draw
+  it: QSvgRenderer implements SVG Tiny 1.2, which has no `<symbol>` and no
+  `<use>` that resolves to one, and it fails *silently* — the mark came
+  out as a flat white disc, indistinguishable from a broken asset.
+  `_flatten_symbols()` now rewrites that container on the way in, turning
+  each `<use>` into a `<g>` with the same translate. No geometry moves and
+  no colour changes; a file with no `<symbol>` is passed through
+  byte-for-byte.
+
+- **NetBeans carried the retired logo.** `logos:netbeans` is the
+  Sun/Oracle-era red wireframe mesh, which at 20px is a tangle of
+  hairlines in a colour the project no longer uses. Replaced with
+  `devicon:netbeans` (MIT) — the current Apache NetBeans cube, built from
+  filled faces rather than strokes, so it survives being small.
+
+- **Visual C++ wears Microsoft's purple.** What that row installs is the
+  *Microsoft Visual C++ Redistributable*, a Visual Studio component; the
+  generic C++ hex identified the language it was written in rather than
+  the product. Now `logos:visual-studio` (CC0).
+
+- **Antigravity was a dim grey arch, not a brand mark.** Its manifest hex
+  was `#000000` on the reasoning that the contrast guard would carry it to
+  white on obsidian — but the guard stops at the readability floor, so
+  what it actually produced was mid-grey on dark and flat black on light.
+  The hex is now `#3186ff`, lifted from Antigravity's own full-colour
+  artwork rather than chosen here. (That artwork cannot be used directly:
+  it is a masked composition, and Qt has no `<mask>`, so it renders blank
+  or as blobs spilling outside their own viewBox.)
+
+### Added — marks for nine products that have none
+
+- **BlueStacks, DirectX, CPU-Z, GPU-Z, CrystalDiskInfo, HWMonitor,
+  HWiNFO64, FurMark and Cinebench now have icons**, and they are
+  **Pulse-drawn pictograms, not the vendors' logos**. The manifest records
+  `drawn: true` and `source: "pulse-drawn"` for every one, in the same
+  field a fetched mark uses to name its collection, so the two can be told
+  apart by anyone reading the asset folder.
+
+  This reverses a decision this project made deliberately and had a test
+  for. `test_no_mark_is_fabricated` existed because a purpose-drawn
+  pictogram set was tried once and reverted, on the rule that "a mark
+  which DESCRIBES software is not that software's logo". The availability
+  has not changed — Iconify's federated search across every collection it
+  aggregates still returns **zero** results for all nine — but the cost of
+  the alternative was re-measured: nine grey "no logo available" parcels
+  in a nine-row group is not a graceful fallback, it is a Hardware
+  Diagnostics list with no icons in it, beside two pillars where every row
+  has one.
+
+  The guard was narrowed rather than deleted, and the half that was always
+  doing the real work is untouched: **no lookalike**. The index will
+  happily answer `campaignmonitor` for HWMonitor and `crystal` — the
+  programming language — for CrystalDiskInfo, and a mark taken that way
+  claims to be the vendor's and is not.
+  `test_no_mark_is_a_lookalike` now requires every drawn mark to be
+  declared in `DRAWN_MAP`, flagged in both fields, and reachable from the
+  catalog. **WinRAR and OpenAL are deliberately still unmarked**: their
+  gaps have different causes — a copyleft licence, and a wordmark geometry
+  that cannot survive a 20px square — both of which can still close
+  properly.
+
+### Fixed — a minimize stranded every open dialog on the desktop
+
+- **Sheets now follow the window down and back up.** A Pulse sheet is a
+  frameless *top-level* window (that is what lets it paint a scrim over
+  the body while the title bar stays live), and nothing minimizes a second
+  top-level window when the first goes down: Qt does not, and
+  `FramelessWindowHint` means Windows draws no owner relationship that
+  would. Measured, not assumed — with the catalog open,
+  `showMinimized()` left the sheet `isVisible() == True` at its original
+  coordinates. The app vanished and a lone frosted panel stayed on the
+  desktop with no title bar, no taskbar button and nothing behind it.
+
+  `PulseDialog.park()`/`unpark()` are the third member of the family
+  `moveEvent → reanchor_dialog` and `resizeEvent → refit_dialog` already
+  formed. A parked sheet stays *registered as open*, because the user
+  cancelled nothing — so `hideEvent` no longer deregisters one, and
+  restoring re-shows every parked sheet oldest-first, so a nested wizard
+  lands back in front of the sheet it was opened from rather than behind
+  it.
+
+  Aero Snap needed nothing: snapping changes the geometry as well as the
+  state, so `resizeEvent` already refits every open sheet.
+
+### Fixed — a scale change left sheets rendered for the old display
+
+- **`logicalDotsPerInchChanged` is now watched, on the screen the window
+  is actually on.** `screenChanged` fires when the window *moves* to
+  another monitor; it does not fire when the monitor Pulse is already on
+  is rescaled in Settings, which is the case a user produces deliberately.
+  Nothing was subscribed to that signal, so every ratio-baked pixmap
+  stayed at the old scale until the next theme toggle. The subscription
+  moves with the window, because the signal belongs to a `QScreen` rather
+  than to the application.
+
+- **Open sheets are re-fitted, re-frosted and re-rasterised.** The
+  screen-change handler dropped the icon cache and re-applied the theme,
+  which covers the pages — and a sheet is not on a page. Its geometry, its
+  frost (a pixmap captured at the old device-pixel ratio and blitted 1:1)
+  and its row marks were all left as they were. `PulseDialog.rescale_marks`
+  redraws the marks; rows opt in with a declared `RATIO_BAKED` flag rather
+  than being found by duck-typing on an attribute name.
+
+### Changed — the catalog
+
+- **The "All" tab is a flat, continuous list.** The filter chips and the
+  section headers were the same categorisation stated twice. On any single
+  tab that costs nothing — one header is on screen, repeating the chip
+  just pressed. On "All" it was the dominant texture: every group title in
+  the pillar, stacked down the one list whose whole promise is that it is
+  unfiltered. A **search query still keeps the headers**, and the
+  asymmetry is deliberate: a query narrows across every group at once with
+  no chip pressed, so the headers are then the only thing saying which
+  part of the catalog each surviving row came from.
+
+- **BlueStacks 5 moved to Gaming Launchers**, out of "Utilities &
+  Virtualization" where it sat beside VirtualBox. Both run another
+  operating system; only one of them is installed to play a game.
+
+- **BlueStacks' package id was wrong for the life of the row.** winget has
+  no `BlueStacks.BlueStacks`; the real package is `BlueStack.BlueStacks`
+  (singular publisher segment, now.gg, Inc.). Every tick of that row
+  queued an id that resolved to nothing and the deploy reported a clean
+  skip. Found while verifying ids against the live source rather than by
+  report.
+
+- **Network & Connectivity moved to Utilities & Tools.** It was the one
+  card in Software Management that installed nothing — adapter
+  diagnostics, a driver-age check and a Winsock rebuild are system
+  diagnostics, not an installable application. It gets its own band there
+  rather than being folded into the reports, because Reset Network Stack
+  is the one exception to that module's "nothing here changes a setting on
+  its own" promise and the exception should be visible on the page rather
+  than discovered one click in. It stays a hub, which is what keeps the
+  destructive row beside the two read-only tools that say whether it is
+  needed at all.
+
+### Added — hardware diagnostics and driver acquisition
+
+- **HWiNFO64, FurMark and Cinebench R23** join the diagnostics lineup.
+  CPU-Z and GPU-Z *identify* parts and HWMonitor reads sensors at one
+  moment; none of them says whether the machine survives being **worked**,
+  which is the question behind "it crashes in games" and "it throttles
+  after ten minutes". Package ids were verified against the live winget
+  source rather than guessed — FurMark ships as `.1` and `.2` side by side
+  and 2 is current, and Cinebench's only winget package is R23. None of
+  the three is in the one-click dependency pass: someone whose game will
+  not start is not asking to be handed a GPU stress test.
+
+- **"Fetch Missing Hardware Drivers"** (task `DriverSync`) asks Windows
+  Update's driver channel for the chipset, Realtek audio, Wi-Fi and
+  Bluetooth drivers a fresh install leaves as "Unknown device". Those
+  drivers *are* available — published by the vendor, under names nobody
+  would search for. What was missing was the **asking**: the existing
+  `DriverScan` card only READS the update agent's current answer, and on a
+  fresh install that answer is "nothing pending", because no scan has run
+  yet. So the module that exists to make a new machine complete reported a
+  clean bill of health on exactly the machine that needed the most work.
+
+  `USOClient StartScan` requests the scan and a COM search reports what it
+  found, which is what turns an asynchronous request into something the
+  card can say anything about. **Nothing is installed here** — requesting
+  a scan is what makes Windows download and stage what it finds, on its
+  own schedule and with its own rollback, which is the correct owner for a
+  driver install. USOClient is undocumented, absent on some builds and
+  declined outright where Windows Update is policy-managed, so its refusal
+  is a *warning* and the report still runs; only losing the update agent
+  entirely fails the task. Not elevation-gated: the scan is performed by
+  the Update Orchestrator, which runs as SYSTEM, so an unelevated Pulse
+  gets the same scan an elevated one does and a UAC prompt would buy
+  nothing. `usoclient` joins `$Script:SystemBinaries`, since a bare
+  executable name is a `$env:PATH` search the unelevated user controls.
+
+### Removed — the single-app modal's third option
+
+- **"Local File / Manual Selection" is gone, end to end.**
+  `ToolInstallWizardDialog` presented three equal cards; every tool it
+  opens for *has* a working winget package, since it is only ever reached
+  from a catalog row, an update row or a bundled-app restore. So the
+  automated install was the right answer in every case, and presenting it
+  as one of three peers made a solved problem look like an open question.
+  The local path was worse than redundant: it was the only route in the
+  app that ran an arbitrary executable the engine had never seen, offered
+  to a user who would first have had to find and download an installer the
+  dialog was about to fetch for them.
+
+  It is now an elevated primary **button** ("Automated Install (winget)")
+  and a secondary **link** ("Visit Official Website") — a shape that says
+  which of the two acts on the machine and which one leaves. The removal
+  is complete rather than cosmetic: `mode == "local"`, the
+  `local_installer` outcome on both selector dialogs, main.py's plumbing,
+  `PowerShellTask`'s `local_installer_path`, core.ps1's
+  `-LocalInstallerPath`, the `InstallLocalFile` dispatcher case and
+  `Invoke-GuiLocalInstall` all went with it. A half-removed feature is
+  worse than either state — an entry point nothing can reach still runs an
+  arbitrary executable if something finds it.
+
+  The argv and injection guards that used `-LocalInstallerPath` as their
+  vehicle were **re-pointed at `-ScanPath`, not deleted**: same shape of
+  value (a filesystem path the user picked, arbitrary contents, straight
+  into an elevated process), on a parameter that still exists. A guard
+  aimed at a deleted parameter proves nothing about the app.
+
+### Internal
+
+- 45 new tests across `tests/test_window_lifecycle.py` (13),
+  `tests/test_install_wizard.py` (12) and `tests/test_catalog_pillars.py`
+  (20), each confirmed **failing against the pre-fix code** before the
+  change that makes it pass — 9, 9 and 13 of them respectively, with the
+  remainder written as guards against the fix regressing (a dismissed
+  sheet must not be resurrected by a restore; a chip must bring its header
+  back; the read-only network tools must stay outside the elevation gate).
+- `pytest` 1,303 collected / 1,301 passed / 2 skipped / 0 failed.
+- README and ROADMAP carried a 1,012-test count that 10.9.4's own entry
+  below had just corrected. It had drifted again by 291 tests across the
+  releases since; both now read the number this release measured.
+
+---
+
 ## [10.9.4] — 2026-09-03
 
 The live console finally says what colour the backend meant, the state

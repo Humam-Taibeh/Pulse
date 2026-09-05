@@ -477,6 +477,49 @@ class TestNetworkPipeline:
         for task in self.TASKS:
             assert f'"{task}" {{' in dispatcher, f"{task} has no case"
 
+    def test_the_network_hub_left_the_software_module(self):
+        """NETWORK IS A DIAGNOSTIC, NOT AN INSTALL. The hub was the one
+        card in Software Management that installed nothing — adapter
+        diagnostics, a driver-age check and a Winsock rebuild — so
+        "where do I check my adapters?" was a question about the module
+        for acquiring and removing software."""
+        from frontend.menu_structure import (
+            CATEGORIES, category_items, hub_items)
+
+        def tasks_of(module_id):
+            cat = next(c for c in CATEGORIES if c["id"] == module_id)
+            found = set()
+            for item in category_items(cat):
+                if item.get("hub"):
+                    found |= {sub.get("task") for sub in hub_items(item)}
+                else:
+                    found.add(item.get("task"))
+            return found
+
+        software, utilities = tasks_of("software"), tasks_of("utilities")
+        for task in self.TASKS:
+            assert task not in software, (
+                f"{task} is still reachable from Software Management")
+            assert task in utilities, (
+                f"{task} did not arrive in Utilities & Tools")
+
+    def test_the_network_card_is_still_a_hub(self):
+        """The stack reset is a real teardown that needs a reboot, and a
+        lone top-level card for it would advertise the destructive half.
+        Kept beside the two read-only tools that say whether you need it,
+        it reads as the last step of a diagnosis."""
+        from frontend.menu_structure import (
+            CATEGORIES, category_items, hub_items)
+        utilities = next(c for c in CATEGORIES if c["id"] == "utilities")
+        card = next(i for i in category_items(utilities)
+                    if i.get("title") == "Network & Connectivity")
+        assert card.get("hub"), "the network card stopped being a hub"
+        assert [sub["task"] for sub in hub_items(card)] == list(self.TASKS)
+        reset = next(sub for sub in hub_items(card)
+                     if sub["task"] == "NetworkStackReset")
+        assert reset.get("confirm") and reset.get("danger"), (
+            "the stack reset lost its confirmation or its danger styling")
+
     def test_only_the_writer_is_admin_gated(self):
         """Reading which adapters are fitted needs no rights, and gating it
         would raise a UAC prompt just to look — the same reasoning that
@@ -610,3 +653,238 @@ class TestScopedCatalogDialog:
                 dialog.reject()
                 dialog.deleteLater()
                 qapp.processEvents()
+
+
+# ============================================================
+#  8. THE FLAT "ALL" LIST
+# ============================================================
+class TestAllTabIsFlat:
+    """The chips and the section headers were the same categorisation
+    stated twice.
+
+    On any single tab that costs nothing — one header is on screen and it
+    repeats the chip just pressed. On "All" it is the dominant texture:
+    every group title in the pillar, stacked down the one list whose whole
+    promise is that it is unfiltered. The chips keep the job.
+    """
+
+    @staticmethod
+    def _open(window, qapp, key="essentials"):
+        from conftest import show_dialog
+        from frontend.menu_structure import catalog_section
+        from frontend.widgets import SoftwareCatalogDialog
+
+        section = catalog_section(key)
+        dialog = SoftwareCatalogDialog(
+            window, {"icon": "\U0001f5a5\ufe0f", "title": section["title"]},
+            window.theme.t, [section])
+        show_dialog(qapp, dialog)
+        return dialog
+
+    def test_all_renders_no_section_headers(self, window, qapp):
+        """THE DEFECT. Every group title was drawn down the All list."""
+        dialog = self._open(window, qapp)
+        try:
+            assert dialog._active_tab == dialog.ALL_KEY, "not on All"
+            shown = [h.text() for h, _tab, _ids in dialog._headers
+                     if h.isVisible()]
+            assert not shown, (
+                f"the All tab still draws sub-category headers: {shown}")
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_all_still_shows_every_row(self, window, qapp):
+        """Hiding the headers must not hide anything the headers named —
+        the list is flat, not shorter."""
+        from frontend.menu_structure import catalog_app_ids
+        dialog = self._open(window, qapp)
+        try:
+            visible = {aid for aid, row in dialog._rows.items()
+                       if row.isVisible()}
+            assert visible == set(catalog_app_ids("essentials"))
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_a_chip_brings_its_header_back(self, window, qapp):
+        """Picking a category is where a header earns its place: it reads
+        as a caption for the filter rather than as a repeat of it."""
+        dialog = self._open(window, qapp)
+        try:
+            group = next(key for key in dialog._tab_buttons if key)
+            dialog._set_tab(group)
+            qapp.processEvents()
+            shown = [h.text() for h, _tab, _ids in dialog._headers
+                     if h.isVisible()]
+            assert shown == [group], (
+                f"selecting {group!r} showed headers {shown}")
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_a_search_keeps_the_headers_on_the_all_tab(self, window, qapp):
+        """THE ASYMMETRY, and it is deliberate. A query narrows across
+        every group at once with no chip pressed, so the headers are the
+        only thing saying which part of the catalog each surviving row
+        came from."""
+        dialog = self._open(window, qapp)
+        try:
+            dialog._on_query("a")
+            qapp.processEvents()
+            assert dialog._active_tab == dialog.ALL_KEY
+            shown = [h for h, _tab, _ids in dialog._headers if h.isVisible()]
+            assert shown, (
+                "a search on the All tab hid the headers too — the results "
+                "span groups and nothing says which is which")
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+    def test_clearing_the_search_returns_to_flat(self, window, qapp):
+        dialog = self._open(window, qapp)
+        try:
+            dialog._on_query("a")
+            qapp.processEvents()
+            dialog._on_query("")
+            qapp.processEvents()
+            shown = [h.text() for h, _tab, _ids in dialog._headers
+                     if h.isVisible()]
+            assert not shown, f"headers survived the cleared search: {shown}"
+        finally:
+            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+
+
+# ============================================================
+#  9. THE RE-FILED AND THE NEWLY-ADDED ROWS
+# ============================================================
+class TestCatalogPlacement:
+
+    def test_bluestacks_sits_with_the_gaming_launchers(self):
+        """An Android GAMING emulator. It was filed under "Utilities &
+        Virtualization" beside VirtualBox: both run another OS, and only
+        one of them is installed to play a game."""
+        from frontend.menu_structure import catalog_section
+        groups = dict(catalog_section("essentials")["groups"])
+        gaming = {tool[0] for tool in groups["\U0001f3ae Gaming Launchers"]}
+        utilities = {tool[0]
+                     for tool in groups["\U0001f9f0 Utilities & Virtualization"]}
+        assert "BlueStack.BlueStacks" in gaming
+        assert "BlueStack.BlueStacks" not in utilities
+
+    def test_the_bluestacks_id_is_the_one_winget_actually_has(self):
+        """THE ROW NEVER WORKED. winget has no "BlueStacks.BlueStacks";
+        the package is "BlueStack.BlueStacks" — singular publisher
+        segment, now.gg, Inc. Every tick of the old row queued an id that
+        resolved to nothing, and the deploy reported a clean skip."""
+        from frontend.menu_structure import catalog_app_ids
+        ids = set(catalog_app_ids())
+        assert "BlueStack.BlueStacks" in ids
+        assert "BlueStacks.BlueStacks" not in ids, (
+            "the id winget does not have is back")
+        catalogs = _read(_CATALOGS)
+        assert '@("BlueStack.BlueStacks", "BlueStacks 5")' in catalogs
+
+    def test_the_stress_and_telemetry_tools_are_present(self):
+        """CPU-Z and GPU-Z IDENTIFY parts and HWMonitor reads sensors at
+        one moment; none of them says whether the machine survives being
+        WORKED, which is the question behind "it crashes in games"."""
+        from frontend.menu_structure import catalog_section
+        groups = dict(catalog_section("runtimes")["groups"])
+        diagnostics = [tool[0]
+                       for tool in groups["\U0001f52c Hardware Diagnostics"]]
+        for app_id in ("REALiX.HWiNFO", "Geeks3D.FurMark.2",
+                       "Maxon.CinebenchR23"):
+            assert app_id in diagnostics, f"{app_id} is not in the suite"
+
+    def test_the_new_diagnostics_are_not_in_the_bulk_dependency_pass(self):
+        """"Install All Essential Dependencies" means DLLs. Someone whose
+        game will not start is not asking to be handed a GPU stress test."""
+        from frontend.menu_structure import catalog_bulk_ids
+        bulk = set(catalog_bulk_ids("runtimes"))
+        for app_id in ("REALiX.HWiNFO", "Geeks3D.FurMark.2",
+                       "Maxon.CinebenchR23"):
+            assert app_id not in bulk
+
+    def test_every_new_row_has_a_download_url_in_the_backend(self):
+        """The fallback page a row's wizard opens when the automated path
+        is declined. A row with no URL sends the user to a web search."""
+        catalogs = _read(_CATALOGS)
+        for app_id in ("BlueStack.BlueStacks", "REALiX.HWiNFO",
+                       "Geeks3D.FurMark.2", "Maxon.CinebenchR23"):
+            assert f'"{app_id}"' in catalogs.split("$Script:DownloadUrls")[1], (
+                f"{app_id} has no entry in $Script:DownloadUrls")
+
+
+# ============================================================
+#  10. WINDOWS UPDATE DRIVER SYNCHRONISATION
+# ============================================================
+class TestDriverSync:
+    """The action half of DriverScan.
+
+    DriverScan READS: it asks the local update agent what it already knows
+    is missing. On a fresh install the honest answer is usually "nothing",
+    because nothing has asked Windows Update to LOOK yet — and the
+    chipset, Realtek audio, Wi-Fi and Bluetooth drivers a board needs
+    arrive through exactly that channel, under names nobody searches for.
+    """
+
+    def test_the_card_exists_in_the_drivers_band(self):
+        from frontend.menu_structure import CATEGORIES, category_bands
+        software = next(c for c in CATEGORIES if c["id"] == "software")
+        band = dict((title, items) for title, items in category_bands(software))
+        tasks = {item.get("task") for item in band["DEPENDENCIES & DRIVERS"]}
+        assert "DriverSync" in tasks
+
+    def test_it_has_a_dispatcher_case(self):
+        assert '"DriverSync" {' in _read(_DISPATCHER)
+
+    def test_it_is_not_admin_gated(self):
+        """The scan is performed by the Update Orchestrator, which runs as
+        SYSTEM; the client only posts the request. An unelevated Pulse
+        gets the same scan an elevated one does, so gating this would
+        raise a UAC prompt that buys the user nothing."""
+        from frontend.menu_structure import ADMIN_REQUIRED_TASKS
+        assert "DriverSync" not in ADMIN_REQUIRED_TASKS
+        assert "DriverSync" not in _read(_CATALOGS).split(
+            "$Script:AdminRequiredTasks")[1].split(")")[0]
+
+    def test_it_asks_windows_update_rather_than_installing_a_driver(self):
+        """Requesting a scan is what makes Windows download and stage what
+        it finds, on its own schedule and with its own rollback — which is
+        the correct owner for a driver install. Pulse forcing a package
+        onto a device is how a machine ends up with no display output."""
+        maintenance = _stripped(
+            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
+        start = maintenance.index("function Invoke-PulseDriverSync")
+        body = maintenance[start:maintenance.index("\nfunction ", start + 10)]
+        assert "StartScan" in body
+        for forbidden in ("pnputil", "Add-WindowsDriver", "AcceptEula",
+                          "Install()", "Download()"):
+            assert forbidden not in body, (
+                f"the driver sync calls {forbidden} — it must ask Windows "
+                "Update to fetch drivers, not install one itself")
+
+    def test_the_orchestrator_is_invoked_through_an_anchored_path(self):
+        """Pulse may be elevated, and a bare executable name is a $env:PATH
+        search the unelevated user controls."""
+        maintenance = _stripped(
+            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
+        assert "Get-SystemBinary 'usoclient'" in maintenance
+        foundation = _read(
+            os.path.join(_ROOT, "src/backend/modules/00-Foundation.ps1"))
+        assert "'usoclient'" in foundation, (
+            "usoclient.exe has no anchored path in $Script:SystemBinaries")
+
+    def test_a_refused_scan_is_a_warning_and_not_a_failed_task(self):
+        """USOClient is undocumented, absent on some builds and declined
+        outright where Windows Update is managed by policy. None of that
+        is Pulse malfunctioning, and none of it should paint the card
+        red — only losing the update agent entirely does."""
+        maintenance = _stripped(
+            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
+        start = maintenance.index("function Invoke-PulseDriverSync")
+        body = maintenance[start:maintenance.index("\nfunction ", start + 10)]
+        head, _, tail = body.partition("$Found = $Searcher.Search")
+        assert "Write-ErrorX" not in head, (
+            "the scan REQUEST reports a hard failure; it must warn and "
+            "fall through to the report")
+        assert "Write-ErrorX" in tail, (
+            "losing the update agent must still fail the task")
+

@@ -1,9 +1,18 @@
-#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
+﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 <#
 .SYNOPSIS
     Pester coverage for the paths Pulse receives from a FILE PICKER rather
-    than builds itself: Invoke-GuiLocalInstall (04-SoftwareEngine.ps1) and
-    the Office Deployment Tool finders (10-Office.ps1).
+    than builds itself: the Office Deployment Tool finders and installer
+    (10-Office.ps1).
+
+    THIS FILE COVERED TWO CALL SITES AND NOW COVERS ONE. The other was
+    Invoke-GuiLocalInstall, which ran an installer the user picked through
+    the Tool Install Wizard's local-file card; the card, the task and the
+    function were all removed in v10.10, so its tests went with them
+    rather than being left asserting against a function that no longer
+    exists. The Office wizard is now the ONLY surface in Pulse that takes
+    a path from a picker, which makes the rule below more load-bearing
+    here, not less: there is nowhere else it is enforced.
 
 .DESCRIPTION
     '[' AND ']' ARE LEGAL IN A WINDOWS FILENAME, and PowerShell's -Path
@@ -61,41 +70,6 @@ AfterAll {
     }
 }
 
-Describe "Invoke-GuiLocalInstall accepts the file the user actually picked" {
-
-    BeforeAll {
-        $script:Bracketed = Join-Path $script:Sandbox "setup [1].exe"
-        $script:Plain     = Join-Path $script:Sandbox "normal.exe"
-        Set-Content -LiteralPath $script:Bracketed -Value "stub" -Encoding Ascii
-        Set-Content -LiteralPath $script:Plain     -Value "stub" -Encoding Ascii
-    }
-
-    It "runs an installer whose name contains brackets" {
-        # THE REGRESSION. Under -Path this returned $false with
-        # "Installer file not found" for a file that exists.
-        Invoke-GuiLocalInstall -FilePath $script:Bracketed | Should -BeTrue `
-            -Because "'setup [1].exe' is an ordinary filename, not a pattern"
-    }
-
-    It "still runs an installer with an ordinary name" {
-        Invoke-GuiLocalInstall -FilePath $script:Plain | Should -BeTrue
-    }
-
-    It "still refuses a file that genuinely is not there" {
-        # The guard must not have been widened into no guard at all.
-        $missing = Join-Path $script:Sandbox "does not exist [9].exe"
-        Invoke-GuiLocalInstall -FilePath $missing | Should -BeFalse
-    }
-
-    It "does not treat a wildcard as a match for some other file" {
-        # "*.exe" is not a file. Under -Path it would have RESOLVED, and
-        # the engine would have run whichever installer happened to sort
-        # first - a path from a text box to an arbitrary execution.
-        Invoke-GuiLocalInstall -FilePath (Join-Path $script:Sandbox "*.exe") | Should -BeFalse `
-            -Because "a pattern must never resolve to some file the user did not pick"
-    }
-}
-
 Describe "The Office finders read a bracketed folder" {
 
     BeforeAll {
@@ -136,16 +110,11 @@ Describe "The Office finders read a bracketed folder" {
 }
 
 Describe "The picker-fed paths use -LiteralPath by construction" {
-    # A source-level backstop for the two call sites, so a future edit that
-    # reintroduces -Path fails here even if no fixture happens to carry a
-    # bracket. Stated narrowly - the existence probe on the picked file -
-    # rather than as a blanket ban on -Path, which has legitimate uses.
-    It "Invoke-GuiLocalInstall probes its FilePath literally" {
-        $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "04-SoftwareEngine.ps1") -Raw
-        $source | Should -Match 'Test-Path -LiteralPath \$FilePath -PathType Leaf'
-        $source | Should -Not -Match 'Test-Path -Path \$FilePath'
-    }
-
+    # A source-level backstop for the remaining call site, so a future edit
+    # that reintroduces -Path fails here even if no fixture happens to
+    # carry a bracket. Stated narrowly - the existence probe on the picked
+    # file - rather than as a blanket ban on -Path, which has legitimate
+    # uses.
     It "Invoke-GuiOfficeODTInstall probes both of its paths literally" {
         $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "10-Office.ps1") -Raw
         $source | Should -Match 'Test-Path -LiteralPath \$SetupPath -PathType Leaf'

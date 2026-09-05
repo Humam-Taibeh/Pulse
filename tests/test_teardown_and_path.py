@@ -1123,28 +1123,30 @@ class TestBrandMarks:
                 wrong.append(app_id)
         assert not wrong, f"flagged full-colour but drawn as silhouettes: {wrong}"
 
-    #: The catalog apps that have no authentic logo in any open,
-    #: permissively-licensed set. A CLOSED list, so the two tests below can
-    #: fail in BOTH directions rather than only the one anyone thought of.
-    #: Catalog rows with no bundled mark, and the REASON each is a gap.
-    #: Three distinct reasons, which is why this is a list rather than a
-    #: count — a gap that could be closed tomorrow is different from one
-    #: that never can:
+    #: Catalog rows with NO BUNDLED MARK AT ALL, and the reason each is a
+    #: gap. A CLOSED list, so the two tests below can fail in BOTH
+    #: directions rather than only the one anyone thought of.
     #:
-    #:   NO MARK EXISTS in any open set — measured against the full Simple
-    #:   Icons index, the whole `logos` collection, thesvg-color, devicon
-    #:   and Iconify's federated search:
-    #:       BlueStacks, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo, DirectX
-    #:   The traps are close and the search finds them: "hwmonitor"
-    #:   returns `campaignmonitor`, "crystaldiskinfo" returns `crystal`
-    #:   (the programming language), "cpu z" returns an Android launcher
-    #:   icon. A lookalike is worse than nothing.
+    #: THIS USED TO HOLD EIGHT ENTRIES and now holds two, because the six
+    #: that were gaps for a "no mark exists anywhere" reason — BlueStacks,
+    #: DirectX, CPU-Z, GPU-Z, HWMonitor, CrystalDiskInfo — now carry
+    #: PULSE-DRAWN marks. Nothing was found for them; the search was
+    #: re-run across every collection Iconify aggregates and still returns
+    #: zero. What changed is the decision, not the availability: nine grey
+    #: parcels in a nine-row group read as a broken list rather than as an
+    #: honest fallback, so the marks are drawn and LABELLED as drawn. See
+    #: test_contract.py::test_no_mark_is_a_lookalike, which is the guard
+    #: that keeps that exception narrow, and DRAWN_MAP in
+    #: tools/fetch_app_icons.py for the full reasoning.
+    #:
+    #: The two that remain are here for reasons a drawn mark does not
+    #: answer, and both could still close properly:
     #:
     #:   THE MARK EXISTS BUT THE LICENCE DOES NOT FIT — WinRAR. Its real
     #:   stacked-books logo is in OpenMoji (CC BY-SA 4.0); taking it would
     #:   put a copyleft obligation on an MIT app for one row. The only
     #:   permissive "winrar" is a generic archive pictogram wearing the
-    #:   name, which is the same wrong-logo failure by another route.
+    #:   name, which is a lookalike and still forbidden.
     #:
     #:   THE MARK EXISTS BUT THE GEOMETRY DOES NOT — OpenAL. Every
     #:   published mark is a WORDMARK at roughly 128x24; the runtime draws
@@ -1153,9 +1155,6 @@ class TestBrandMarks:
     #:   exists, and is worth distinguishing from "none exists" for that
     #:   reason.
     NO_AUTHENTIC_MARK = frozenset({
-        "BlueStacks.BlueStacks", "CPUID.CPU-Z", "CPUID.HWMonitor",
-        "CrystalDewWorld.CrystalDiskInfo", "Microsoft.DirectX",
-        "TechPowerUp.GPU-Z",
         "RARLab.WinRAR", "CreativeTechnology.OpenAL",
     })
 
@@ -1192,20 +1191,29 @@ class TestBrandMarks:
         assert not orphans, (
             f"bundled marks for apps not in the catalog: {orphans}")
 
-    def test_nothing_was_invented_for_the_brands_with_no_mark(self):
-        """The rule the fetcher is built on, still true after widening the
-        search to three more collections: CPU-Z, GPU-Z, HWMonitor,
-        CrystalDiskInfo, BlueStacks and DirectX have no authentic logo in
-        any open, permissively-licensed set. They fall through to the app's
-        OWN installed icon and then to the neutral glyph. A lookalike
-        picked by keyword — `campaignmonitor` for HWMonitor, `crystal` (the
-        programming language) for CrystalDiskInfo — is worse than none."""
+    def test_nothing_was_taken_for_the_brands_with_no_mark(self):
+        """WinRAR and OpenAL still have no bundled mark, and each must stay
+        absent for its OWN reason rather than acquiring a convenient one.
+
+        The failure this guards is not carelessness, it is convenience: a
+        keyword search offers a plausible-looking file for both (a generic
+        archive pictogram for WinRAR, a wordmark for OpenAL), and either
+        would silently close the gap with something that is not the
+        vendor's mark or is not legible at 20px.
+
+        A DRAWN mark would not be an acceptable answer here either, which
+        is why this survived the change that emptied most of this set: the
+        nine drawn marks exist because nothing at all was available, while
+        for these two something exists and is merely unusable — a licence
+        to respect and a geometry to fix, not a hole to paper over.
+        """
         manifest = self._manifest()
         for app_id in sorted(self.NO_AUTHENTIC_MARK):
             assert app_id not in manifest, (
                 f"{app_id} acquired a mark — check it is really that "
-                "vendor's logo and not a keyword lookalike, and that its "
-                "licence is CC0/MIT rather than copyleft")
+                "vendor's logo and not a keyword lookalike, that its "
+                "licence is CC0/MIT rather than copyleft, and that it is "
+                "square enough to read at 20px")
 
     def test_every_icon_is_one_size_in_one_well(self, window, qapp):
         """Uniform GEOMETRY is what makes a column of logos read as a set.
@@ -1265,10 +1273,23 @@ class TestBrandMarks:
             renderer = QSvgRenderer(path)
             return appicons._rescue_well(renderer, 72, dark_surface, True)
 
-        assert well_for("Valve.Steam") != resting, (
-            "Steam's black mark is left on the quiet well — invisible")
+        assert well_for("EpicGames.EpicGamesLauncher") != resting, (
+            "Epic's black mark is left on the quiet well — invisible")
         assert well_for("Google.Chrome") == resting, (
             "a vivid mark was given a rescue plate it does not need")
+
+        # STEAM IS THE THIRD CASE, and it is here because it MOVED. It was
+        # the example this test opened with: `logos:steam` is a single
+        # #1a1918 silhouette, so Steam needed the white plate for exactly
+        # the same reason Epic does. Its mark is now the authentic
+        # blue-gradient disc, which carries its own colour and reads on
+        # obsidian unaided — so the rescue is no longer applied, and that
+        # is the observable signature of the artwork fix rather than a
+        # weakening of the guard. If this flips back, Steam has quietly
+        # returned to a flat dark silhouette.
+        assert well_for("Valve.Steam") == resting, (
+            "Steam is being rescued again — its mark has gone back to a "
+            "flat near-black silhouette")
 
 
 # ============================================================

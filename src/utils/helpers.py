@@ -433,7 +433,6 @@ class PowerShellTask(QObject):
     def __init__(self, ps1_path: str, task_name: str, timeout: int = 120,
                  app_ids: list[str] | None = None, dry_run: bool = False,
                  office_setup: str | None = None, office_config: str | None = None,
-                 local_installer_path: str | None = None,
                  startup_item_id: str | None = None,
                  scan_path: str | None = None,
                  adapter_name: str | None = None,
@@ -461,9 +460,6 @@ class PowerShellTask(QObject):
         # before this worker is ever constructed — both set, or both None.
         self.office_setup = office_setup
         self.office_config = office_config
-        # Resolved by the generic Tool Install Wizard's Path C
-        # (widgets.ToolInstallWizardDialog) — task InstallLocalFile.
-        self.local_installer_path = local_installer_path
         # dry_run=True appends -WhatIf: the backend simulates the task and
         # reports "[WHATIF] ..." lines / a "[DRY-RUN]" result instead of
         # mutating the system. Same SUCCESS|/ERROR| contract either way.
@@ -541,9 +537,6 @@ class PowerShellTask(QObject):
                 "-OfficeConfigPath",
                 validate_backend_arg("The Office configuration path", self.office_config),
             ]
-        if self.local_installer_path:
-            argv += ["-LocalInstallerPath",
-                     validate_backend_arg("The installer path", self.local_installer_path)]
         if self.scan_path:
             # Its OWN parameter, never folded into -AppIds: that one is a
             # comma-separated LIST and a Windows path may legitimately

@@ -139,6 +139,135 @@ function Clear-SystemCaches {
 }
 
 # ============================================================
+#  WINDOWS UPDATE DRIVER SYNCHRONISATION
+# ============================================================
+function Invoke-PulseDriverSync {
+    <#
+    .SYNOPSIS
+        Ask Windows Update to go and find this board's missing drivers.
+
+    .DESCRIPTION
+        THE PROBLEM THIS SOLVES IS A FRESH INSTALL. Windows ships with
+        generic in-box drivers for most devices and OEM-specific ones for
+        almost none, so a newly-imaged machine sits with a working screen
+        and no Bluetooth, mono audio through a Realtek codec running the
+        HD Audio stub, an Intel Wi-Fi card on a 2019 driver, and one or
+        two "Unknown device" entries that are the chipset. Every one of
+        those drivers IS available - through Windows Update's driver
+        channel, published by the vendor, under names nobody would search
+        for. What is missing is the ASKING.
+
+        Nothing in Pulse asked. DriverScan (30-GuiDispatcher.ps1) READS the
+        update agent's current answer, and on a fresh install that answer
+        is "nothing pending", because no scan has run yet. So the module
+        that exists to make a new machine complete reported a clean bill
+        of health on exactly the machine that needed the most work.
+
+        THE TWO HALVES, and both are needed:
+
+          1. USOClient StartScan - tells the Update Orchestrator to run a
+             scan NOW rather than at whatever hour it had planned. This is
+             the one that reaches the driver channel the way Windows
+             itself does, including the OEM-targeted publications a manual
+             COM search does not see by default.
+
+          2. A COM search for uninstalled drivers, which is what turns an
+             asynchronous request into something we can REPORT. StartScan
+             returns immediately and prints nothing - on its own it would
+             leave the task saying "done" with no evidence anything
+             happened.
+
+        USOClient IS UNDOCUMENTED, and is treated accordingly: its absence
+        or refusal is a WARNING, not a failure, and the COM search still
+        runs. Windows Server and some managed builds do not ship it, and
+        a machine whose drivers are governed by WSUS policy will decline
+        the request outright. Neither is Pulse malfunctioning, and neither
+        should paint the card red.
+
+        NOT ELEVATION-GATED. The scan is performed by the Update
+        Orchestrator, which runs as SYSTEM; the client only posts the
+        request. An unelevated Pulse gets exactly the same scan an
+        elevated one does, so gating this would raise a UAC prompt that
+        buys the user nothing.
+
+        NOTHING IS INSTALLED HERE. Requesting a scan is what makes Windows
+        download and stage what it finds, on its own schedule and with its
+        own rollback - which is the correct owner for a driver install.
+        Pulse forcing a driver package onto a device is how a machine ends
+        up with no display output.
+    #>
+    if (Test-DryRun "Ask Windows Update to scan for missing hardware drivers") { return $true }
+
+    Write-Info "Asking Windows Update to scan for hardware drivers..."
+    $Requested = $false
+    try {
+        $Uso = Get-SystemBinary 'usoclient'
+        if (Test-Path -LiteralPath $Uso -PathType Leaf) {
+            # -NoNewWindow suppresses the console box; the orchestrator
+            # does the work out of process, so this returns at once and
+            # the -Wait is only to collect the exit code.
+            $Proc = Start-Process -FilePath $Uso -ArgumentList "StartScan" `
+                -Wait -NoNewWindow -PassThru -ErrorAction Stop
+            if ($Proc.ExitCode -eq 0) {
+                $Requested = $true
+                Write-Success "Windows Update scan requested (Update Orchestrator)."
+            } else {
+                Write-Warn "The Update Orchestrator declined the scan request (exit code $($Proc.ExitCode)) - Windows Update may be managed by policy."
+            }
+        } else {
+            Write-Warn "UsoClient.exe is not present on this build of Windows - falling back to a direct driver search."
+        }
+    } catch {
+        Write-Warn "Could not signal the Update Orchestrator: $($_.Exception.Message). Falling back to a direct driver search."
+    }
+
+    # THE REPORT, and it runs whether or not the request above landed:
+    # a machine that already scanned recently has the answer waiting, and
+    # a machine where USOClient is absent still deserves to be told what
+    # its update agent knows.
+    #
+    # ServerSelection = 3 ("Others") with the Microsoft Update service id
+    # is what widens the search past the Windows-only default to the
+    # driver publications vendors actually ship through. It is set only
+    # when that service is registered; on a machine where it is not, the
+    # searcher keeps its default rather than being pointed at a service
+    # id that does not resolve.
+    try {
+        $Session  = New-Object -ComObject Microsoft.Update.Session
+        $Searcher = $Session.CreateUpdateSearcher()
+        try {
+            $ServiceManager = New-Object -ComObject Microsoft.Update.ServiceManager
+            $MicrosoftUpdate = "7971f918-a847-4430-9279-4a52d1efe18d"
+            if (@($ServiceManager.Services) | Where-Object { $_.ServiceID -eq $MicrosoftUpdate }) {
+                $Searcher.ServerSelection = 3
+                $Searcher.ServiceID = $MicrosoftUpdate
+            }
+        } catch {
+            Write-Log "DRIVERSYNC: Microsoft Update service not usable ($($_.Exception.Message)); using the default source."
+        }
+        $Found = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+        $Count = @($Found.Updates).Count
+        if ($Count -gt 0) {
+            foreach ($Update in $Found.Updates) { Write-Log "DRIVERSYNC PENDING: $($Update.Title)" }
+            Write-Success "$Count driver update(s) are available for this machine - names are in the log."
+        } elseif ($Requested) {
+            Write-Info "No driver updates are pending yet. The scan runs in the background; check Settings > Windows Update in a few minutes."
+        } else {
+            Write-Info "No driver updates are pending - every device on this machine is already covered."
+        }
+        return $true
+    } catch {
+        # ONLY here does the task fail. Being unable to ASK is a warning
+        # (the orchestrator is undocumented and may be policy-managed);
+        # being unable to reach the update agent at all means the service
+        # is stopped or broken, which is a real finding the card should
+        # show in red.
+        Write-ErrorX "Could not query Windows Update for drivers: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# ============================================================
 #  DISK CLEANUP & OPTIMIZATION
 # ============================================================
 function Show-DriveSpaceReport {

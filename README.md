@@ -502,7 +502,7 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 1,012-test regression suite |
+| `python -m pytest tests` | The full 1,303-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
 | `Invoke-Pester -Path tests\backend` | The 101-test Pester suite (backup/restore, startup, hardening) |
@@ -606,7 +606,7 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 1,012 collected tests
+python -m pytest tests -v          # 1,303 collected tests
 Invoke-Pester -Path tests\backend  # 126 tests
 ```
 
@@ -651,6 +651,9 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] CI: parse, lint at zero, Pester, pytest with a coverage floor
 - [x] Self-updater wired into the GUI — background check on launch, sidebar-footer manual check, `SelfUpdateDialog` owning download/verify/apply (still needs `SHA256SUMS` published on a release to be usable end-to-end — see [Safety Model](#-safety-model))
 - [x] Elapsed time in the state pill (`RUNNING · 02:41`) and console polish — colorized `SUCCESS` / `ERROR` / `[DRY-RUN]` lines, auto-scroll that pauses while you're scrolled up *(v10.9.4)*
+- [x] Sheets follow the window through every state — a minimize no longer strands an open dialog on the desktop, and a scale change re-fits and re-renders it for the display it is actually on *(v10.10.0)*
+- [x] Every catalog row carries authentic brand artwork — the icon fetcher was silently pairing a full-colour manifest record with a monochrome silhouette, so eight marks shipped as black blocks *(v10.10.0)*
+- [x] Windows Update driver synchronization — the chipset, audio, Wi-Fi and Bluetooth drivers a fresh install leaves as "Unknown device" *(v10.10.0)*
 
 **Planned**
 

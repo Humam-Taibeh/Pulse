@@ -62,18 +62,27 @@ class TestArgvConstruction:
     def test_quote_characters_survive_verbatim(self):
         """The property that matters: a value with any PowerShell quote
         character in it reaches argv unchanged — not escaped, not doubled,
-        not mangled. Nothing downstream re-parses it."""
+        not mangled. Nothing downstream re-parses it.
+
+        CARRIED ON -ScanPath since v10.10. These guards were written
+        against -LocalInstallerPath, whose task and parameter were deleted
+        with the Tool Install Wizard's local-file card. -ScanPath is the
+        same SHAPE of value — a filesystem path the user picked, arbitrary
+        contents, straight into an elevated process — so the property
+        under test is unchanged and it is now being tested on a parameter
+        that still exists. A guard pointed at a deleted parameter proves
+        nothing about the app."""
         for quote in PS_QUOTE_CHARS:
-            path = f"C:\\Users\\Sam\\Downloads\\Adobe{quote}s Reader.exe"
-            argv = _argv_for(task="InstallLocalFile", local_installer_path=path)
-            assert argv[argv.index("-LocalInstallerPath") + 1] == path
+            path = f"C:\\Users\\Sam\\Downloads\\Adobe{quote}s Folder"
+            argv = _argv_for(task="StorageScan", scan_path=path)
+            assert argv[argv.index("-ScanPath") + 1] == path
 
     def test_injection_payload_stays_one_argument(self):
         """The exact shape that used to break out: a curly quote, a
         statement separator, and a second curly quote to re-open the
         literal. As argv it is inert — one string, no separators."""
-        payload = "C:\\tmp\\a\u2019; Write-Output PWNED; \u2019b.exe"
-        argv = _argv_for(task="InstallLocalFile", local_installer_path=payload)
+        payload = "C:\\tmp\\a\u2019; Write-Output PWNED; \u2019b"
+        argv = _argv_for(task="StorageScan", scan_path=payload)
         assert argv.count(payload) == 1
         assert not any("PWNED" in arg for arg in argv if arg != payload)
 
@@ -152,8 +161,7 @@ class TestArgumentValidation:
             assert validate_backend_arg("value", good) == good
 
     def test_a_refused_value_never_reaches_a_process(self):
-        task = PowerShellTask(_CORE, "InstallLocalFile",
-                              local_installer_path="-WhatIf")
+        task = PowerShellTask(_CORE, "StorageScan", scan_path="-WhatIf")
         with pytest.raises(UnsafeArgument):
             task._build_argv()
 
@@ -203,31 +211,43 @@ class TestLiveInvocation:
     def test_curly_quote_path_binds_without_a_parse_error(self):
         """The regression proper. Under the old -Command builder this exact
         input produced "The string is missing the terminator" and no
-        verdict line at all."""
+        verdict line at all.
+
+        The path does not have to EXIST for this to be the right test —
+        the assertion is that the backend reached a verdict at all rather
+        than dying in the tokenizer, and a clean "no such path" ERROR line
+        is a verdict. (Carried on -ScanPath: see
+        test_quote_characters_survive_verbatim.)"""
         out = self._run(PowerShellTask(
-            _CORE, "InstallLocalFile", dry_run=True,
-            local_installer_path="C:\\tmp\\Adobe\u2019s Reader.exe"))
+            _CORE, "StorageScan", dry_run=True,
+            scan_path="C:\\tmp\\Adobe\u2019s Folder"))
         assert "missing the terminator" not in out
         assert "##PULSE##" in out
 
     def test_injection_payload_does_not_execute(self):
-        """The payload must be DISPLAYED, never RUN.
+        """The payload must never RUN.
 
-        Note the assertion is per-line, not a substring search: the backend
-        correctly echoes the path it was given ("Running installer: C:\\tmp\\
-        a’; Write-Output PWNED; ’b.exe"), so the marker legitimately appears
-        inside that one quoted line. What must never appear is a line that
-        is ONLY the marker — that is what `Write-Output PWNED` produces when
-        the tokenizer is tricked into treating it as a statement.
+        The assertion is per-line rather than a substring search, and that
+        is deliberate rather than lax: a backend that echoes the value it
+        was given (several do) puts the marker legitimately inside one
+        quoted line. What must never appear is a line that is ONLY the
+        marker — that is what `Write-Output PWNED` produces when the
+        tokenizer has been tricked into reading it as a statement.
+
+        The companion assertion this test used to carry ("and it reached
+        the backend intact, as data") is gone with the task it was written
+        against: InstallLocalFile echoed its path to stdout, and
+        StorageScan writes its target to the LOG rather than the pipe. The
+        data-integrity half is not lost, it moved to where it can be
+        asserted precisely — test_installer_path_with_a_curly_quote_binds_
+        verbatim below reads the bound parameter out of PowerShell itself.
         """
         marker = "PWNED"
         out = self._run(PowerShellTask(
-            _CORE, "InstallLocalFile", dry_run=True,
-            local_installer_path=f"C:\\tmp\\a\u2019; Write-Output {marker}; \u2019b.exe"))
+            _CORE, "StorageScan", dry_run=True,
+            scan_path=f"C:\\tmp\\a\u2019; Write-Output {marker}; \u2019b"))
         executed = [ln for ln in out.splitlines() if ln.strip() == marker]
         assert not executed, f"the payload was executed: {executed}"
-        # ...and it did reach the backend intact, as data.
-        assert marker in out
 
     def test_appids_shape_binds(self):
         # A REAL -AppIds task (the unified catalog deploy). A retired task
@@ -340,11 +360,15 @@ class TestParameterBinding:
         assert bound["OfficeSetupPath"] == setup
         assert bound["OfficeConfigPath"] == config
 
-    def test_installer_path_with_a_curly_quote_binds_verbatim(self, tmp_path):
-        path = "C:\\tmp\\Adobe\u2019s Reader.exe"
+    def test_a_picked_path_with_a_curly_quote_binds_verbatim(self, tmp_path):
+        """Read out of PowerShell's own $PSBoundParameters, so this proves
+        the value SURVIVED the boundary rather than merely that argv was
+        assembled correctly. Carried on -ScanPath since the local-installer
+        path was removed — see test_quote_characters_survive_verbatim."""
+        path = "C:\\tmp\\Adobe\u2019s Folder"
         bound = self._bound(tmp_path, PowerShellTask(
-            _CORE, "InstallLocalFile", local_installer_path=path))
-        assert bound["LocalInstallerPath"] == path
+            _CORE, "StorageScan", scan_path=path))
+        assert bound["ScanPath"] == path
 
     def test_whatif_binds_as_a_switch(self, tmp_path):
         bound = self._bound(tmp_path, PowerShellTask(

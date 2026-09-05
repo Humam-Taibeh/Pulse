@@ -104,6 +104,15 @@ class PulseDialog(QDialog):
     #: stack: the resize has to refit every open scrim, not just the top.
     _OPEN: "list[PulseDialog]" = []
 
+    #: True while this sheet is PARKED: hidden because the shell it belongs
+    #: to is minimized, and waiting to come back with it.
+    #:
+    #: A class-level default so `park()`/`unpark()` and `hideEvent` can read
+    #: it on a subclass that never reaches PulseDialog.__init__ — several
+    #: dialogs do real work before calling super(), and an AttributeError
+    #: inside hideEvent would take the app down while closing a sheet.
+    _parked = False
+
     #: Downscale factor used to blur the captured backdrop. A Gaussian over
     #: a full 1300x800 frame is far too slow to do on a modal's show; a
     #: bilinear round-trip through a 1/N-scale pixmap is the standard cheap
@@ -192,6 +201,34 @@ class PulseDialog(QDialog):
         self._refrost.setSingleShot(True)
         self._refrost.setInterval(120)
         self._refrost.timeout.connect(self._capture_backdrop)
+
+    def rescale_marks(self, t: dict):
+        """Re-rasterise every ratio-baked brand mark this sheet is holding.
+
+        THE ICONS ARE BAKED FOR ONE SCREEN. utils.appicons renders each
+        mark at the display's device-pixel ratio and caches it under a key
+        that includes that ratio, so a fresh LOOKUP after a monitor change
+        is already correct — but a QLabel that was handed a pixmap at 1.5
+        goes on holding it at 1.0, and Qt resamples it to fit. The catalog
+        is the surface where that is most visible, because it is a column
+        of thirty small marks whose whole point is being crisp.
+
+        PulseApp._apply_theme redraws the rows on the PAGES for exactly
+        this reason, and it cannot reach in here: a sheet is a separate
+        top-level window that the theme pass does not walk. So the screen
+        handler calls this on each open sheet instead.
+
+        Rows opt IN via RATIO_BAKED rather than being found by duck-typing
+        on an attribute name. Only DevHubRow carries a mark today — the
+        Update Center's rows deliberately show versions instead — and a
+        scan for "has an attribute called _icon" would be both wrong about
+        that today and quietly wrong about the next widget that names one.
+        A declared flag is also the only form a reader of DevHubRow can
+        see: it sits at the top of the class, next to the signal.
+        """
+        for row in self.findChildren(QFrame):
+            if getattr(row, "RATIO_BAKED", False):
+                row.apply_theme(t)
 
     def _set_scrim(self, t: dict, radius: int):
         self._scrim_color = QColor(*t["scrim"])
@@ -373,6 +410,68 @@ class PulseDialog(QDialog):
         and close things while iterating."""
         return [d for d in cls._OPEN if _alive(d)]
 
+    # -- following the shell down and back up -------------------------
+    def park(self):
+        """Go down with the window. Reversed by `unpark`.
+
+        THE SHEETS ARE TOP-LEVEL WINDOWS, which is what lets one paint a
+        scrim over the body while the title bar stays live (see
+        __init__) — and it is also why nothing hides them when the shell
+        is minimized. Qt does not minimize a second top-level window with
+        the first, and these carry FramelessWindowHint, so Windows draws
+        no owner relationship that would do it either.
+
+        Measured before it was fixed rather than assumed: with the
+        Software Catalog open, `window.showMinimized()` left the sheet
+        `isVisible() == True` at its original screen coordinates. What
+        the user saw was the app vanish from the screen and a lone
+        frosted panel stay behind, floating over the desktop with nothing
+        underneath it — an orphan overlay with no title bar, no taskbar
+        entry of its own, and no obvious way to dismiss it.
+
+        Hidden rather than moved off-screen: a hidden window stops
+        painting and stops being a click target, and it costs nothing to
+        keep. The frost is deliberately NOT dropped here — unpark
+        recaptures it, and holding the stale pixmap for the duration of a
+        minimize is cheaper than the alternative of a black frame on the
+        way back up.
+        """
+        if self._parked or not self.isVisible():
+            return
+        self._parked = True
+        self.hide()
+
+    def unpark(self):
+        """Come back with the window, re-anchored to wherever it now is.
+
+        show() re-runs the subclass's showEvent, which is what re-fits the
+        sheet to the host's body and re-captures the backdrop — both
+        genuinely needed rather than incidental. The shell may have been
+        restored to a different size (Windows restores a snapped window
+        differently), onto a different monitor, or at a different scale,
+        and the frost is a picture of pixels that no longer exist.
+
+        The flag is cleared FIRST so the show() cannot be mistaken for an
+        unpark-in-progress by anything watching, and so a hideEvent that
+        somehow lands during the transition deregisters honestly.
+        """
+        if not self._parked:
+            return
+        self._parked = False
+        self.show()
+        self.raise_()
+
+    def is_parked(self) -> bool:
+        """Hidden because the shell went down, rather than closed."""
+        return self._parked
+
+    @classmethod
+    def parked_dialogs(cls) -> "list[PulseDialog]":
+        """Every sheet waiting for its window to come back, oldest first —
+        which is also the order they must be restored in, so a nested
+        wizard ends up in front of the sheet it was opened from."""
+        return [d for d in cls._OPEN if _alive(d) and d.is_parked()]
+
     def _register(self):
         if self not in PulseDialog._OPEN:
             PulseDialog._OPEN.append(self)
@@ -405,7 +504,16 @@ class PulseDialog(QDialog):
         self._frost = None
 
     def hideEvent(self, e):
-        self._unregister()
+        # A PARKED sheet stays registered. `_OPEN` is the app's answer to
+        # "what is open", and a wizard whose shell was minimized is still
+        # open — the user has not cancelled anything, they moved the
+        # window out of the way. Deregistering here would lose the only
+        # reference that can bring it back (see park/unpark), so the sheet
+        # would stay hidden for the rest of the session with its exec()
+        # loop still spinning: an app that appears to have swallowed a
+        # dialog and refuses to open another.
+        if not self._parked:
+            self._unregister()
         super().hideEvent(e)
 
     def resizeEvent(self, e):
@@ -7812,10 +7920,10 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
     Removing them also removed the only control in the dialog that
     appeared and disappeared as you changed tabs.
 
-    After Accepted, exactly one of these is populated:
-      `selected_ids`     ticked AppIds for the bulk winget deploy
-      `local_installer`  (app_name, file_path) from a row wizard's Path C,
-                          for a single InstallLocalFile run
+    After Accepted, `selected_ids` holds the ticked AppIds for the bulk
+    winget deploy. (There was a second outcome, `local_installer`, for a
+    row wizard's "Local File" path; that path is gone — see
+    ToolInstallWizardDialog.)
     """
 
     #: The "no sub-category" tab. Empty string so it can be compared with a
@@ -7827,7 +7935,6 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         super().__init__(parent)
         self._t = t
         self.selected_ids: list[str] = []
-        self.local_installer: tuple[str, str] | None = None
         self._rows: dict[str, DevHubRow] = {}
         self._tool_meta: dict[str, tuple[str, str]] = {}   # id -> (name, url)
         self._row_tab: dict[str, str] = {}                 # id -> its tab key
@@ -7984,8 +8091,13 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
                 # showing them all.
                 tab_key = group_title if self._scoped else sec["key"]
                 # A group header is shown when the group names itself;
-                # otherwise the SECTION's own title stands in, so the "All"
-                # tab never presents a wall of rows with no dividers.
+                # otherwise the SECTION's own title stands in. Built
+                # unconditionally and hidden by _apply_filter, which is
+                # what makes the "All" tab a flat list — see the note
+                # there. Built rather than skipped because "All" is not
+                # the only state this dialog has, and a header that had to
+                # be CREATED on the first chip press would be a second
+                # layout pass in the middle of an interaction.
                 header = QLabel(group_title or f"{sec['icon']}  {sec['title']}")
                 header.setStyleSheet(TH.label_qss(t, "section"))
                 host_lay.addWidget(header)
@@ -8072,10 +8184,35 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
             shown = self._row_matches(app_id)
             row.setVisible(shown)
             visible += shown
-        # A header survives only while at least one of its own rows does —
-        # otherwise a filtered list grows orphan titles over empty space.
+        # "ALL" IS A FLAT LIST, with no internal headers at all.
+        #
+        # The headers and the tab chips are the SAME categorisation stated
+        # twice: "Browsers & Communication" is a pill at the top of the
+        # dialog and, ten pixels lower, a section title over the rows it
+        # names. On any single tab that duplication is invisible, because
+        # exactly one header is on screen and it simply repeats the chip
+        # the user just pressed. On "All" it is the dominant texture —
+        # every group title in the pillar, stacked down a list whose whole
+        # promise is that it is the unfiltered one.
+        #
+        # So the chips keep the job and the headers give it up. "All"
+        # renders one continuous list, which is what makes it feel like
+        # the whole catalog rather than the tabbed view with its tabs
+        # switched off; pick a chip and the headers come back, where the
+        # single remaining one reads as a caption for the filter.
+        #
+        # A SEARCH QUERY DOES NOT SUPPRESS THEM, and that asymmetry is
+        # deliberate. Typing "sql" narrows across every group at once, and
+        # the headers are then the only thing saying which part of the
+        # catalog each surviving row came from — the exact orientation the
+        # chips cannot give, because none of them is pressed.
+        flat = self._active_tab == self.ALL_KEY and not self._query
+        # A header otherwise survives only while at least one of its own
+        # rows does — otherwise a filtered list grows orphan titles over
+        # empty space.
         for header, _section_key, ids in self._headers:
-            header.setVisible(any(self._row_matches(aid) for aid in ids))
+            header.setVisible(
+                not flat and any(self._row_matches(aid) for aid in ids))
         self._empty.setVisible(visible == 0)
         self._all_btn.setEnabled(visible > 0)
         self._none_btn.setEnabled(visible > 0)
@@ -8167,14 +8304,13 @@ TWO NARROWING CONTROLS, ONE EACH TO A ROW. The field narrows by NAME
         wizard = ToolInstallWizardDialog(self, app_id, name, desc, url, self._t)
         if wizard.exec() != QDialog.DialogCode.Accepted:
             return
-        if wizard.mode == "winget":
-            for row in self._rows.values():
-                row.checkbox.setChecked(False)
-            self._rows[app_id].checkbox.setChecked(True)
-            self._accept_selection()
-        elif wizard.mode == "local" and wizard.local_path:
-            self.local_installer = (name, wizard.local_path)
-            self.accept()
+        # Accepted now means exactly one thing (see the wizard's own
+        # docstring): install THIS app. Rejected covers Cancel and the
+        # website hand-off alike, and both leave the catalog untouched.
+        for row in self._rows.values():
+            row.checkbox.setChecked(False)
+        self._rows[app_id].checkbox.setChecked(True)
+        self._accept_selection()
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -9549,23 +9685,34 @@ class OfficeWizardDialog(PulseDialog):
 #  TOOL INSTALL WIZARD — generic 3-path single-tool dialog
 # ============================================================
 class ToolInstallWizardDialog(PulseDialog):
-    """Path A / B / C for exactly one tool. Unlike OfficeWizardDialog (which
-    branches because Office genuinely has no per-app winget installer),
-    every tool this dialog is used for already has a working winget
-    package — Path A here just narrows the caller's normal bulk-deploy
-    selection down to this one AppId, reusing 100% of the existing
-    Smart-Deploy pipeline. Path B opens the vendor's official page and
-    closes (nothing left for Pulse to do). Path C hands back a picked
-    installer file for the generic InstallLocalFile task.
+    """Install one tool: do it, or go and read about it. Two choices.
 
-    Three flat, terminal choices — no sub-navigation needed, unlike the
-    Office wizard's multi-step flow.
+    ONE ACTION AND ONE ESCAPE HATCH, and the shape is the message. The
+    install is a real button — elevated, accented, the thing the dialog is
+    for. The website is a quiet link beneath it, because opening a browser
+    is not installing anything: it is leaving, and a control that leaves
+    should not look like a control that acts.
+
+    THERE WAS A THIRD, "Local File / Manual Selection", and removing it is
+    what this shape is a response to. Three equal cards asked the user to
+    choose between three routes to one outcome, and only one of them was
+    ever the answer: every tool this dialog opens for HAS a working winget
+    package (that is the entry condition — it is reached from a catalog
+    row, an update row, or a bundled-app restore), so Path A is correct in
+    every case and Path C existed for a file the user had to have found,
+    downloaded and remembered the location of first. Presented as a peer
+    of the automated install, it made a solved problem look like an open
+    question, and it was the only path in the app that ran an arbitrary
+    executable the engine had never seen.
+
+    The generic InstallLocalFile task went with it — see the deleted
+    Invoke-GuiLocalInstall in 04-SoftwareEngine.ps1. Nothing else reached
+    it: it was Path C's task and only Path C's.
 
     After exec():
-      Accepted + mode == "winget" -> caller should deploy just this AppId.
-      Accepted + mode == "local"  -> `local_path` holds the picked installer.
-      Rejected                    -> nothing to do (Cancel, or Path B was
-                                      opened in the browser and that's it).
+      Accepted -> `mode` is "winget"; deploy just this AppId.
+      Rejected -> nothing to do (Cancel, Escape, or the website was
+                  opened in the browser and that is the whole errand).
     """
 
     def __init__(self, parent: QWidget, app_id: str, app_name: str,
@@ -9573,9 +9720,13 @@ class ToolInstallWizardDialog(PulseDialog):
         super().__init__(parent)
         self.app_id = app_id
         self.mode: str | None = None
-        self.local_path: str | None = None
 
-        panel = _dialog_chrome(self, t, t["accent"], width=470)
+        # NARROWER THAN IT WAS (470 -> 420). The width was set by three
+        # stacked cards needing room for a two-line description each; a
+        # button and a link need far less, and a panel that keeps the old
+        # width around the new content reads as a dialog with something
+        # missing from it.
+        panel = _dialog_chrome(self, t, t["accent"], width=420)
 
         lay = dialog_body(panel, "md")
 
@@ -9589,30 +9740,39 @@ class ToolInstallWizardDialog(PulseDialog):
             sub.setStyleSheet(TH.label_qss(t, "body"))
             lay.addWidget(sub)
 
-        path_a = GlassCard({
-            "icon": "🚀", "title": "One-Click Automated Install",
-            "desc": "Silently installs via winget — the same reliable path Pulse uses everywhere.",
-        }, t["accent"], t)
-        path_a.setMinimumHeight(84)
-        path_a.clicked.connect(self._choose_winget)
-        lay.addWidget(path_a)
+        note = QLabel(
+            "Pulse installs this silently with winget — the same path it "
+            "uses everywhere else.")
+        note.setWordWrap(True)
+        note.setStyleSheet(TH.label_qss(t, "caption"))
+        lay.addWidget(note)
 
-        path_b = GlassCard({
-            "icon": "🌐", "title": "Official Download Link",
-            "desc": f"Opens {app_name}'s official website in your browser." if url
-                    else "Opens a web search for the official download page.",
-        }, t["accent"], t)
-        path_b.setMinimumHeight(84)
-        path_b.clicked.connect(lambda: self._choose_url(url, app_name))
-        lay.addWidget(path_b)
+        lay.addSpacing(TH.SPACE["xs"])
 
-        path_c = GlassCard({
-            "icon": "📁", "title": "Local File / Manual Selection",
-            "desc": "Already downloaded the installer? Pick the file and Pulse will run it.",
-        }, t["accent"], t)
-        path_c.setMinimumHeight(84)
-        path_c.clicked.connect(self._choose_local)
-        lay.addWidget(path_c)
+        # THE PRIMARY, and it is a real button rather than a third card.
+        # It carries the same accent treatment as every other dialog's
+        # confirming action (dialog_go_qss), so "the thing this sheet is
+        # for" looks the same here as it does in the catalog behind it.
+        self.install_btn = QPushButton("Automated Install (winget)")
+        size_dialog_button(self.install_btn)
+        self.install_btn.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
+        self.install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.install_btn.setDefault(True)
+        self.install_btn.clicked.connect(self._choose_winget)
+        lay.addWidget(self.install_btn)
+
+        # THE SECONDARY, styled as a link because it does not install
+        # anything — it opens a browser and closes this sheet. Giving it
+        # button weight is what made the old Path B card read as a second
+        # way to install, which it never was.
+        self.website_btn = QPushButton("Visit Official Website")
+        self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.website_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self.website_btn.setToolTip(
+            f"Opens {app_name}'s official download page in your browser."
+            if url else "Opens a web search for the official download page.")
+        self.website_btn.clicked.connect(lambda: self._choose_url(url, app_name))
+        lay.addWidget(self.website_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
         row = QHBoxLayout()
         row.addStretch()
@@ -9632,16 +9792,6 @@ class ToolInstallWizardDialog(PulseDialog):
         QDesktopServices.openUrl(QUrl(target))
         self.reject()
 
-    def _choose_local(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select the installer", str(Path.home() / "Desktop"),
-            "Installers (*.exe *.msi)")
-        if not path:
-            return
-        self.mode = "local"
-        self.local_path = path
-        self.accept()
-
     def showEvent(self, e):
         super().showEvent(e)
         _present_dialog(self)
@@ -9655,16 +9805,22 @@ class DevHubRow(QFrame):
     default. `requires_name`, when given, renders a small "needs X" caption
     — a passive hint, never an auto-check. The "⋯" button opens
     ToolInstallWizardDialog for just this tool, independent of the
-    checkbox — picking Path A there short-circuits straight to "select
-    only this row and deploy" (see
-    SoftwareCatalogDialog._open_tool_wizard), Path C hands back a local
-    installer instead.
+    checkbox — choosing the install there short-circuits straight to
+    "select only this row and deploy" (see
+    SoftwareCatalogDialog._open_tool_wizard), and the website option hands
+    off to the browser and closes.
 
     Still named for the Dev Hub that introduced it: the catalog absorbed
     that hub, and this row is the one selector row shape the whole app
     uses (Update Center's UpdateRow is deliberately built to match)."""
 
     options_requested = Signal(str)  # app_id
+
+    #: This row rasterises a brand mark at the SCREEN's device-pixel ratio
+    #: (utils.appicons.app_icon), so it has to be redrawn when that ratio
+    #: changes. Read by PulseDialog.rescale_marks — see its note on why
+    #: this is a declared flag rather than a duck-typed attribute check.
+    RATIO_BAKED = True
 
     def __init__(self, app_id: str, app_name: str, desc: str,
                  requires_id: str | None, requires_name: str | None, t: dict,
@@ -9702,7 +9858,9 @@ class DevHubRow(QFrame):
         self.options_btn = QPushButton("⋯")
         self.options_btn.setFixedSize(28, 24)
         self.options_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.options_btn.setToolTip("Install options for this tool (winget / official link / local file)")
+        self.options_btn.setToolTip(
+            "Install options for this tool (automated install, or the "
+            "official website)")
         self.options_btn.clicked.connect(lambda: self.options_requested.emit(self.app_id))
         row.addWidget(self.options_btn)
         outer.addLayout(row)
@@ -9752,8 +9910,8 @@ class UpdateRow(QFrame):
     The whole row is clickable (not just the checkbox) — ticking a box or
     tapping anywhere on the row does the same thing, matching how a native
     settings list behaves. The '⋯' opens the identical
-    ToolInstallWizardDialog every other app row uses (Path A silent winget
-    / Path B official link / Path C local file); Path A there just narrows
+    ToolInstallWizardDialog every other app row uses — a silent winget
+    install, or the vendor's official website. The install just narrows
     the caller's selection down to this one AppId."""
 
     options_requested = Signal(str)  # app_id
@@ -9868,8 +10026,6 @@ class UpdateCenterDialog(PulseDialog):
       'UpdateSelectedApps' with those AppIds through the app's normal
       request_task()/_start_task() pipeline — the same live console, Stop
       button and toast machinery as every other bulk deploy.
-      Accepted + local_installer set -> caller runs task InstallLocalFile,
-      exactly like SoftwareCatalogDialog's row wizards.
       Rejected -> nothing to do.
     """
 
@@ -9878,7 +10034,6 @@ class UpdateCenterDialog(PulseDialog):
         self._t = t
         self._ps1_path = ps1_path
         self.selected_ids: list[str] = []
-        self.local_installer: tuple[str, str] | None = None
         self._rows: dict[str, UpdateRow] = {}
         self._thread: QThread | None = None
         self._worker: PowerShellTask | None = None
@@ -10295,13 +10450,11 @@ class UpdateCenterDialog(PulseDialog):
         wizard = ToolInstallWizardDialog(self, app_id, row.app_name, desc, "", self._t)
         if wizard.exec() != QDialog.DialogCode.Accepted:
             return
-        if wizard.mode == "winget":
-            self._set_all(False)
-            row.checkbox.setChecked(True)
-            self._accept_selection()
-        elif wizard.mode == "local" and wizard.local_path:
-            self.local_installer = (row.app_name, wizard.local_path)
-            self.accept()
+        # One meaning for Accepted now: update THIS app. See
+        # ToolInstallWizardDialog, which dropped its local-file path.
+        self._set_all(False)
+        row.checkbox.setChecked(True)
+        self._accept_selection()
 
     def reject(self):
         if self._worker is not None:

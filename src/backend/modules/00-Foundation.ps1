@@ -101,6 +101,12 @@ $Script:SystemBinaries = @{
     'netsh'      = Join-Path $Script:System32Dir 'netsh.exe'
     'cleanmgr'   = Join-Path $Script:System32Dir 'cleanmgr.exe'
     'robocopy'   = Join-Path $Script:System32Dir 'Robocopy.exe'
+    # The Update Orchestrator client - how DriverSync asks Windows Update
+    # to go and look for the vendor drivers a fresh install has not
+    # fetched. Anchored like every other stock tool: it is launched from a
+    # process that may be elevated, and a bare name is a PATH search.
+    # 'UsoClient.exe' is the real mixed-case filename on disk.
+    'usoclient'  = Join-Path $Script:System32Dir 'UsoClient.exe'
 }
 
 function Get-SystemBinary {

@@ -50,7 +50,7 @@ ICON_URL = "https://cdn.jsdelivr.net/npm/simple-icons@13/icons/{slug}.svg"
 #:       Microsoft's trademark policy. Substituting VSCodium's logo for VS
 #:       Code (a different product) or a generic Microsoft mark would be
 #:       inaccurate.
-#:   Anysphere.Cursor / BlueStacks.BlueStacks / OpenWebUI.OpenWebUI
+#:   Anysphere.Cursor / BlueStack.BlueStacks / OpenWebUI.OpenWebUI
 #:       Not in the Simple Icons set at all.
 #:   CPUID.* / CrystalDewWorld.* / TechPowerUp.GPU-Z
 #:       Small hardware utilities with no published brand mark in any
@@ -88,8 +88,11 @@ ICON_MAP: dict[str, str | None] = {
     "AnyDesk.AnyDesk": "anydesk",
     "Oracle.VirtualBox": "virtualbox",
     "Apple.iTunes": "itunes",
-    "BlueStacks.BlueStacks": None,
     "Valve.Steam": "steam",
+    # Corrected id - winget has no "BlueStacks.BlueStacks"; the real
+    # package is "BlueStack.BlueStacks". Simple Icons has no mark for
+    # it either way, so it is covered by DRAWN_MAP below.
+    "BlueStack.BlueStacks": None,
     "EpicGames.EpicGamesLauncher": "epicgames",
     "RockstarGames.Launcher": "rockstargames",
     # -- PILLAR 2: developer, AI & engineering ----------------------
@@ -132,6 +135,14 @@ ICON_MAP: dict[str, str | None] = {
     "TechPowerUp.GPU-Z": None,
     "CrystalDewWorld.CrystalDiskInfo": None,
     "CPUID.HWMonitor": None,
+    # The three benchmarking/telemetry tools added alongside the four
+    # above. Searched before they were listed, with the same result:
+    # "hwinfo", "furmark", "cinebench" and "maxon" return NOTHING
+    # across every collection Iconify aggregates. Covered by
+    # DRAWN_MAP, and labelled there as drawn rather than fetched.
+    "REALiX.HWiNFO": None,
+    "Geeks3D.FurMark.2": None,
+    "Maxon.CinebenchR23": None,
 }
 
 
@@ -183,10 +194,17 @@ ICON_MAP: dict[str, str | None] = {
 #: product. Every pairing below was checked by eye for that reason.
 #:
 #: THE RULE THIS FILE IS BUILT ON, restated because it was tested: a WRONG
-#: logo is worse than no logo, and an INVENTED one is worse than both.
-#: Pulse ships no hand-drawn stand-ins. To bundle a mark for one of the
-#: seven, drop a genuine `<AppId>.svg` into assets/appicons/ and add it
-#: here — the loader already prefers a file on disk.
+#: logo is worse than no logo, and an INVENTED one is worse than both. No
+#: entry in THIS map is ever a lookalike picked by keyword.
+#:
+#: DRAWN_MAP below is the one, labelled exception to the second half of
+#: that rule, and it is deliberately a separate map rather than a few
+#: quiet entries in this one: nine products that have no artwork anywhere
+#: now carry a Pulse-drawn pictogram in their own colour, recorded in the
+#: manifest as `drawn: true` so nothing can mistake one for a vendor's
+#: logo. Read its note before adding to it. The first half of the rule is
+#: untouched — a lookalike is still worse than nothing, and there are
+#: still none here.
 LOGO_MAP: dict[str, str] = {
     # -- PILLAR 1: essential daily & system software ----------------
     "Google.Chrome": "logos:chrome",
@@ -201,7 +219,15 @@ LOGO_MAP: dict[str, str] = {
     "AnyDesk.AnyDesk": "thesvg-color:anydesk",
     "Oracle.VirtualBox": "thesvg-color:virtualbox",
     "Apple.iTunes": "thesvg-color:itunes",
-    "Valve.Steam": "logos:steam",
+    # THE COLOUR MARK, not the flat one. "logos:steam" is a single
+    # #1a1918 silhouette — Steam as a near-black disc, which is the
+    # "monochrome block" complaint in its purest form. thesvg-color's copy
+    # is the authentic brand artwork: the blue gradient disc with the
+    # white piston. It is packaged as a <symbol> + <use>, which Qt draws
+    # as a blank white circle, so it is normalised on the way in — see
+    # _flatten_symbols, which rewrites the container and touches no
+    # geometry or colour.
+    "Valve.Steam": "thesvg-color:steam",
     # "-light" is the DARK-INK variant (the one drawn for light
     # backgrounds), which is the better of the two here: on the light
     # theme it needs no help at all, and on obsidian the runtime's
@@ -237,7 +263,15 @@ LOGO_MAP: dict[str, str] = {
     # four-colour blobs, which are the COMPANY's mark rather than this
     # product's.
     "Google.Antigravity": "bxl:google-antigravity",
-    "Apache.NetBeans": "logos:netbeans",
+    # THE APACHE CUBE, and this is a CORRECTION of the kind this file's
+    # own rule exists to catch. It was "logos:netbeans" — the RETIRED
+    # NetBeans mark, a red wireframe mesh from the Sun/Oracle era, which
+    # renders at 20px as a tangle of hairlines in a colour the project no
+    # longer uses. Apache NetBeans' current mark is a solid three-quarter
+    # cube in blue, green and magenta; devicon carries it (MIT), it is
+    # built from filled faces rather than strokes, and it survives being
+    # small — which the wireframe never could.
+    "Apache.NetBeans": "devicon:netbeans",
     "JetBrains.PyCharm.Community": "logos:pycharm",
     "JetBrains.IntelliJIDEA.Community": "logos:intellij-idea",
     "Ollama.Ollama": "devicon:ollama",
@@ -245,7 +279,15 @@ LOGO_MAP: dict[str, str] = {
     "Docker.DockerDesktop": "logos:docker-icon",
     "Postman.Postman": "logos:postman-icon",
     # -- PILLAR 3: runtimes, drivers & diagnostics ------------------
-    "Pulse.VCRedistAIO": "logos:c-plusplus",
+    # VISUAL STUDIO'S OWN MARK, in Microsoft's purple, rather than the
+    # generic C++ hex. What this row installs is the "Microsoft Visual C++
+    # Redistributable" — a Visual Studio component, shipped by Microsoft,
+    # named after Visual Studio — so the VS infinity mark identifies the
+    # actual product where the language logo only identifies the language
+    # it was written in. (The C++ hex was a deliberate choice once, for
+    # being unencumbered; `logos:visual-studio` is CC0 too, so that
+    # reasoning no longer costs anything.)
+    "Pulse.VCRedistAIO": "logos:visual-studio",
     "Microsoft.DotNet.DesktopRuntime.8": "logos:dotnet",
     "Pulse.DotNetFx35": "logos:dotnet",
     # MSI Afterburner is MSI's product, so MSI's mark identifies it
@@ -253,6 +295,64 @@ LOGO_MAP: dict[str, str] = {
 }
 
 ICONIFY_SVG = "https://api.iconify.design/{prefix}/{name}.svg"
+
+
+# ============================================================
+#  THIRD SOURCE: PULSE-DRAWN MARKS  (NOT vendor logos)
+# ============================================================
+#: winget AppId -> a mark COMMITTED BY HAND to assets/appicons/, for the
+#: products that have no artwork in any open, licensed set.
+#:
+#: READ THIS BEFORE ADDING TO IT. Every entry here is a departure from the
+#: rule the rest of this file is built on - "a wrong logo is worse than no
+#: logo, and an invented one is worse than both" - and the departure is
+#: deliberate, bounded, and LABELLED rather than quietly taken.
+#:
+#: WHAT THESE ARE: Pulse-drawn pictograms of what each tool measures,
+#: carrying that product's own established colour. A CPU die for CPU-Z, a
+#: thermometer for HWMonitor, a card and fan for GPU-Z, a platter and
+#: needle for CrystalDiskInfo, a sensor trace for HWiNFO64, a flame for
+#: FurMark, a render cube for Cinebench. DirectX gets the X-cross its mark
+#: has always been, and BlueStacks the layered green stack.
+#:
+#: WHAT THESE ARE NOT: the vendors' logos. They are not renditions of
+#: them, they do not claim to be, and nothing downstream should treat them
+#: as such. The manifest records `drawn: true` and `source: "pulse-drawn"`
+#: for exactly this reason - so a later reader diffing the asset folder
+#: can tell in ONE FIELD which marks came from a vendor and which came
+#: from here, without having to know this comment exists.
+#:
+#: WHY AT ALL, given the rule. The alternative was measured rather than
+#: assumed: those nine rows rendered the neutral "no logo available"
+#: parcel, and nine grey parcels in a group of nine is not an honest
+#: fallback any more - it is a Hardware Diagnostics list with no icons in
+#: it, sitting beside two pillars where every row has one. The gap was
+#: also re-checked before it was filled rather than taken on trust from
+#: the last time: Iconify's federated search across every collection it
+#: aggregates returns ZERO results for bluestacks, directx, cpu-z, gpu-z,
+#: crystaldiskinfo, hwmonitor, hwinfo, furmark and cinebench. There is
+#: nothing to fetch, and there will not be tomorrow.
+#:
+#: THE DAY REAL ARTWORK APPEARS, delete the entry here and add one to
+#: LOGO_MAP: the fetched mark then wins, because this pass runs last only
+#: so that it cannot be clobbered by a download that does not exist.
+#:
+#: RARLab.WinRAR and CreativeTechnology.OpenAL are deliberately NOT here.
+#: Their gaps have different causes - a copyleft licence, and a wordmark
+#: geometry that cannot survive a 20px square - both of which could close
+#: properly, and neither is worth spending this exception on.
+DRAWN_MAP: dict[str, tuple[str, str]] = {
+    # AppId: (title, the product's own established colour)
+    "Microsoft.DirectX": ("DirectX", "#0f7bd4"),
+    "BlueStack.BlueStacks": ("BlueStacks", "#8bc53f"),
+    "CPUID.CPU-Z": ("CPU-Z", "#3f51b5"),
+    "CPUID.HWMonitor": ("HWMonitor", "#f09e1a"),
+    "TechPowerUp.GPU-Z": ("GPU-Z", "#2e9e4f"),
+    "CrystalDewWorld.CrystalDiskInfo": ("CrystalDiskInfo", "#2aa9e0"),
+    "REALiX.HWiNFO": ("HWiNFO64", "#1e62a8"),
+    "Geeks3D.FurMark.2": ("FurMark", "#e8452c"),
+    "Maxon.CinebenchR23": ("Cinebench", "#8e44ad"),
+}
 
 #: Brand hex for LOGO_MAP entries that turn out to be SILHOUETTES (drawn
 #: with `currentColor`) rather than full-colour artwork. These take the
@@ -263,12 +363,101 @@ MONOCHROME_LOGO_HEX: dict[str, str] = {
     # and the guard lifts it off obsidian exactly as it does for Steam,
     # Notion and 7-Zip, which are all #000000 too.
     "Anysphere.Cursor": "#000000",
-    # Antigravity's arch is drawn in one ink and shown white on dark in
-    # Google's own material. #000000 lets the contrast guard do exactly
-    # that on obsidian and invert it on porcelain - which is what the
-    # brand's own dark-mode guidance specifies anyway.
-    "Google.Antigravity": "#000000",
+    # ANTIGRAVITY'S OWN BLUE, and #000000 was the bug. The reasoning for
+    # black was that the contrast guard would carry it to white on
+    # obsidian — but the guard stops at the readability floor rather than
+    # going all the way, so what it actually produced was a DIM GREY arch
+    # on dark and a flat black one on light. Read as a shape with no
+    # brand in it, which is exactly how it was reported.
+    #
+    # #3186ff is not a colour chosen for this file: it is lifted from
+    # Antigravity's own full-colour artwork (thesvg-color:antigravity-
+    # google), whose palette is #3186ff / #00b95c / #fbbc04 / #fc413d.
+    # That artwork cannot be used directly — it is a masked composition,
+    # and Qt's SVG Tiny renderer has no <mask>, so it draws either blank
+    # or as blobs spilling outside their own viewBox. The arch geometry
+    # here is the vendor's; so now is the ink.
+    "Google.Antigravity": "#3186ff",
 }
+
+
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+
+
+def _flatten_symbols(data: bytes) -> bytes:
+    """Inline `<symbol>` + `<use>` so Qt can draw the mark.
+
+    QSvgRenderer implements SVG Tiny 1.2, which has no `<symbol>` and no
+    `<use>` that resolves to one. Qt does not error on those elements — it
+    silently draws nothing for them, and whatever container fill was in
+    scope paints instead. `thesvg-color:steam` is a `<symbol>` holding the
+    valve mark, `<use>`d inside a `<g fill="#fff">`: rendered by Qt it came
+    out as a FLAT WHITE DISC, which is indistinguishable from a broken
+    asset and was rejected as one before this existed.
+
+    That mattered because the same artwork is what the catalog wants.
+    Steam's authentic mark is the blue-gradient disc with the white
+    piston, `thesvg-color:steam` is the MIT-licensed copy of it, and the
+    only thing standing between the two was a container element. So the
+    artwork is left ALONE and its packaging is rewritten: every `<use>` of
+    a symbol becomes a `<g>` carrying the same translate, holding the
+    symbol's own children verbatim. No geometry moves, no colour changes,
+    nothing is redrawn — this is a format transform, not a rendition.
+
+    A file with no `<symbol>` is returned byte-for-byte unchanged, which
+    is every other mark in the set. That is deliberate: this runs over
+    thirty working assets, and a normaliser that reserialises them all
+    would rewrite files it has no business touching and produce a diff
+    nobody can review.
+    """
+    if b"<symbol" not in data:
+        return data
+    import xml.etree.ElementTree as ET
+
+    ET.register_namespace("", _SVG_NS)
+    ET.register_namespace("xlink", _XLINK_NS)
+    root = ET.fromstring(data.decode("utf-8"))
+
+    symbols: dict[str, ET.Element] = {}
+    for element in root.iter(f"{{{_SVG_NS}}}symbol"):
+        ident = element.get("id")
+        if ident:
+            symbols[ident] = element
+    if not symbols:
+        return data
+
+    def _target(use: ET.Element) -> str:
+        ref = use.get("href") or use.get(f"{{{_XLINK_NS}}}href") or ""
+        return ref[1:] if ref.startswith("#") else ""
+
+    # Parents are walked explicitly because ElementTree gives a child no
+    # link back to its parent, and both edits below are structural.
+    for parent in root.iter():
+        for index, child in reversed(list(enumerate(parent))):
+            if child.tag == f"{{{_SVG_NS}}}symbol":
+                del parent[index]
+                continue
+            if child.tag != f"{{{_SVG_NS}}}use":
+                continue
+            symbol = symbols.get(_target(child))
+            if symbol is None:
+                continue
+            group = ET.Element(f"{{{_SVG_NS}}}g")
+            # `x`/`y` on a <use> are a translation of its content. Carried
+            # over as a transform so the half-pixel insets these sets use
+            # to centre a mark inside its viewBox are preserved exactly.
+            dx, dy = child.get("x", "0"), child.get("y", "0")
+            if (dx, dy) != ("0", "0"):
+                group.set("transform", f"translate({dx},{dy})")
+            for attribute, value in child.attrib.items():
+                if attribute not in ("x", "y", "href", "width", "height",
+                                     f"{{{_XLINK_NS}}}href"):
+                    group.set(attribute, value)
+            group.extend(list(symbol))
+            parent[index] = group
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=False)
 
 
 def _get(url: str) -> bytes:
@@ -344,20 +533,51 @@ def main() -> int:
             continue
         safe = app_id.replace("/", "_").replace("\\", "_")
         path = os.path.join(ASSET_DIR, f"{safe}.svg")
-        if args.force or not os.path.isfile(path):
-            try:
-                data = _get(ICONIFY_SVG.format(prefix=prefix, name=name))
-            except Exception as exc:                    # noqa: BLE001
-                colour_failures.append(f"{app_id}: {icon_id} fetch failed ({exc})")
-                continue
-            if b"<svg" not in data[:400]:
-                colour_failures.append(f"{app_id}: {icon_id} was not an SVG")
-                continue
-            with open(path, "wb") as handle:
-                handle.write(data)
-            fetched += 1
-        else:
-            skipped += 1
+        # ALWAYS DOWNLOADED, never skipped for an existing file — and this
+        # is the fix for the defect that made seven marks render as solid
+        # black blocks.
+        #
+        # The guard here used to be the same `if args.force or not
+        # os.path.isfile(path)` the Simple Icons pass above uses, which is
+        # correct THERE and wrong here, because the two passes write THE
+        # SAME PATH. Pass one had just created <AppId>.svg from Simple
+        # Icons; pass two then found the file present, skipped its own
+        # download — and went on to write a manifest record naming the
+        # LOGO_MAP source and flagging `color: true`.
+        #
+        # So the manifest said "this is thesvg-color:anydesk, full-colour
+        # vendor artwork, render it as drawn" over a Simple Icons
+        # SILHOUETTE. A silhouette has no fill of its own and defaults to
+        # black, and the render-as-drawn path deliberately does not touch
+        # colours — so the row painted a solid black shape on a rescue
+        # plate, which is exactly the "flattened to a monochrome block"
+        # report. It never reached the contrast guard that exists to
+        # prevent precisely that, because the manifest had told the
+        # runtime it was not a silhouette.
+        #
+        # The `color` flag was not lying about the FILE, either, which is
+        # why the classification test could not see it: that check reads
+        # the artwork for `currentColor`, and a Simple Icons path carries
+        # no fill attribute at all rather than `currentColor`. Both halves
+        # looked locally consistent; only the pairing was wrong.
+        #
+        # Overwriting unconditionally is right rather than merely
+        # sufficient: reaching this loop at all means LOGO_MAP names a
+        # better source for this app, and the file at that path was
+        # written seconds ago by the pass this one exists to supersede.
+        # `skipped` therefore only ever counts pass one now.
+        try:
+            data = _get(ICONIFY_SVG.format(prefix=prefix, name=name))
+        except Exception as exc:                    # noqa: BLE001
+            colour_failures.append(f"{app_id}: {icon_id} fetch failed ({exc})")
+            continue
+        if b"<svg" not in data[:400]:
+            colour_failures.append(f"{app_id}: {icon_id} was not an SVG")
+            continue
+        data = _flatten_symbols(data)
+        with open(path, "wb") as handle:
+            handle.write(data)
+        fetched += 1
         # DETECTED, not assumed. Some brand-logo sets publish a mark as a
         # single path filled with `currentColor` — a SILHOUETTE wearing a
         # colour set's prefix. Flagging one of those `color: true` would
@@ -387,6 +607,30 @@ def main() -> int:
         manifest[app_id] = record
         unmapped = [a for a in unmapped if a != app_id]
 
+    # -- third pass: the hand-committed marks ---------------------
+    # RECORDED, NEVER DOWNLOADED. These files are in the repository; this
+    # loop exists to put them in the manifest (so the runtime looks them
+    # up at all) and to stamp them `drawn` (so nothing downstream mistakes
+    # one for vendor artwork). Running last means a LOGO_MAP entry added
+    # later for the same app silently wins, which is the outcome we want
+    # the day one of these brands publishes a real mark.
+    drawn_missing: list[str] = []
+    for app_id, (title, hex_colour) in sorted(DRAWN_MAP.items()):
+        safe = app_id.replace("/", "_").replace("\\", "_")
+        path = os.path.join(ASSET_DIR, f"{safe}.svg")
+        if not os.path.isfile(path):
+            drawn_missing.append(f"{app_id}: {safe}.svg is not in assets/appicons/")
+            continue
+        manifest[app_id] = {
+            "color": True,
+            "drawn": True,
+            "file": f"{safe}.svg",
+            "hex": hex_colour,
+            "source": "pulse-drawn",
+            "title": title,
+        }
+        unmapped = [a for a in unmapped if a != app_id]
+
     # newline="\n": .gitattributes pins *.json to LF, and text mode
     # on Windows would write CRLF for every line of a file the repo
     # tracks. THE ESCAPES ARE LOAD-BEARING and were literal newlines
@@ -409,7 +653,18 @@ def main() -> int:
         for app_id in unmapped:
             print(f"    {app_id}")
         print("  (drop a genuine <AppId>.svg into assets/appicons/ and add "
-              "it to LOGO_MAP to bundle one. Nothing is ever invented.)")
+              "it to LOGO_MAP to bundle one. No lookalike is ever taken; "
+              "for the one labelled exception, see DRAWN_MAP.)")
+    drawn = sum(1 for entry in manifest.values() if entry.get("drawn"))
+    if drawn:
+        print(f"\n{drawn} Pulse-DRAWN mark(s) recorded (source: pulse-drawn) "
+              "- pictograms in the product's own colour, NOT the vendors' "
+              "logos. See DRAWN_MAP.")
+    if drawn_missing:
+        print("\n!! DRAWN_MAP entries with no file committed:")
+        for failure in drawn_missing:
+            print(f"    {failure}")
+        return 1
     if colour_failures:
         print("\n!! LOGO_MAP entries that did not resolve:")
         for failure in colour_failures:

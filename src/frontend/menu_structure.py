@@ -217,9 +217,6 @@ SOFTWARE_CATALOG = [
                 ("Apple.iTunes", "iTunes",
                  "Media library and Apple device sync.",
                  "https://www.apple.com/itunes/", None, None),
-                ("BlueStacks.BlueStacks", "BlueStacks 5",
-                 "Android app player — run mobile apps and games on Windows.",
-                 "https://www.bluestacks.com/download.html", None, None),
             ]),
             ("🎮 Gaming Launchers", [
                 ("Valve.Steam", "Steam",
@@ -231,6 +228,23 @@ SOFTWARE_CATALOG = [
                 ("RockstarGames.Launcher", "Rockstar Games Launcher",
                  "Rockstar's launcher for GTA, Red Dead and more.",
                  "https://socialclub.rockstargames.com/rockstar-games-launcher", None, None),
+                # AN ANDROID GAMING EMULATOR, filed with the launchers it
+                # belongs beside rather than under "Utilities &
+                # Virtualization" next to VirtualBox. Both run something
+                # else's operating system, and that is where the
+                # resemblance stops: VirtualBox is a developer/testing
+                # tool, and nobody installs BlueStacks except to play a
+                # mobile game on a keyboard.
+                #
+                # THE ID WAS ALSO WRONG, and had been for as long as the
+                # row existed: winget has no "BlueStacks.BlueStacks". The
+                # real package is `BlueStack.BlueStacks` (singular
+                # publisher segment, now.gg, Inc.), so ticking this row
+                # queued an id winget resolves to nothing. Verified
+                # against the live source rather than guessed.
+                ("BlueStack.BlueStacks", "BlueStacks 5",
+                 "Android app player — run mobile games and apps on Windows.",
+                 "https://www.bluestacks.com/download.html", None, None),
             ]),
         ],
     },
@@ -377,6 +391,39 @@ SOFTWARE_CATALOG = [
                 ("CPUID.HWMonitor", "HWMonitor",
                  "Live voltages, temperatures and fan speeds.",
                  "https://www.cpuid.com/softwares/hwmonitor.html", None, None),
+                # THE THREE THE SUITE WAS MISSING, and each answers a
+                # question the four above cannot. CPU-Z and GPU-Z IDENTIFY
+                # parts; HWMonitor reads sensors at one moment. None of
+                # them can tell you whether the machine survives being
+                # worked, which is the question behind "it crashes in
+                # games" and "it throttles after ten minutes".
+                #
+                #   HWiNFO64  every sensor on the board in one tree, with
+                #             logging — the reference reading when a
+                #             temperature has to be proved rather than
+                #             glanced at.
+                #   FurMark   loads the GPU until it either holds its
+                #             clocks or does not. The one tool here that
+                #             deliberately makes the machine hot.
+                #   Cinebench a repeatable CPU render score, so "is this
+                #             slow?" gets a number that can be compared
+                #             with the same chip elsewhere.
+                #
+                # Package ids verified against the live winget source, not
+                # guessed: FurMark ships as `.1` and `.2` side by side and
+                # 2 is current; Cinebench's only winget package is R23.
+                ("REALiX.HWiNFO", "HWiNFO64",
+                 "Every hardware sensor on this machine in one tree — temperatures, "
+                 "clocks, voltages and fan speeds, with logging.",
+                 "https://www.hwinfo.com/download/", None, None),
+                ("Geeks3D.FurMark.2", "FurMark",
+                 "GPU stress test — pushes the card to its thermal limit to prove "
+                 "stability, or to find the crash before a game does.",
+                 "https://geeks3d.com/furmark/", None, None),
+                ("Maxon.CinebenchR23", "Cinebench R23",
+                 "CPU rendering benchmark — a repeatable score for comparing this "
+                 "machine against the same chip elsewhere.",
+                 "https://www.maxon.net/en/cinebench", None, None),
             ]),
         ],
     },
@@ -517,7 +564,16 @@ CATEGORIES = [
             # Both cards here serve the state Pillar 3 exists for: something
             # is already broken. A user in that state is not browsing, so
             # neither card opens a catalog — one deploys the whole
-            # dependency layer, the other opens the three network tools.
+            # dependency layer, the other asks Windows Update for the
+            # vendor drivers a fresh install has not fetched yet.
+            #
+            # NETWORK & CONNECTIVITY USED TO BE THE SECOND CARD HERE, and
+            # it has moved to Utilities & Tools. It was the one card in
+            # Software Management that installed nothing: adapter
+            # diagnostics, a driver-age check and a Winsock rebuild are
+            # SYSTEM DIAGNOSTICS, and filing them under the module whose
+            # every other card acquires or removes software made "where do
+            # I check my adapters?" a question about installing something.
             {"title": "DEPENDENCIES & DRIVERS", "items": [
                 # A SEPARATE CARD as well as a button inside the Runtimes
                 # pillar, because the two are reached from different states:
@@ -532,35 +588,26 @@ CATEGORIES = [
                          "and OpenAL.",
                  "task": "InstallEssentialRuntimes", "timeout": 3600,
                  "confirm": True},
-                # A HUB, for the reason hubs exist here: the three actions
-                # are only sensible TOGETHER. The stack reset is a real
-                # teardown that needs a reboot, and offering it as a lone
-                # top-level card would advertise the destructive one; kept
-                # beside the two read-only tools that tell you whether you
-                # need it, it reads as the last step of a diagnosis instead
-                # of a button to press hopefully.
-                {"icon": "🌐", "glyph": "networktower", "title": "Network & Connectivity",
-                 "desc": "Diagnose adapters, check Ethernet and Wi-Fi drivers, "
-                         "or rebuild the network stack when nothing else works.",
-                 "hub": True,
-                 "items": [
-                     {"icon": "📡", "title": "Network Adapter Diagnostics",
-                      "desc": "Link state, speed, addresses, gateway and driver "
-                              "for every adapter — read-only.",
-                      "glyph": "search", "task": "NetworkAdapterReport",
-                      "timeout": 300, "action": "Run"},
-                     {"icon": "💿", "title": "Ethernet & Wi-Fi Driver Check",
-                      "desc": "How old each network driver is, and the official "
-                              "Intel / Realtek page to get a newer one.",
-                      "glyph": "chart", "task": "NetworkDriverCheck",
-                      "timeout": 300, "action": "Check"},
-                     {"icon": "🔧", "title": "Reset Network Stack",
-                      "desc": "Rebuild Winsock and TCP/IP, then renew the lease. "
-                              "Requires a restart to finish.",
-                      "glyph": "repair", "task": "NetworkStackReset",
-                      "timeout": 600, "confirm": True, "danger": True,
-                      "action": "Reset"},
-                 ]},
+                # THE OTHER HALF OF A FRESH INSTALL, and the half this
+                # module could not reach. The catalog installs software;
+                # chipset, Realtek audio, Wi-Fi and Bluetooth drivers are
+                # not software anyone downloads by name — they arrive from
+                # Windows Update's driver channel, and on a new machine
+                # that channel is not scanned until Windows decides to.
+                # USOClient StartScan asks it to, now.
+                #
+                # NOT admin-gated: the Update Orchestrator runs as SYSTEM
+                # and the scan request is made through it, so an
+                # unelevated Pulse can ask for exactly the same scan an
+                # elevated one can. Gating it would raise a UAC prompt
+                # that buys nothing — the same reasoning that keeps the
+                # two read-only network tools out of the gate list.
+                {"icon": "🖥️", "glyph": "sync",
+                 "title": "Fetch Missing Hardware Drivers",
+                 "desc": "Asks Windows Update for the chipset, audio, Wi-Fi and "
+                         "Bluetooth drivers this board needs — the ones a fresh "
+                         "install leaves as 'Unknown device'.",
+                 "task": "DriverSync", "timeout": 900},
             ]},
             # -- WHAT IS ALREADY ON THE MACHINE ---------------------------
             #
@@ -943,10 +990,20 @@ CATEGORIES = [
         # folder of exported drivers to the Desktop and Missing Driver Scan
         # was a recurring routine; both moved to Maintenance & Security's
         # ROUTINE UPKEEP band with the other recurring tasks. What is left
-        # is the reference desk — six cards that read the machine or replay
+        # is the reference desk — cards that read the machine or replay
         # work against it — and a deliberately calm page. Modules want
         # COHERENT weight, not equal weight: this one earns its place by
-        # being the one surface where nothing can surprise you.
+        # being the surface where almost nothing can surprise you.
+        #
+        # ALMOST, and the qualifier is new. Network & Connectivity moved
+        # here from Software Management (where it was the only card that
+        # installed nothing), and one of its three rows — Reset Network
+        # Stack — does change the machine and does need a restart. It is
+        # given its own band rather than being folded into the reports, so
+        # the exception is visible on the page instead of being discovered
+        # one click in; and it stays behind a hub, which is what keeps the
+        # destructive row beside the two read-only tools that say whether
+        # it is needed at all.
         "groups": [
             {"title": "REPORTS & INSPECTION", "items": [
                 {"icon": "📊", "title": "System Info Snapshot",
@@ -969,6 +1026,48 @@ CATEGORIES = [
                 {"icon": "🔋", "title": "Battery & Power Health",
                  "desc": "Battery wear, cycle count and the active power plan — read-only.",
                  "glyph": "charging", "task": "@power_health"},
+            ]},
+            # -- SYSTEM DIAGNOSTICS ---------------------------------------
+            #
+            # MOVED HERE from Software Management, where it was the only
+            # card that installed nothing. Network is a system diagnostic
+            # utility, not an installable application, and this is the
+            # module for utilities.
+            #
+            # It also carries THE ONE EXCEPTION to this module's "nothing
+            # here changes a setting on its own" promise, which is why it
+            # gets a band of its own rather than being slipped in beside
+            # the reports: Reset Network Stack rewrites Winsock and TCP/IP
+            # and needs a restart. It stays a HUB for the same reason it
+            # always was one — the teardown is only safe to offer BESIDE
+            # the two read-only tools that tell you whether you need it, so
+            # it reads as the last step of a diagnosis instead of a button
+            # to press hopefully. The card on the page is calm; the
+            # destructive row is one click in, confirm-gated and
+            # danger-styled.
+            {"title": "NETWORK & CONNECTIVITY", "items": [
+                {"icon": "🌐", "glyph": "networktower", "title": "Network & Connectivity",
+                 "desc": "Diagnose adapters, check Ethernet and Wi-Fi drivers, "
+                         "or rebuild the network stack when nothing else works.",
+                 "hub": True,
+                 "items": [
+                     {"icon": "📡", "title": "Network Adapter Diagnostics",
+                      "desc": "Link state, speed, addresses, gateway and driver "
+                              "for every adapter — read-only.",
+                      "glyph": "search", "task": "NetworkAdapterReport",
+                      "timeout": 300, "action": "Run"},
+                     {"icon": "💿", "title": "Ethernet & Wi-Fi Driver Check",
+                      "desc": "How old each network driver is, and the official "
+                              "Intel / Realtek page to get a newer one.",
+                      "glyph": "chart", "task": "NetworkDriverCheck",
+                      "timeout": 300, "action": "Check"},
+                     {"icon": "🔧", "title": "Reset Network Stack",
+                      "desc": "Rebuild Winsock and TCP/IP, then renew the lease. "
+                              "Requires a restart to finish.",
+                      "glyph": "repair", "task": "NetworkStackReset",
+                      "timeout": 600, "confirm": True, "danger": True,
+                      "action": "Reset"},
+                 ]},
             ]},
             {"title": "AUTOMATION & LOGS", "items": [
                 {"icon": "📘", "title": "Playbooks",

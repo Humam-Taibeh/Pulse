@@ -158,8 +158,8 @@ function Invoke-GuiTask {
 
     # v10.3 metrics envelope. Captured HERE rather than inside
     # Complete-GuiTask so every exit path is measured — the admin-blocked
-    # early return, the hand-rolled verdicts (InstallLocalFile,
-    # RestoreServices, RestoreEdge...), the `default` unknown-task case and
+    # early return, the hand-rolled verdicts (RestoreServices,
+    # RestoreEdge...), the `default` unknown-task case and
     # the exception safety net all produce a META line, not just the ~24
     # cases that happen to route through Complete-GuiTask.
     $metaStart = Get-Date
@@ -231,20 +231,6 @@ function Invoke-GuiTask {
             # errors stop") and needs no dialog to ask anything first.
             "InstallEssentialRuntimes" {
                 Invoke-GuiBulkDeploy $Runtimes "Essential Dependencies" -SelectedIds @()
-                break
-            }
-            "InstallLocalFile" {
-                if ([string]::IsNullOrWhiteSpace($LocalInstallerPath)) {
-                    Write-Output "##PULSE##ERROR|No installer file was supplied."
-                    break
-                }
-                $Ok = Invoke-GuiLocalInstall -FilePath $LocalInstallerPath
-                if ($Ok) {
-                    $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
-                    Write-Output "##PULSE##SUCCESS|${Prefix}Installer finished. Verify the app is present."
-                } else {
-                    Write-Output "##PULSE##ERROR|The installer failed. See the Pulse log (Information > View Operation Log)."
-                }
                 break
             }
             # (InstallEssentialApps / InstallDevHub / InstallGamingApps /
@@ -762,6 +748,22 @@ function Invoke-GuiTask {
                 } else {
                     Write-Output "##PULSE##SUCCESS|No missing drivers — every device is covered by Windows Update."
                 }
+                break
+            }
+            # THE ACTION HALF OF DriverScan, and the distinction is the
+            # whole reason both exist. DriverScan READS: it asks the local
+            # update agent what it already knows is missing and writes the
+            # names to the log. On a fresh install the honest answer to
+            # that question is usually "nothing", because nothing has
+            # asked Windows Update to LOOK yet - and the chipset, Realtek
+            # audio, Wi-Fi and Bluetooth drivers a board needs arrive
+            # through exactly that channel, under names no one searches
+            # for. This case asks it to look, then reports what the look
+            # found.
+            "DriverSync" {
+                Complete-GuiTask -Action { Invoke-PulseDriverSync } `
+                    -SuccessMessage "Windows Update has been asked for this machine's drivers. Anything it found is downloading in the background — Settings > Windows Update shows the progress, and some drivers need a restart." `
+                    -FailureMessage "Windows Update could not be asked to scan for drivers. The Windows Update service may be disabled or managed by policy."
                 break
             }
             "CreateRestorePoint" {

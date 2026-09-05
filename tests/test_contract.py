@@ -21,7 +21,15 @@ _PROBE = os.path.join(_ROOT, "src/backend/modules/11-StateProbe.ps1")
 # Backend tasks the GUI invokes programmatically rather than from a card:
 # state probes, wizard steps and the interactive panels' row actions.
 _PROGRAMMATIC = {
-    "GetTweakState", "ScanForUpdates", "InstallLocalFile",
+    # InstallLocalFile is GONE rather than moved. It was the task behind
+    # ToolInstallWizardDialog's "Local File / Manual Selection" card, and
+    # only that card - so when the card went, the dispatcher case,
+    # Invoke-GuiLocalInstall and core.ps1's -LocalInstallerPath went with
+    # it rather than being left as an allow-listed entry point nothing
+    # can reach. This list is for tasks the GUI invokes from CODE instead
+    # of from a card; a task the GUI cannot invoke at all does not belong
+    # in it.
+    "GetTweakState", "ScanForUpdates",
     "InstallOfficeODTAuto", "StartupEnableItem", "StartupDisableItem",
     # v10.3: the Automation module's two cards are GUI-LOCAL ("@playbooks",
     # "@health_report") because neither is a backend action in its own
@@ -279,37 +287,85 @@ class TestAppIcons:
         assert "_monogram_pixmap" not in code
         assert "initial" not in code.lower().split('"""')[-1]
 
-    def test_no_mark_is_fabricated(self):
-        """THE provenance rule, and the reason the previous attempt was
-        reverted: every bundled mark must be the vendor's real artwork,
-        fetched from a curated brand-logo set. Pulse ships no hand-drawn
-        stand-ins.
+    def test_no_mark_is_a_lookalike(self):
+        """THE provenance rule, narrowed — and the narrowing is the point,
+        so read why before widening it back.
 
-        A purpose-drawn pictogram ("a CPU die means CPU-Z") was tried for
-        the seven apps with no open-licensed logo. It made every row a
-        crisp vector, and it was still wrong: a mark that DESCRIBES
-        software is not that software's logo, and shipping it in the same
-        slot as real brand artwork invites the reader to assume it is one.
-        A wrong logo is worse than no logo, and an invented one is worse
-        than both.
+        This test used to forbid hand-drawn marks OUTRIGHT
+        (`test_no_mark_is_fabricated`), because a purpose-drawn pictogram
+        set had been tried for the apps with no open-licensed logo and
+        reverted: a mark that DESCRIBES software is not that software's
+        logo, and putting one in the same slot as real brand artwork
+        invites the reader to assume it is one.
+
+        THE OBJECTION WAS TO THE SLOT, NOT TO THE DRAWING, and that is
+        what changed. Nine such marks now ship, and the thing that makes
+        them honest is that the manifest SAYS SO: `drawn: true` and
+        `source: "pulse-drawn"`, in the same field a fetched mark uses to
+        name its collection. A reader diffing assets/appicons/ can tell
+        the two apart without knowing any of this history, which is
+        exactly what the old blanket ban was protecting and what a silent
+        pictogram could not offer.
+
+        WHAT IS STILL FORBIDDEN, and it is the half that was always doing
+        the real work: a LOOKALIKE. The index will happily answer
+        `campaignmonitor` for HWMonitor and `crystal` — the programming
+        language — for CrystalDiskInfo, and a mark taken that way claims
+        to be the vendor's and is not. So every drawn mark must be
+        DECLARED in DRAWN_MAP, and every declared one must exist, be
+        flagged, and be reachable from the catalog. An asset that is
+        hand-drawn but presented as fetched fails here; so does a
+        DRAWN_MAP entry with no file, and a file with no entry.
+
+        The gaps were also re-measured before any of this: Iconify's
+        federated search returns zero results for all nine brands.
         """
         import json
         manifest = json.load(open(
             os.path.join(_ROOT, "assets/appicons/manifest.json"),
             encoding="utf-8"))
-        fabricated = sorted(a for a, e in manifest.items() if e.get("drawn"))
-        assert not fabricated, (
-            f"manifest still flags hand-drawn marks: {fabricated}")
-
         tool = open(os.path.join(_ROOT, "tools/fetch_app_icons.py"),
                     encoding="utf-8").read()
-        assert "DRAWN_MARKS" not in tool, (
-            "fetch_app_icons.py still declares a hand-drawn mark register")
+        # Anchored on the DECLARATION and closed at the dict's own brace.
+        # Both ends were wrong first: LOGO_MAP's note explains DRAWN_MAP
+        # hundreds of lines above it (so slicing from the first mention
+        # swallowed all of LOGO_MAP), and MONOCHROME_LOGO_HEX sits
+        # between this dict and the next function (so slicing to that
+        # function swallowed that map's keys too). A parser that reads
+        # too much does not fail here — it silently demands entries no
+        # one declared.
+        start = tool.index("DRAWN_MAP: dict[str, tuple[str, str]] = {")
+        body = tool[start:tool.index(chr(10) + "}", start)]
+        declared = set(re.findall(r'^\s{4}"([^"]+)":', body, re.M))
+        assert declared, "DRAWN_MAP did not parse"
+
+        drawn = {a for a, e in manifest.items() if e.get("drawn")}
+        assert drawn == declared, (
+            "the drawn-mark register and the manifest disagree.\n"
+            f"  drawn in the manifest, not in DRAWN_MAP: {sorted(drawn - declared)}\n"
+            f"  in DRAWN_MAP, not drawn in the manifest: {sorted(declared - drawn)}")
+
+        # Every drawn mark says so in BOTH fields. `drawn` is what a test
+        # reads; `source` is what a human reads in the file itself, and a
+        # mark carrying a collection id it did not come from would be the
+        # exact misattribution this test exists to prevent.
+        mislabelled = sorted(a for a in drawn
+                             if manifest[a].get("source") != "pulse-drawn")
+        assert not mislabelled, (
+            f"drawn marks claiming a fetched source: {mislabelled}")
+
+        # And none of them is a keyword lookalike wearing the flag: a
+        # drawn mark must be for an app the catalog actually offers.
+        from frontend.menu_structure import catalog_app_ids
+        stray = sorted(drawn - set(catalog_app_ids()))
+        assert not stray, f"drawn marks for apps not in the catalog: {stray}"
 
     def test_every_bundled_mark_has_a_traceable_source(self):
         """Each mark names where it came from — a Simple Icons slug via
-        ICON_MAP, or an Iconify brand-set id recorded as `source`. A mark
-        with neither is an asset nobody can re-derive or verify."""
+        ICON_MAP, an Iconify brand-set id recorded as `source`, or the
+        literal "pulse-drawn" for the nine marks this repo draws itself
+        (see test_no_mark_is_a_lookalike). A mark with none of the three
+        is an asset nobody can re-derive or verify."""
         import json
         manifest = json.load(open(
             os.path.join(_ROOT, "assets/appicons/manifest.json"),

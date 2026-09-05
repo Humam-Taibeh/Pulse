@@ -46,7 +46,6 @@
       core.ps1 -Task InstallOfficeODT -OfficeSetupPath <p> -OfficeConfigPath <p>
                                      runs the Office Deployment Tool wizard's
                                      resolved setup.exe / configuration.xml
-      core.ps1 -Task InstallLocalFile -LocalInstallerPath <p>
                                      runs an installer the Tool Install
                                      Wizard's Path C pointed at
       core.ps1 [...] -WhatIf        DRY-RUN: full simulation, zero mutations
@@ -89,7 +88,6 @@ param(
     [string]$StartupItemId,
     [string]$OfficeSetupPath,
     [string]$OfficeConfigPath,
-    [string]$LocalInstallerPath,
     # Storage Analyzer's scan root ("D:\", "C:\Users\me\Downloads"). Its
     # OWN parameter for the same reason $StartupItemId is: $AppIds is a
     # comma-separated LIST, and a Windows path may legitimately contain a
@@ -210,7 +208,7 @@ $ErrorActionPreference = "Stop"
 # two lines above, so an unreadable file here would abort the engine before
 # a single module loaded — over a string used in a banner. Being
 # approximately right about a version beats refusing to run.
-$Script:ScriptVersion = "10.9.4"
+$Script:ScriptVersion = "10.10.0"
 try {
     $VersionFile = Join-Path $PSScriptRoot "..\..\VERSION"
     if (Test-Path -LiteralPath $VersionFile) {

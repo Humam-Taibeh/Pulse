@@ -35,19 +35,38 @@ field and the tab pills above it. Three sources, tried in order:
      `logos` collection and the MIT `thesvg-color` / `devicon` sets, and
      falls back to a silhouette only where no colour artwork exists.
 
-     SIX CATALOG APPS HAVE NO BUNDLED MARK AT ALL, and that is a finding,
-     not an omission: BlueStacks, DirectX, CPU-Z, GPU-Z, HWMonitor and
-     CrystalDiskInfo have no authentic logo in ANY open, licensed set.
-     That was measured, twice — the full Simple Icons index (~3300 marks),
-     the whole `logos` collection (1880), and Iconify's federated search
-     across every collection it aggregates. They fall to tier 2, where the
-     vendor's own artwork is read out of their own installed binary, and
-     to tier 3 when the app is not present. An invented pictogram in that
-     gap was tried and REMOVED: a mark that describes software is still
-     not that software's logo, and the rule here is that a wrong logo is
-     worse than no logo. The traps are real and close — the index offers
-     `campaignmonitor` for HWMonitor and `crystal` (the programming
-     language) for CrystalDiskInfo.
+       PULSE-DRAWN — nine marks that are NOT vendor logos and are
+       recorded as such (`drawn: true`, `source: "pulse-drawn"`). They
+       cover BlueStacks, DirectX and the seven hardware-diagnostics
+       tools, none of which has authentic artwork in ANY open, licensed
+       set: measured against the full Simple Icons index (~3300 marks),
+       the whole `logos` collection (1880), and Iconify's federated
+       search across every collection it aggregates, which returns ZERO
+       results for all nine. Each is a pictogram of what the tool
+       measures, in that product's own colour — a CPU die, a
+       thermometer, a card and fan, a platter, a sensor trace, a flame,
+       a render cube. They are rendered exactly like a fetched colour
+       mark; the flag exists so nobody reading the manifest later
+       mistakes one for the vendor's own.
+
+       THIS IS A DEPARTURE and it is a bounded one. The rule everywhere
+       else in this module still holds — a wrong logo is worse than no
+       logo — and the traps are still real and still close: the index
+       offers `campaignmonitor` for HWMonitor and `crystal` (the
+       programming language) for CrystalDiskInfo, and neither is used.
+       What changed is the honest cost of the alternative: nine grey
+       parcels in a nine-row group is not a graceful fallback, it is a
+       list with no icons in it. See DRAWN_MAP in
+       tools/fetch_app_icons.py for the full reasoning and for what to
+       do the day one of these brands publishes a real mark.
+
+     TWO CATALOG APPS STILL HAVE NO BUNDLED MARK, and each for its own
+     stated reason rather than for want of looking: WinRAR's real logo
+     exists only under a copyleft licence this MIT app will not take on
+     for one row, and OpenAL publishes nothing but WORDMARKS, which are
+     an illegible smear in the 20px square every mark here is drawn into.
+     Both fall to tier 2, where the vendor's own artwork is read out of
+     their own installed binary, and to tier 3 when the app is absent.
 
      THIS OUTRANKS THE INSTALLED APP'S OWN ICON, which is not the obvious
      ordering and was arrived at by looking at the result. Windows' icon
@@ -67,10 +86,9 @@ field and the tab pills above it. Three sources, tried in order:
      THIS TIER IS LOAD-BEARING, and an earlier draft of this docstring
      said the opposite ("every catalog app now has a bundled mark, so this
      tier no longer fires for them") four paragraphs after correctly
-     listing the six that do not. It is the only thing standing between
-     those six and the neutral glyph, so reading that sentence as licence
-     to delete it would have quietly downgraded CPU-Z, GPU-Z, HWMonitor,
-     CrystalDiskInfo, BlueStacks and DirectX to grey parcels.
+     listing the apps that do not. Two catalog rows still depend on it —
+     WinRAR and OpenAL — so reading that sentence as licence to delete it
+     would downgrade them to grey parcels.
 
      It also covers the Update Center, which lists whatever winget reports
      as upgradable and is therefore not limited to the catalog at all.
@@ -92,7 +110,10 @@ field and the tab pills above it. Three sources, tried in order:
      "E", "R" or "B" where the Epic, Rockstar and BlueStacks logos
      belonged and read as an unfinished placeholder. A neutral mark that
      is identical for every unknown app says "no logo available"
-     honestly; an invented letter tile pretends to be branding.
+     honestly; an invented letter tile pretends to be branding. (The
+     drawn marks in tier 1 are the opposite case and not a reversal of
+     this: they are per-product on purpose, and the manifest says out
+     loud that they are ours rather than the vendor's.)
 
      No catalog row reaches this any more (tests/test_contract.py pins
      that), but it stays as the honest floor for the Update Center's
