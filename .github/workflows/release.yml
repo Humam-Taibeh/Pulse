@@ -270,14 +270,31 @@ jobs:
         run: |
           $version = $env:PULSE_VERSION
           $tag = $env:PULSE_TAG
-          gh release create $tag `
-            "dist\PULSE_Setup_v$version.exe" `
-            'dist\SHA256SUMS' `
-            --title "Pulse v$version" `
-            --notes-file release-notes.md `
-            --latest
+          $setup = "dist\PULSE_Setup_v$version.exe"
+
+          # RE-RUNNABLE, because the case this has to survive is a publish
+          # that got half way. The concurrency group above refuses to
+          # cancel this job for exactly that reason, but a network failure
+          # between the two asset uploads is not something a concurrency
+          # setting can prevent - and `gh release create` on an existing
+          # tag fails outright, so without this a partial release could
+          # only be finished by hand.
+          gh release view $tag 2>$null | Out-Null
+          $exists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+
+          if ($exists) {
+            Write-Output "Release $tag already exists; replacing its assets."
+            gh release upload $tag $setup 'dist\SHA256SUMS' --clobber
+          }
+          else {
+            gh release create $tag $setup 'dist\SHA256SUMS' `
+              --title "Pulse v$version" `
+              --notes-file release-notes.md `
+              --latest
+          }
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "gh release create failed ($LASTEXITCODE)."
+            Write-Error "Publishing $tag failed ($LASTEXITCODE)."
             exit 1
           }
           Write-Output "Published $tag with the installer and SHA256SUMS."
