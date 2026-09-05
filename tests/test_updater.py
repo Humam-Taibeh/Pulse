@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 
 import pytest
 
@@ -359,3 +360,113 @@ def test_requests_are_identified_and_versioned():
     """GitHub 403s an anonymous request with no User-Agent."""
     assert "PULSE" in updater._USER_AGENT
     assert version.VERSION in updater._USER_AGENT
+
+
+# ============================================================
+#  APPLICATION CONTROL (Inno Setup Error 4551)
+# ============================================================
+# "Unable to execute file in the temporary directory ... Error 4551: An
+# Application Control policy has blocked this file" names the helper
+# SetupLdr unpacks into is-XXXXXXXX.tmp and runs, not the setup executable
+# the user launched. Two mitigations, and the tests below are careful to
+# claim only what each one does.
+class TestTheInstallerIsHandedOverCleanly:
+
+    @pytest.fixture
+    def staged(self, monkeypatch, tmp_path):
+        """A verified installer sitting where download() would leave it."""
+        monkeypatch.setattr(updater.resources, "local_appdata",
+                            lambda: str(tmp_path))
+        monkeypatch.setattr(updater, "can_apply", lambda: (True, ""))
+        path = os.path.join(updater.download_dir(),
+                            "PULSE_Setup_v10.10.0.exe")
+        with open(path, "wb") as handle:
+            handle.write(b"MZ")
+        return path
+
+    @pytest.fixture
+    def launched(self, monkeypatch):
+        """Capture the Popen call instead of starting an installer."""
+        seen = {}
+
+        def fake_popen(args, **kwargs):
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(updater.subprocess, "Popen", fake_popen)
+        return seen
+
+    @pytest.mark.skipif(sys.platform != "win32",
+                        reason="NTFS alternate data streams")
+    def test_the_mark_of_the_web_is_gone_before_setup_runs(
+            self, staged, launched):
+        """An Application Control policy can refuse a file carrying a
+        Zone.Identifier, and apply() is reached from the browser download
+        as well as from download() - only one of which sets one."""
+        stream = staged + ":Zone.Identifier"
+        with open(stream, "w") as handle:
+            handle.write("[ZoneTransfer]\nZoneId=3\n")
+        updater.apply(staged)
+        with pytest.raises(OSError):
+            open(stream).read()
+        assert launched["args"][0] == staged, "setup was not launched"
+
+    def test_setup_unpacks_into_our_own_directory_not_shared_temp(
+            self, staged, launched):
+        r"""SetupLdr chooses where to unpack with GetTempPath, which reads
+        TMP then TEMP. Both are pointed at a directory this application
+        owns, so the extraction leaves the world-writable %TEMP% that
+        path-based AppLocker and WDAC rules most often deny.
+
+        Measured against a real Inno installer before this was written:
+        an inherited environment unpacked to %TEMP%\is-EPUUEV6AK4.tmp, a
+        redirected one to <staging>\is-TB01777L46.tmp.
+        """
+        updater.apply(staged)
+        env = launched["kwargs"]["env"]
+        expected = updater.installer_temp_dir()
+        assert env["TMP"] == expected and env["TEMP"] == expected
+        assert os.path.normcase(expected).startswith(
+            os.path.normcase(updater.download_dir()))
+        assert os.path.isdir(expected), "the staging directory was not created"
+
+    def test_the_installer_still_gets_a_whole_environment(
+            self, staged, launched, monkeypatch):
+        """The redirect must be an OVERRIDE, not a replacement. Handing
+        Setup a two-variable environment would strip PATH, SystemRoot and
+        the rest, and it would fail in ways that look nothing like this."""
+        monkeypatch.setenv("PULSE_ENV_CANARY", "present")
+        updater.apply(staged)
+        env = launched["kwargs"]["env"]
+        assert env.get("PULSE_ENV_CANARY") == "present"
+        assert len(env) > 3
+
+    def test_a_file_with_no_stream_is_left_alone(self, tmp_path):
+        """The common case, and it must not raise: nothing this updater
+        downloads carries a Mark of the Web in the first place."""
+        path = os.path.join(str(tmp_path), "plain.exe")
+        with open(path, "wb") as handle:
+            handle.write(b"MZ")
+        assert updater.strip_mark_of_the_web(path) is False
+        with open(path, "rb") as handle:
+            assert handle.read() == b"MZ"
+
+
+def test_blocked_setup_leftovers_are_pruned(monkeypatch, tmp_path):
+    """Inno removes its own is-*.tmp on a clean exit. A REFUSED setup is
+    exactly the case where it does not - so without this, the directory
+    added for 4551 would accumulate one carcass per blocked update and
+    quietly fill the disk of the machine that already could not update."""
+    monkeypatch.setattr(updater.resources, "local_appdata", lambda: str(tmp_path))
+    staging = updater.installer_temp_dir()
+    stale = os.path.join(staging, "is-DEADBEEF.tmp")
+    fresh = os.path.join(staging, "is-CAFEBABE.tmp")
+    for path in (stale, fresh):
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, "helper.exe"), "wb") as handle:
+            handle.write(b"MZ")
+    os.utime(stale, (0, 0))
+    assert updater.prune() == 1
+    assert not os.path.exists(stale)
+    assert os.path.isdir(fresh), "a live unpack directory was deleted"

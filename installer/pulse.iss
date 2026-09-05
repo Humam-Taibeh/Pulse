@@ -166,6 +166,51 @@ ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=yes
 CloseApplicationsFilter=*.exe,*.dll,*.ps1
+; ------------------------------------------------------------
+;  Application Control (Error 4551) - what this file can and cannot do
+;
+;  "Unable to execute file in the temporary directory ... Error 4551: An
+;  Application Control policy has blocked this file" names the helper that
+;  SetupLdr unpacks into is-XXXXXXXX.tmp and executes, not the setup
+;  executable the user launched. Three things were reviewed for it, and
+;  only one produced a change here.
+;
+;  PrivilegesRequired STAYS admin. Lowering it would install to a
+;  user-writable directory, and since main.spec requests
+;  requireAdministrator on every launch, any process running as the user
+;  could then replace the executable and have it run elevated next time -
+;  a straight privilege-escalation path. Program Files is not writable
+;  without elevation, which closes it. This is the wrong dial.
+;
+;  THERE IS NO UNNECESSARY TEMP EXECUTION TO REMOVE. [Run] launches only
+;  {app}\PULSE.exe - the installed binary, not a temp helper - and carries
+;  skipifsilent, so an updater-driven /SILENT install never runs it at
+;  all. [Code] is Pascal interpreted inside Setup's own process, and
+;  nothing is marked dontcopy or extracted with ExtractTemporaryFile. The
+;  only temp execution left is SetupLdr unpacking itself, which is how
+;  Inno works and is not configurable away.
+;
+;  THE STAGING DIRECTORY IS SET BY THE CALLER, not here. SetupLdr picks it
+;  with GetTempPath, which reads TMP then TEMP, so utils/updater.apply()
+;  points both at %LOCALAPPDATA%\PULSE\updates\setup-tmp and the unpack
+;  happens there instead of in the shared %TEMP%. Measured against a
+;  throwaway Inno installer, not assumed - see installer_temp_dir().
+;
+;  NONE OF THAT SATISFIES SMART APP CONTROL, which judges code by
+;  signature and reputation and does not care where a file sits. Only a
+;  certificate chained to a CA in Microsoft's trust program does, and
+;  build_release.ps1 already threads one through -SignThumbprint the day
+;  there is one to thread. Until then a SAC-enforcing machine must install
+;  manually; the path mitigations above are for AppLocker and WDAC rules,
+;  which usually are path-based.
+; ------------------------------------------------------------
+
+; Concurrency hygiene, NOT a 4551 mitigation - recorded plainly so the two
+; are not conflated later. Two Setups at once is reachable here: the
+; updater can be invoked from the launch check and from the sidebar, and
+; CloseApplications means each would try to shut the same app down. The
+; second now waits for the first rather than racing it.
+SetupMutex=PulseSetup_7B2F4C91
 
 ; ------------------------------------------------------------
 ;  SIGNING

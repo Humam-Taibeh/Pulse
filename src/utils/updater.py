@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -337,6 +338,64 @@ def download(update: Update, progress=None, cancel=None) -> str:
     return target
 
 
+def installer_temp_dir() -> str:
+    r"""Where Setup is told to unpack itself.
+
+    INNO SETUP EXTRACTS BEFORE IT INSTALLS. SetupLdr unpacks its payload to
+    a fresh `is-XXXXXXXX.tmp` directory and EXECUTES from there, which is
+    the directory named in "Unable to execute file in the temporary
+    directory ... Error 4551: An Application Control policy has blocked
+    this file." The blocked file is that unpacked helper, not the setup
+    executable the user launched.
+
+    The location is chosen by GetTempPath, which reads TMP, then TEMP, then
+    USERPROFILE - so a caller can move it, and apply() does. Measured
+    against a throwaway Inno installer on Windows 11 with Inno Setup 6:
+
+        inherited environment   %TEMP%\is-EPUUEV6AK4.tmp
+        TMP+TEMP redirected     <this directory>\is-TB01777L46.tmp
+
+    WHAT THIS DOES AND DOES NOT BUY. It moves the extraction out of the
+    shared, world-writable %TEMP% that path-based AppLocker and WDAC rules
+    most commonly deny, into a per-user directory this application already
+    owns. It does NOT satisfy Smart App Control, which judges code by
+    signature and reputation and does not care where a file sits; only a
+    certificate chained to a CA in Microsoft's trust program does that
+    (ROADMAP.md, "Code signing via Azure Trusted Signing"). Keeping the two
+    apart matters, because a fix that appears to work on an AppLocker
+    machine and cannot work on a SAC one would otherwise look flaky.
+    """
+    path = os.path.join(download_dir(), "setup-tmp")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def strip_mark_of_the_web(path: str) -> bool:
+    """Delete `path:Zone.Identifier`. True if a stream was actually there.
+
+    The Mark of the Web is an NTFS alternate data stream, and an
+    Application Control policy can refuse a file carrying one. It is
+    written by whatever SAVED the file - browsers and mail clients, via
+    the Attachment Execution Service - and NOT by ordinary file writes.
+
+    SO THIS IS A NO-OP FOR download() AND THAT IS NOT A REASON TO SKIP IT.
+    Verified on Windows 11: a file fetched by urllib and committed with
+    os.replace, exactly as download() does it, carries no Zone.Identifier
+    (`dir /r` reports no stream; opening it raises FileNotFoundError). The
+    stream DOES appear on the installer a user downloads from the releases
+    page in a browser - which is the other, entirely supported way to
+    arrive at this exact file, and the one where a 4551 is likeliest.
+    apply() is reached from both, so it strips unconditionally rather than
+    reasoning about provenance it cannot see.
+    """
+    try:
+        os.remove(path + ":Zone.Identifier")
+        return True
+    except OSError:
+        # Absent, not NTFS, or not Windows. All mean "nothing to strip".
+        return False
+
+
 def _unlink(path: str):
     try:
         os.remove(path)
@@ -457,13 +516,24 @@ def apply(path: str, silent: bool = True) -> None:
     if not os.path.isfile(path):
         raise UpdateError("the installer is no longer on disk")
 
+    # TWO MITIGATIONS FOR Error 4551, AND NEITHER IS SUFFICIENT ALONE.
+    # The strip clears a Mark of the Web this code path never sets but a
+    # browser download does; the redirect moves Setup's own unpacking out
+    # of the shared %TEMP% that path-based AppLocker and WDAC rules deny.
+    # Neither moves Smart App Control, which judges signatures rather than
+    # paths - see each helper, and ROADMAP.md on code signing.
+    strip_mark_of_the_web(path)
+    environment = os.environ.copy()
+    environment["TMP"] = installer_temp_dir()
+    environment["TEMP"] = environment["TMP"]
+
     args = [path]
     if silent:
         # /SILENT shows a progress window but asks nothing; /NOCANCEL stops
         # a half-applied install; /NORESTART leaves reboot policy to us.
         args += ["/SILENT", "/NOCANCEL", "/NORESTART"]
     try:
-        subprocess.Popen(args, close_fds=True,
+        subprocess.Popen(args, close_fds=True, env=environment,
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
     except OSError as exc:
         raise UpdateError(f"the installer could not be started: {exc}") from exc
@@ -488,6 +558,26 @@ def prune(keep: str | None = None, max_age_days: float = 7.0) -> int:
         try:
             if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
                 os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+
+    # Setup unpacks itself into installer_temp_dir() and removes the
+    # directory again on a clean exit. A REFUSED setup is exactly the case
+    # where it does not, so without this the folder accumulates one
+    # ~90MB carcass per blocked update - the failure mode that brought
+    # this code into being, quietly filling the disk of the machine it
+    # already could not update.
+    staging = os.path.join(download_dir(), "setup-tmp")
+    try:
+        leftovers = os.listdir(staging)
+    except OSError:
+        return removed
+    for name in leftovers:
+        path = os.path.join(staging, name)
+        try:
+            if os.path.isdir(path) and os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
                 removed += 1
         except OSError:
             continue
