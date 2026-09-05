@@ -302,15 +302,49 @@ try {
                 $IntegrityError = "'$($ModuleFile.Name)' is not in the module manifest. The engine will not load code this build did not produce."; throw $IntegrityError
             }
         }
-        foreach ($Name in @($Expected.Keys)) {
-            $Candidate = Join-Path $Script:ModuleRoot $Name
-            if (-not (Test-Path -LiteralPath $Candidate)) {
-                $IntegrityError = "'$Name' is listed in the module manifest but missing from this install."; throw $IntegrityError
+        # HASHED THROUGH .NET RATHER THAN Get-FileHash, and that is not a
+        # style preference. Get-FileHash lives in a module that PowerShell
+        # resolves by AUTOLOADING, which walks $env:PSModulePath - so this
+        # gate's own hashing primitive was only reachable if an
+        # environment variable happened to point somewhere usable. On a
+        # GitHub runner it does not: the engine is spawned as a Windows
+        # PowerShell 5.1 child of a pwsh step, inherits that step's
+        # PSModulePath, and Get-FileHash stops resolving. The gate then
+        # refused to start with "Backend module 'MANIFEST.sha256' failed
+        # to load: The term 'Get-FileHash' is not recognized" - naming a
+        # manifest that was perfectly intact, over modules that were
+        # perfectly intact.
+        #
+        # It failed CLOSED, so nothing was ever bypassable this way. But a
+        # security control that any process able to set an environment
+        # variable can convert into a hard refusal to start is a denial of
+        # service on the app, and it made the check depend on machine
+        # state it has no reason to care about. SHA256 comes from
+        # mscorlib: no module, no PSModulePath, no autoloader.
+        $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($Name in @($Expected.Keys)) {
+                $Candidate = Join-Path $Script:ModuleRoot $Name
+                if (-not (Test-Path -LiteralPath $Candidate)) {
+                    $IntegrityError = "'$Name' is listed in the module manifest but missing from this install."; throw $IntegrityError
+                }
+                # Streamed rather than ReadAllBytes: this runs on every task
+                # spawn, and there is no reason to hold a module in memory
+                # twice to hash it.
+                $Stream = [System.IO.File]::OpenRead($Candidate)
+                try {
+                    $ActualHash = [System.BitConverter]::ToString($Sha256.ComputeHash($Stream)).Replace('-', '').ToLowerInvariant()
+                }
+                finally {
+                    $Stream.Dispose()
+                }
+                if ($ActualHash -ne $Expected[$Name]) {
+                    $IntegrityError = "'$Name' does not match the module manifest - it has been modified since this build was made."; throw $IntegrityError
+                }
             }
-            $ActualHash = (Get-FileHash -LiteralPath $Candidate -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($ActualHash -ne $Expected[$Name]) {
-                $IntegrityError = "'$Name' does not match the module manifest - it has been modified since this build was made."; throw $IntegrityError
-            }
+        }
+        finally {
+            $Sha256.Dispose()
         }
         $LoadingModule = "(none)"
     }

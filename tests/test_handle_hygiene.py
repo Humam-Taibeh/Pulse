@@ -31,6 +31,17 @@ WHY MEASURE HANDLES RATHER THAN OBJECTS
     handle count is the number Task Manager shows and the number that runs
     out; it also catches a leak that a Python-level assertion would miss
     entirely, such as a duplicated kernel handle nobody wrapped.
+
+    THAT ARGUMENT SURVIVES, WITH ONE MEASURED LIMIT ADDED LATER. The count
+    is process-wide, so on a machine this suite does not own it also sums
+    whatever else allocated handles during the run. A GitHub runner
+    measured +11 across four healthy runs - 2.75/run, against the 2/run
+    the leak itself produced. An OS-level count therefore still catches a
+    GROSS leak that no Python assertion would see, and that is what it is
+    now asked to do; resolving two handles per run is below its noise
+    floor anywhere but a quiet desktop. The precise per-run property is
+    asserted directly instead. See
+    TestHandlesComeBack.test_repeated_tasks_do_not_accumulate_handles.
 """
 from __future__ import annotations
 
@@ -94,7 +105,43 @@ def _run_task(qapp, keep: list) -> PowerShellTask:
 
 class TestHandlesComeBack:
     def test_repeated_tasks_do_not_accumulate_handles(self, qapp):
-        """The measurement that found it, as a regression guard."""
+        """The measurement that found it, retargeted onto what it can
+        actually prove on a machine it does not own.
+
+        THE ORIGINAL ASSERTION WAS `growth < runs` ON A WHOLE-PROCESS
+        COUNT, and it did not survive contact with CI.
+        GetProcessHandleCount reports every handle the *pytest process*
+        owns, so it also counts whatever Qt, the CRT, Defender and the
+        runner's own tooling opened while four real engine spawns were in
+        flight. On the box this was written on that ambient churn is
+        approximately zero and the leak's +2/run stood out cleanly. On a
+        GitHub runner the same healthy code measured +11 across 4 runs and
+        failed the build for a leak that was not there - every worker had
+        released its Popen, and the two tests below passed in the same run.
+
+        RAISING THE NUMBER UNTIL THAT STOPPED WOULD BE THE EXACT FAILURE
+        tests/test_ci_guard.py EXISTS TO PREVENT, so the instrument
+        changed instead of the threshold. The retention being guarded is
+        per-run and deterministic - run() must clear _process and close
+        the pipe on EVERY run, not merely on the single run each test
+        below inspects - and that property is what the +2/run leak
+        violated. Checked across the batch here, it cannot be perturbed by
+        anything else running on the machine.
+
+        The handle count is still measured, and still asserted, but as the
+        coarse backstop it can honestly be rather than as the primary
+        guard. This file's header argues that an OS-level count catches
+        what a Python-level assertion misses - a duplicated kernel handle
+        nobody wrapped - and that is still true and still worth keeping.
+        What is no longer true is that it can resolve two handles per run:
+        the noise floor on a shared runner (2.75/run, measured) is above
+        the signal the original number was set to detect. So the ceiling
+        is set where it separates cleanly from that floor and catches a
+        gross leak, and the per-run assertion above it catches the precise
+        one. Neither is a relaxation of the other; they detect different
+        magnitudes, and the docstring says which is which so nobody
+        re-tightens the ceiling into flakiness again.
+        """
         held: list = []
         _run_task(qapp, held)          # warm up: first run loads the engine
         held.clear()
@@ -103,14 +150,24 @@ class TestHandlesComeBack:
         baseline = _handle_count()
 
         runs = 4
-        for _ in range(runs):
-            _run_task(qapp, held)
+        for index in range(runs):
+            worker = _run_task(qapp, held)
+            assert worker._process is None, (
+                f"run {index + 1} of {runs} finished still holding its "
+                "Popen, which keeps the process handle AND the read end "
+                "of the stdout pipe alive for as long as the worker "
+                "lives - and main.py keeps it until the next task "
+                "replaces it. That is the retention that leaked two "
+                "handles per task")
 
         growth = _handle_count() - baseline
-        assert growth < runs, (
-            f"{growth} handles retained across {runs} tasks — that is at "
-            "least one per run, so a technician working through a machine "
-            "leaks steadily for the whole session")
+        print(f"handle growth across {runs} runs: {growth:+d} "
+              f"({growth / runs:+.2f}/run)")
+        assert growth < runs * 8, (
+            f"{growth} handles retained across {runs} tasks "
+            f"({growth / runs:.1f}/run) - far above anything ambient "
+            "activity on a busy runner accounts for, so something is "
+            "leaking kernel handles wholesale")
 
     def test_the_popen_reference_is_released(self, qapp):
         """The retention path itself. Holding the Popen keeps the process
