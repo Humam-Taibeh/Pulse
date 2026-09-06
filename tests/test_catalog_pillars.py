@@ -871,246 +871,114 @@ class TestCatalogPlacement:
 
 
 # ============================================================
-#  10. WINDOWS UPDATE DRIVER SYNCHRONISATION
+#  10. WHAT "FETCH MISSING HARDWARE DRIVERS" LEFT BEHIND
 # ============================================================
-class TestThePillarActionReachesTheTask:
-    """A declared `action` is the catalog dialog's SECOND accepted
-    outcome, and the two must not be able to fire together.
+class TestTheDriverSyncErrandIsGone:
+    """v10.11 removes it outright, and this class is the receipt.
 
-    `selected_ids` and `requested_task` answer different questions —
-    "install these" and "run that" — and the caller reads whichever is
-    populated. A press that returned both would deploy five runtimes AND
-    ask Windows Update for drivers off one click, which is the "one
-    button, two effects" the footer's single primary exists to prevent.
+    THE SHORT HISTORY, because the card moved before it died and a
+    half-remembered move is how a deleted feature comes back. It began as
+    a standalone dashboard card in a band called "DEPENDENCIES & DRIVERS",
+    beside "Install All Essential Dependencies". v10.10 deleted that
+    neighbour (it was the Runtimes pillar's own one-click action with a
+    card around it) and REHOMED this one as the pillar's `action` — a
+    task with no AppId to tick, rendered as a second toolbar button.
+
+    v10.11 removes the errand itself: the pillar action, the dispatcher
+    case, Invoke-PulseDriverSync, and the anchored UsoClient.exe path that
+    existed only to serve it.
+
+    THE PLUMBING WENT WITH IT, and that is the part worth pinning. The
+    section `action` mechanism — SoftwareCatalogDialog's second accepted
+    outcome, `requested_task`, and main.py's branch on it — had exactly
+    one declared caller in the app's whole history. Keeping generic
+    support for a feature nothing declares is the same defect this
+    codebase retired four unused glyphs and one unreachable dispatcher
+    case for: it reads as maintained, and the next person to touch the
+    dialog has to prove it is dead before they may simplify anything
+    around it.
+
+    DriverScan — the READ-ONLY card that asks the local update agent what
+    it already knows is missing — is a different task and is deliberately
+    still here. So is console mode's own driver scan (20-Menus.ps1 option
+    3), which never went through this code at all.
     """
 
-    def _runtimes(self, window, qapp):
-        from frontend.menu_structure import catalog_section
+    def test_no_card_or_pillar_declares_it(self):
+        from frontend.menu_structure import (CATEGORIES, catalog_section,
+                                             category_bands)
+        software = next(c for c in CATEGORIES if c["id"] == "software")
+        tasks = {item.get("task")
+                 for _title, items in category_bands(software)
+                 for item in items}
+        assert "DriverSync" not in tasks, "the dashboard card is back"
+        assert not catalog_section("runtimes").get("action"), (
+            "the runtimes pillar declares an action again")
+
+    def test_the_backend_has_no_case_and_no_function(self):
+        maintenance = _read(
+            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
+        assert '"DriverSync" {' not in _read(_DISPATCHER)
+        assert "Invoke-PulseDriverSync" not in maintenance
+
+    def test_the_orchestrator_anchor_went_with_its_only_caller(self):
+        """UsoClient.exe was anchored in $Script:SystemBinaries for this
+        errand and nothing else. An anchored path to a binary no code
+        launches is a line that looks like a security control and
+        protects nothing."""
+        foundation = _read(
+            os.path.join(_ROOT, "src/backend/modules/00-Foundation.ps1"))
+        assert "usoclient" not in foundation.lower(), (
+            "the UsoClient anchor outlived the only function that used it")
+
+    def test_the_section_action_mechanism_is_gone_too(self):
+        """Generic plumbing with no caller. Asserted on the dialog's real
+        surface rather than on its source, so a re-introduction under a
+        different name still has to declare itself here."""
         from frontend.widgets import SoftwareCatalogDialog
-        dialog = SoftwareCatalogDialog(
-            window, {"icon": "\U0001f9f1", "title": "Runtimes & Hardware Drivers"},
-            window.theme.t, [catalog_section("runtimes")])
-        dialog.show()
-        qapp.processEvents()
-        return dialog
+        assert not hasattr(SoftwareCatalogDialog, "_request_action")
+        widgets = _read(os.path.join(_ROOT, "src/frontend/widgets.py"))
+        assert "self.requested_task" not in widgets
+        main = _read(os.path.join(_ROOT, "src/frontend/main.py"))
+        assert "dialog.requested_task" not in main
 
-    def test_the_button_is_rendered_for_the_pillar_that_declares_one(
-            self, window, qapp):
-        dialog = self._runtimes(window, qapp)
-        try:
-            assert dialog._action_btn.text() == "Fetch Missing Hardware Drivers"
-            assert dialog._action_btn.toolTip()
-        finally:
-            dialog.reject(); dialog.deleteLater(); qapp.processEvents()
+    def test_the_read_only_driver_scan_survives(self):
+        """The removal was of the ACTION half. DriverScan reads and
+        reports; deleting it would take a capability the user never asked
+        to lose."""
+        from frontend.menu_structure import CATEGORIES, category_bands
+        tasks = set()
+        for category in CATEGORIES:
+            for _title, items in category_bands(category):
+                for item in items:
+                    tasks.add(item.get("task"))
+        assert "DriverScan" in tasks
+        assert '"DriverScan" {' in _read(_DISPATCHER)
 
-    def test_no_other_pillar_grows_one(self, window, qapp):
-        """Two of the three pillars declare no action, and a button that
-        appeared on all three would be chrome rather than an affordance."""
-        from frontend.menu_structure import catalog_section
-        from frontend.widgets import SoftwareCatalogDialog
-        for key in ("essentials", "development"):
-            dialog = SoftwareCatalogDialog(
-                window, {"icon": "\U0001f4e6", "title": key},
-                window.theme.t, [catalog_section(key)])
-            dialog.show()
-            qapp.processEvents()
-            try:
-                assert dialog._action is None
-                assert not hasattr(dialog, "_action_btn")
-            finally:
-                dialog.reject(); dialog.deleteLater(); qapp.processEvents()
-
-    def test_pressing_it_accepts_with_the_task_and_no_selection(
-            self, window, qapp):
-        from PySide6.QtWidgets import QDialog
-        dialog = self._runtimes(window, qapp)
-        try:
-            # A selection is made FIRST, so the assertion is about the
-            # action discarding it rather than about there being none.
-            for app_id in list(dialog._rows)[:3]:
-                dialog._rows[app_id].checkbox.setChecked(True)
-            qapp.processEvents()
-            assert dialog.checked_count() == 3
-
-            dialog._action_btn.click()
-            qapp.processEvents()
-            assert dialog.result() == QDialog.DialogCode.Accepted
-            assert dialog.requested_task == "DriverSync"
-            assert dialog.selected_ids == [], (
-                "the action also queued a deploy")
-        finally:
-            dialog.deleteLater(); qapp.processEvents()
-
-    def test_a_plain_deploy_requests_no_task(self, window, qapp):
-        """The other direction: Deploy Selected must not look like an
-        action press to the caller, or every deploy would run the driver
-        scan instead."""
-        dialog = self._runtimes(window, qapp)
-        try:
-            for app_id in list(dialog._rows)[:2]:
-                dialog._rows[app_id].checkbox.setChecked(True)
-            qapp.processEvents()
-            dialog._accept_selection()
-            assert dialog.selected_ids
-            assert dialog.requested_task == ""
-        finally:
-            dialog.deleteLater(); qapp.processEvents()
-
-    def test_the_dispatch_starts_the_task_rather_than_a_deploy(
-            self, window, monkeypatch):
-        """END TO END through request_task, which is where the two
-        outcomes are actually told apart."""
-        from PySide6.QtWidgets import QDialog
-        from frontend import main as M
-
-        started = {}
-        monkeypatch.setattr(
-            window, "_start_task",
-            lambda *a, **k: started.update({"item": a[0] if a else None}))
-        monkeypatch.setattr(window, "is_admin", True)
-
-        class _Stub:
-            selected_ids: list = []
-            requested_task = "DriverSync"
-
-        monkeypatch.setattr(M, "SoftwareCatalogDialog",
-                            lambda *a, **k: _Stub())
-        monkeypatch.setattr(window, "_exec_dialog",
-                            lambda d: QDialog.DialogCode.Accepted)
-        window.request_task({
-            "icon": "\U0001f9f1", "title": "Runtimes & Hardware Drivers",
-            "desc": "", "task": "InstallCatalogApps", "timeout": 3600,
-            "catalog": True, "catalog_section": "runtimes"}, None)
-
-        assert started, "the action never reached _start_task"
-        item = started["item"]
-        assert item["task"] == "DriverSync"
-        assert not item["catalog"], (
-            "the task item kept its catalog keys, so it would reopen the "
-            "dialog it was just dismissed from")
-
-
-class TestDriverSync:
-    """The action half of DriverScan.
-
-    DriverScan READS: it asks the local update agent what it already knows
-    is missing. On a fresh install the honest answer is usually "nothing",
-    because nothing has asked Windows Update to LOOK yet — and the
-    chipset, Realtek audio, Wi-Fi and Bluetooth drivers a board needs
-    arrive through exactly that channel, under names nobody searches for.
-    """
-
-    def test_it_is_declared_on_the_pillar_that_owns_the_errand(self):
-        """IT MOVED, AND THIS IS WHERE IT MOVED TO.
-
-        It was a standalone dashboard card in a band called "DEPENDENCIES
-        & DRIVERS", beside "Install All Essential Dependencies". That
-        second card was the Runtimes pillar's own one-click action with a
-        card around it — two doors to one room — so the band lost it, and
-        a titled band holding one orphan is a heading for a nearly-empty
-        room.
-
-        This is not a duplicate, though, which is why it was rehomed
-        rather than deleted: asking Windows Update for chipset, audio,
-        Wi-Fi and Bluetooth drivers is the SAME ERRAND as the runtimes
-        ("this machine is missing something it needs to work") and it has
-        no AppId to tick, so it can be neither a catalog row nor a `bulk`.
-        The pillar declares it as an `action` and the dialog renders it
-        beside the bulk button.
-        """
-        from frontend.menu_structure import catalog_section
-        action = catalog_section("runtimes").get("action") or {}
-        assert action.get("task") == "DriverSync", (
-            f"the runtimes pillar no longer declares the driver scan: {action}")
-        assert action.get("label") and action.get("hint"), (
-            "a declared action with no label or hint renders as a blank "
-            "button nobody can be expected to press")
+    def test_console_mode_keeps_its_own_driver_scan(self):
+        """20-Menus.ps1 option 3 does its own COM search and never called
+        Invoke-PulseDriverSync — so the removal must not have reached it."""
+        menus = _read(os.path.join(_ROOT, "src/backend/modules/20-Menus.ps1"))
+        assert "Missing Hardware Drivers Scan" in menus
 
     def test_the_two_duplicate_dashboard_cards_are_gone(self):
-        """The band and both cards. Asserted as the ABSENCE of the tasks
-        from the card tree rather than of the band title, because a card
-        moved to a different band would still be the duplication this
-        removed."""
+        """v10.10's removal, still pinned: a card moved to a different
+        band would be the same duplication."""
         from frontend.menu_structure import CATEGORIES, category_bands
         software = next(c for c in CATEGORIES if c["id"] == "software")
         bands = dict(category_bands(software))
-        assert "DEPENDENCIES & DRIVERS" not in bands, (
-            "the band came back")
+        assert "DEPENDENCIES & DRIVERS" not in bands, "the band came back"
         tasks = {item.get("task")
                  for _title, items in category_bands(software)
                  for item in items}
         assert "InstallEssentialRuntimes" not in tasks
-        assert "DriverSync" not in tasks, (
-            "the driver scan is a dashboard card again as well as a "
-            "pillar action — which is the duplication this removed")
 
     def test_the_retired_task_left_no_dispatcher_case_behind(self):
-        """InstallEssentialRuntimes had exactly one caller and it is gone.
-        A backend case nothing can reach is dead code that still looks
-        maintained."""
         assert '"InstallEssentialRuntimes" {' not in _read(_DISPATCHER)
 
     def test_the_runtimes_array_survives_for_console_mode(self):
-        """The removal took the dispatcher CASE, not the catalog it
-        deployed: console mode walks $Runtimes directly through
-        Process-AppCategory and never used that case."""
+        """The removals took dispatcher CASES, not the catalog they
+        deployed: console mode walks $Runtimes directly."""
         assert "$Runtimes" in _read(_CATALOGS)
         assert "$Runtimes" in _read(
             os.path.join(_ROOT, "src/backend/modules/20-Menus.ps1"))
-
-    def test_it_has_a_dispatcher_case(self):
-        assert '"DriverSync" {' in _read(_DISPATCHER)
-
-    def test_it_is_not_admin_gated(self):
-        """The scan is performed by the Update Orchestrator, which runs as
-        SYSTEM; the client only posts the request. An unelevated Pulse
-        gets the same scan an elevated one does, so gating this would
-        raise a UAC prompt that buys the user nothing."""
-        from frontend.menu_structure import ADMIN_REQUIRED_TASKS
-        assert "DriverSync" not in ADMIN_REQUIRED_TASKS
-        assert "DriverSync" not in _read(_CATALOGS).split(
-            "$Script:AdminRequiredTasks")[1].split(")")[0]
-
-    def test_it_asks_windows_update_rather_than_installing_a_driver(self):
-        """Requesting a scan is what makes Windows download and stage what
-        it finds, on its own schedule and with its own rollback — which is
-        the correct owner for a driver install. Pulse forcing a package
-        onto a device is how a machine ends up with no display output."""
-        maintenance = _stripped(
-            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
-        start = maintenance.index("function Invoke-PulseDriverSync")
-        body = maintenance[start:maintenance.index("\nfunction ", start + 10)]
-        assert "StartScan" in body
-        for forbidden in ("pnputil", "Add-WindowsDriver", "AcceptEula",
-                          "Install()", "Download()"):
-            assert forbidden not in body, (
-                f"the driver sync calls {forbidden} — it must ask Windows "
-                "Update to fetch drivers, not install one itself")
-
-    def test_the_orchestrator_is_invoked_through_an_anchored_path(self):
-        """Pulse may be elevated, and a bare executable name is a $env:PATH
-        search the unelevated user controls."""
-        maintenance = _stripped(
-            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
-        assert "Get-SystemBinary 'usoclient'" in maintenance
-        foundation = _read(
-            os.path.join(_ROOT, "src/backend/modules/00-Foundation.ps1"))
-        assert "'usoclient'" in foundation, (
-            "usoclient.exe has no anchored path in $Script:SystemBinaries")
-
-    def test_a_refused_scan_is_a_warning_and_not_a_failed_task(self):
-        """USOClient is undocumented, absent on some builds and declined
-        outright where Windows Update is managed by policy. None of that
-        is Pulse malfunctioning, and none of it should paint the card
-        red — only losing the update agent entirely does."""
-        maintenance = _stripped(
-            os.path.join(_ROOT, "src/backend/modules/07-Maintenance.ps1"))
-        start = maintenance.index("function Invoke-PulseDriverSync")
-        body = maintenance[start:maintenance.index("\nfunction ", start + 10)]
-        head, _, tail = body.partition("$Found = $Searcher.Search")
-        assert "Write-ErrorX" not in head, (
-            "the scan REQUEST reports a hard failure; it must warn and "
-            "fall through to the report")
-        assert "Write-ErrorX" in tail, (
-            "losing the update agent must still fail the task")
-

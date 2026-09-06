@@ -101,12 +101,6 @@ $Script:SystemBinaries = @{
     'netsh'      = Join-Path $Script:System32Dir 'netsh.exe'
     'cleanmgr'   = Join-Path $Script:System32Dir 'cleanmgr.exe'
     'robocopy'   = Join-Path $Script:System32Dir 'Robocopy.exe'
-    # The Update Orchestrator client - how DriverSync asks Windows Update
-    # to go and look for the vendor drivers a fresh install has not
-    # fetched. Anchored like every other stock tool: it is launched from a
-    # process that may be elevated, and a bare name is a PATH search.
-    # 'UsoClient.exe' is the real mixed-case filename on disk.
-    'usoclient'  = Join-Path $Script:System32Dir 'UsoClient.exe'
 }
 
 function Get-SystemBinary {
@@ -675,12 +669,21 @@ function Write-TaggedLine {
         "WARN"    { "Yellow" }
         "DEAD"    { "Yellow" }
         "DUPE"    { "Yellow" }
+        # A shadowed toolchain is a Yellow finding and the entry it hides
+        # behind is DarkGray detail under it - the CONFLICT line is the
+        # one to scan for, the SHADOWED lines are what it expands to.
+        "CONFLICT" { "Yellow" }
+        "PRUNED"  { "Green" }
+        "KEPT"    { "DarkGray" }
         "FAIL"    { "Red" }
         default   { "DarkGray" }
     }
-    # 9 = "[MISSING]", the longest tag - so every finding starts at the
-    # same column whatever its verdict.
-    $Label = "[$Tag]".PadRight(9)
+    # 10 = "[SHADOWED]"/"[CONFLICT]", the longest tags - so every finding
+    # starts at the same column whatever its verdict. It was 9 for
+    # "[MISSING]" until the PATH sanitizer's two longer tags arrived; a
+    # width that no longer fits its widest tag is a column that stops
+    # being one on exactly the lines a reader is scanning for.
+    $Label = "[$Tag]".PadRight(10)
     Write-Host "   $Label $Text" -ForegroundColor $Color
     Write-Log "$Tag $Text"
 
@@ -693,10 +696,15 @@ function Write-TaggedLine {
     # INFO, DONE) count as nothing at all, because a finding is not an
     # action.
     switch ($Tag) {
-        "OK"    { $Script:SessionSkipCount++ }
-        "FIXED" { $Script:SessionSuccessCount++ }
-        "SET"   { $Script:SessionSuccessCount++ }
-        "FAIL"  { $Script:SessionFailCount++ }
+        "OK"     { $Script:SessionSkipCount++ }
+        "FIXED"  { $Script:SessionSuccessCount++ }
+        "SET"    { $Script:SessionSuccessCount++ }
+        # An entry removed from the PATH is a change that succeeded; an
+        # entry the sanitizer deliberately refused to touch is the same
+        # kind of non-event [OK] is, and neither is a failure.
+        "PRUNED" { $Script:SessionSuccessCount++ }
+        "KEPT"   { $Script:SessionSkipCount++ }
+        "FAIL"   { $Script:SessionFailCount++ }
     }
 }
 

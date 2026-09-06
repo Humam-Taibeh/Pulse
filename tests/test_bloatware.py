@@ -465,15 +465,88 @@ class TestRowIdentity:
     def test_every_declared_pictogram_is_a_real_glyph(self):
         """A key with no GLYPHS entry renders as an empty string, which is
         an invisible icon rather than an error."""
-        keys = set(BloatRow._APP_GLYPHS.values()) | set(BloatRow._GLYPHS.values())
+        keys = ({glyph for glyph, _hex in BloatRow._APP_MARKS.values()}
+                | set(BloatRow._GLYPHS.values()))
         missing = sorted(k for k in keys if k not in TH.GLYPHS)
         assert not missing, f"pictogram keys absent from theme.GLYPHS: {missing}"
 
     def test_every_pictogram_names_a_real_catalog_entry(self):
         """A typo'd Id is a pictogram nothing will ever render."""
         from conftest import bloat_catalog_ids
-        stray = sorted(set(BloatRow._APP_GLYPHS) - bloat_catalog_ids())
+        stray = sorted(set(BloatRow._APP_MARKS) - bloat_catalog_ids())
         assert not stray, f"pictograms for entries the catalog lacks: {stray}"
+
+    def test_every_mark_colour_clears_the_readability_floor(self, qapp):
+        """THE DEFECT THIS PASS WAS OPENED FOR, measured rather than
+        eyeballed.
+
+        Every pictogram was painted in one colour — the accent when the
+        package was present, `text_faint` when it was not — so a purge
+        list on a clean machine was a column of grey outlines that "blend
+        into the dark background". Per-product colour fixes the sameness;
+        it also introduces a new way to be unreadable, because a colour
+        chosen for a vendor's white page can be invisible on obsidian.
+
+        So the floor is asserted on the surface the glyph ACTUALLY sits
+        on — the card tier with `plaque_well` composited over it, which is
+        lighter than the card on dark and darker on light — in both
+        themes, for every entry including the group fallbacks.
+        """
+        from utils import appicons
+
+        def contrast(a, b):
+            def channel(v):
+                v /= 255.0
+                return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+            def lum(c):
+                return (0.2126 * channel(c.red()) + 0.7152 * channel(c.green())
+                        + 0.0722 * channel(c.blue()))
+            first, second = lum(a), lum(b)
+            hi, lo = max(first, second), min(first, second)
+            return (hi + 0.05) / (lo + 0.05)
+
+        #: appicons._MIN_CONTRAST — the same floor the SVG marks clear.
+        floor = 2.6
+        failures = []
+        for mode in ("dark", "light"):
+            t = TH.tokens(mode)
+            surface = TH.blend(t["card"], t["plaque_well"])
+            candidates = [(entry_id, hexv)
+                          for entry_id, (_g, hexv) in BloatRow._APP_MARKS.items()]
+            candidates.append(("<group fallback>", t["accent"]))
+            for entry_id, hexv in candidates:
+                tone = appicons.readable_glyph_color(hexv or t["accent"],
+                                                     surface, t)
+                ratio = contrast(TH.to_qcolor(tone), TH.to_qcolor(surface))
+                if ratio < floor:
+                    failures.append(f"{mode}/{entry_id}: {tone} at {ratio:.2f}:1")
+        assert not failures, (
+            "marks that vanish into their own well: " + "; ".join(failures))
+
+    def test_absence_does_not_drain_the_mark(self, qapp):
+        """A row for a package that is NOT here must render its icon at
+        the SAME colour as one that is.
+
+        Absence is already reported three times over — the row's whole
+        surface dims via `disabled_item`, the checkbox is disabled, and
+        the badge reads NOT PRESENT. Draining the icon on top of that was
+        the fourth telling, and it cost the only part of the row that is
+        recognisable without reading. It was also inconsistent: the
+        fourteen rows carrying a bundled SVG have always rendered in full
+        colour whether present or not.
+        """
+        t = TH.tokens("dark")
+        base = {"Id": "Maps", "Name": "Windows Maps", "Group": "core",
+                "Note": "n", "Optional": False, "Installed": [],
+                "Provisioned": [], "Desktop": [], "Startup": []}
+        here = BloatRow({**base, "Detected": True, "Presence": "installed"}, t)
+        gone = BloatRow({**base, "Detected": False, "Presence": "absent"}, t)
+        assert here.plaque is not None and gone.plaque is not None, (
+            "Maps is expected to be on the pictogram tier")
+        assert gone.plaque.styleSheet() == here.plaque.styleSheet(), (
+            "an absent package's mark is still being drained to a faint "
+            "tone, which is what made this list unreadable")
 
     def test_no_catalogued_row_is_left_on_the_group_fallback(self):
         """The floor must stay a floor. Every entry should be answered by
@@ -483,7 +556,7 @@ class TestRowIdentity:
         from utils import appicons
         branded = {a[len("Bloat."):] for a in appicons.manifest_ids()
                    if a.startswith("Bloat.")}
-        covered = branded | set(BloatRow._APP_GLYPHS)
+        covered = branded | set(BloatRow._APP_MARKS)
         uncovered = sorted(bloat_catalog_ids() - covered)
         assert not uncovered, (
             f"rows with neither a mark nor a pictogram: {uncovered}")

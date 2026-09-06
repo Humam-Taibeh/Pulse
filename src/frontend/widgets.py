@@ -39,8 +39,9 @@ from PySide6.QtWidgets import (
 )
 
 from frontend.animations import (
-    EASE_BREATHE, EASE_OUT,
-    GlowController, RippleController, ShimmerBar, paint_accent_hairline,
+    EASE_BREATHE, EASE_OUT, PRESS_MS,
+    GlowController, RippleController, ShimmerBar, motion_ms,
+    paint_accent_hairline,
     paint_aurora_edge, paint_bevel_frame, paint_drop_shadow, paint_glow_frame,
     paint_nav_indicator, paint_ripple_frame, paint_top_sheen, squircle_path,
 )
@@ -1854,6 +1855,61 @@ class TitleBar(QWidget):
 
 
 # ============================================================
+#  FOCUS-VISIBLE — the ring belongs to the keyboard, not the pointer
+# ============================================================
+#: The focus reasons that must NOT light a focus ring.
+#:
+#: THE DEFECT, stated plainly: GlassCard.mousePressEvent calls setFocus,
+#: and both painted rings were drawn on `hasFocus()`. So clicking a card
+#: gave it the keyboard's ring and then KEPT it — clicking the page
+#: background moves focus nowhere, because a background is not focusable,
+#: so Qt leaves the last focused widget exactly where it was. The result
+#: is the reported one: a 2px accent border welded to whichever card was
+#: touched first, present on a window nobody has pressed a key on.
+#:
+#: This is the same problem the web platform solved with `:focus-visible`,
+#: and the solution is the same one: the ring is not a function of WHO HAS
+#: FOCUS, it is a function of HOW THEY GOT IT. A pointer already tells the
+#: user where it is — it is under their hand — and the card answers a
+#: click with a ripple, a press tint and a glow. It does not also need the
+#: affordance whose entire job is to answer "where would my next keystroke
+#: go?" for someone who cannot see a cursor.
+#:
+#: POPUP is here beside MOUSE because a menu or tooltip taking and
+#: returning focus is not the user navigating anywhere.
+_FOCUS_REASONS_WITHOUT_RING = frozenset({
+    Qt.FocusReason.MouseFocusReason,
+    Qt.FocusReason.PopupFocusReason,
+})
+
+#: Re-activating the window must not INVENT a ring, and must not erase one.
+#:
+#: Qt hands focus back to whatever held it when the window returns, with
+#: ActiveWindowFocusReason. Treating that as keyboard focus would mean
+#: alt-tabbing away from a mouse-clicked card and back drew a ring that
+#: was never there; treating it as pointer focus would mean a keyboard
+#: user lost their place every time they checked another window. Neither
+#: is a navigation event, so it changes nothing and the previous verdict
+#: carries across.
+_FOCUS_REASON_PRESERVING = Qt.FocusReason.ActiveWindowFocusReason
+
+
+def focus_ring_visible(reason, previous: bool) -> bool:
+    """Should a control focused for `reason` paint its keyboard ring?
+
+    `previous` is what the control decided last time, and is returned
+    unchanged for the one reason that is not a navigation event. Every
+    other reason that is not in _FOCUS_REASONS_WITHOUT_RING — Tab,
+    Backtab, Shortcut, Other, MenuBar — arrived by keyboard or by the
+    app's own arrow traversal (see main._focus_neighbour, which moves
+    focus with OtherFocusReason), and all of those want the ring.
+    """
+    if reason == _FOCUS_REASON_PRESERVING:
+        return previous
+    return reason not in _FOCUS_REASONS_WITHOUT_RING
+
+
+# ============================================================
 #  NAV BUTTON — sidebar category entry with painted glow
 # ============================================================
 class NavButton(QPushButton):
@@ -1907,6 +1963,9 @@ class NavButton(QPushButton):
         self._well = QColor(255, 255, 255, 10)
         self._light = False
         self._bevel = TH.bevel_alphas(t)
+        #: Whether the CURRENT focus arrived by keyboard. Read by
+        #: paintEvent, written by focusInEvent — see focus_ring_visible.
+        self._focus_ring = False
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
@@ -1939,6 +1998,10 @@ class NavButton(QPushButton):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            # See GlassCard.mousePressEvent: a re-focus of the widget that
+            # already holds focus delivers no focusInEvent, so the ring has
+            # to be dropped here or the pointer inherits the keyboard's.
+            self._focus_ring = False
             self._ripple.trigger(e.position())
         super().mousePressEvent(e)
 
@@ -1946,12 +2009,19 @@ class NavButton(QPushButton):
     # with it the repaint Qt would have scheduled to draw one. The ring in
     # paintEvent therefore has to ask for its own frame, or it appears
     # only when something unrelated happens to repaint the row.
+    #
+    # WHAT the ring answers to is the focus REASON, not the fact of focus
+    # — see focus_ring_visible above. A rail entry is clicked far more
+    # often than it is tabbed to, and the click already answers itself
+    # with a ripple and a glow.
     def focusInEvent(self, e):
         super().focusInEvent(e)
+        self._focus_ring = focus_ring_visible(e.reason(), self._focus_ring)
         self.update()
 
     def focusOutEvent(self, e):
         super().focusOutEvent(e)
+        self._focus_ring = False
         self.update()
 
     def _paint_plaque(self, p: QPainter):
@@ -2059,7 +2129,7 @@ class NavButton(QPushButton):
         # rect: at rect() the outer pixel of a 2px pen straddles the edge
         # and bleeds over the neighbouring row, which on a 4px-spaced rail
         # reads as one thick divider between two entries.
-        if self.hasFocus():
+        if self.hasFocus() and self._focus_ring:
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             p.setBrush(Qt.BrushStyle.NoBrush)
             ring = QColor(self._glow.color)
@@ -2741,6 +2811,9 @@ class GlassCard(QFrame):
         # order; keyPressEvent below adds Enter/Space activation and arrow
         # traversal, and paintEvent draws a real focus ring.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        #: Whether the CURRENT focus arrived by keyboard. Read by
+        #: paintEvent, written by focusInEvent — see focus_ring_visible.
+        self._focus_ring = False
         self.setAccessibleName(item.get("title", ""))
         self.setAccessibleDescription(item.get("desc", ""))
         # v8 proportion fix: a min AND a max so cards never balloon. The
@@ -2780,7 +2853,10 @@ class GlassCard(QFrame):
         # QGraphicsEffect, per the animations.py doctrine.
         self._press_tint = 0.0
         self._press_anim = QVariantAnimation(self)
-        self._press_anim.setDuration(90)
+        # PRESS_MS, not a literal: the release timer in keyPressEvent has
+        # to hold for exactly as long as this ramp takes, and two numbers
+        # that must agree do not belong in two different methods.
+        self._press_anim.setDuration(motion_ms(PRESS_MS))
         self._press_anim.setEasingCurve(EASE_OUT)
         self._press_anim.valueChanged.connect(self._on_press_frame)
 
@@ -3145,7 +3221,7 @@ class GlassCard(QFrame):
             # feels like the same action rather than a silent shortcut.
             self._ramp_press(1.0)
             self._ripple.trigger(QPointF(self.rect().center()))
-            QTimer.singleShot(90, lambda: self._ramp_press(0.0))
+            QTimer.singleShot(PRESS_MS, lambda: self._ramp_press(0.0))
             self.clicked.emit()
             return
         direction = self._NAV_KEYS.get(key)
@@ -3156,19 +3232,32 @@ class GlassCard(QFrame):
 
     def focusInEvent(self, e):
         super().focusInEvent(e)
-        # Keyboard focus lights the same glow the pointer does, so the two
-        # input methods produce one consistent "this is active" state.
+        # THE RING FOLLOWS THE REASON (focus_ring_visible); THE GLOW
+        # FOLLOWS THE FOCUS. They are different promises: the glow says
+        # "this card is live", which is true however it was reached, and
+        # the ring says "your next keystroke lands here", which is only
+        # worth saying to someone navigating by keyboard.
+        self._focus_ring = focus_ring_visible(e.reason(), self._focus_ring)
         self._glow._ramp_to(1.0)
         self.update()
 
     def focusOutEvent(self, e):
         super().focusOutEvent(e)
+        self._focus_ring = False
         if not self.underMouse():
             self._glow._ramp_to(0.0)
         self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            # THE RING IS CLEARED HERE AND NOT LEFT TO focusInEvent,
+            # because Qt does not deliver one when the widget it is asked
+            # to focus ALREADY HAS FOCUS. That is the exact path a user
+            # takes after tabbing to a card and then reaching for the
+            # mouse: setFocus is a no-op, no focus event arrives, and the
+            # keyboard's ring stays welded to a card the pointer is now
+            # driving. Measured at zero changed pixels before this line.
+            self._focus_ring = False
             self.setFocus(Qt.FocusReason.MouseFocusReason)
             self._ramp_press(1.0)
             self._ripple.trigger(e.position())
@@ -3322,7 +3411,7 @@ class GlassCard(QFrame):
         # glow and stays unambiguous even on a card the pointer is also
         # over. A solid 2px accent ring rather than Qt's dotted default,
         # which is invisible against this material.
-        if self.hasFocus():
+        if self.hasFocus() and self._focus_ring:
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             p.setBrush(Qt.BrushStyle.NoBrush)
             ring = QColor(self._glow.color)
@@ -7945,19 +8034,18 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
     row wizard's "Local File" path; that path is gone — see
     ToolInstallWizardDialog.)
 
-    THERE IS A SECOND ACCEPTED OUTCOME, `requested_task`, and exactly one
-    pillar declares it. Runtimes & Hardware Drivers owns an errand with no
-    AppId to tick: asking Windows Update for the chipset, audio, Wi-Fi and
-    Bluetooth drivers a fresh install has not fetched. That cannot be a row
-    in a list whose every other row is a winget id, and it cannot be a
-    `bulk` either, because `bulk` TICKS rows and there are none to tick.
+    THERE IS ONE ACCEPTED OUTCOME. A section could once declare an
+    `action` — a task with no AppId to tick, rendered as a second toolbar
+    button that accepted with `requested_task` set and the ticks
+    discarded. Exactly one pillar ever declared one ("Fetch Missing
+    Hardware Drivers", on Runtimes & Hardware Drivers) and v10.11 removes
+    that errand, so the mechanism went with its only caller rather than
+    staying as generic plumbing with nothing plugged into it.
 
-    So a section may declare an `action` — a task, a label and a hint —
-    and pressing it accepts with `requested_task` set and `selected_ids`
-    empty. The caller reads whichever is populated. It used to be a
-    standalone dashboard card sitting beside "Install All Essential
-    Dependencies"; both were this pillar restated outside itself, and only
-    one of them was a duplicate (see the note in menu_structure.py).
+    That is the same rule this codebase applies to its glyph table and to
+    InstallEssentialRuntimes' dispatcher case: a capability nothing
+    invokes is not a feature, it is a promise the next reader has to
+    verify before they can trust the file.
     """
 
     #: The "no sub-category" tab. Empty string so it can be compared with a
@@ -7969,9 +8057,6 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         super().__init__(parent)
         self._t = t
         self.selected_ids: list[str] = []
-        #: The task a declared section `action` asks for, or "". Set only
-        #: on Accepted, and mutually exclusive with `selected_ids`.
-        self.requested_task: str = ""
         self._rows: dict[str, DevHubRow] = {}
         self._row_tab: dict[str, str] = {}                 # id -> its tab key
         self._dependents: dict[str, list[str]] = {}        # requires_id -> [ids]
@@ -8080,23 +8165,6 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
             self._bulk_btn.setToolTip(self._bulk["hint"])
             self._bulk_btn.clicked.connect(self._select_bulk_group)
             toolbar.addWidget(self._bulk_btn)
-
-        # THE DECLARED TASK ACTION, and it sits with the other two link
-        # controls rather than in the footer on purpose: the footer is
-        # where the DECISION this dialog was opened to make gets
-        # committed, and this is not that decision — it is a different
-        # errand that happens to belong to the same pillar. Given the
-        # accent weight of a footer button it would compete with "Deploy
-        # Selected" for the eye of someone who came here to install
-        # something.
-        self._action = (section or {}).get("action") if self._scoped else None
-        if self._action:
-            self._action_btn = QPushButton(self._action["label"])
-            self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._action_btn.setStyleSheet(TH.link_button_qss(t, accent))
-            self._action_btn.setToolTip(self._action["hint"])
-            self._action_btn.clicked.connect(self._request_action)
-            toolbar.addWidget(self._action_btn)
 
         toolbar.addStretch()
 
@@ -8280,22 +8348,6 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
                 row.checkbox.setChecked(True)
         if self._bulk["group"] in self._tab_buttons:
             self._set_tab(self._bulk["group"])
-
-    def _request_action(self):
-        """Accept with the section's task instead of a selection.
-
-        THE TICKS ARE DISCARDED, and that is stated rather than assumed:
-        `selected_ids` stays empty, so the caller runs the task and
-        nothing else. Asking Windows Update for drivers and installing
-        five runtimes are two operations, and running both off one press
-        would be the "one button, two effects" problem the footer's single
-        primary exists to avoid.
-        """
-        if not self._action:
-            return
-        self.requested_task = str(self._action["task"])
-        self.selected_ids = []
-        self.accept()
 
     def _refresh_runtime_suggestion(self, runtime_id: str):
         """Recompute a runtime row's highlight from scratch: on whenever it
@@ -9308,29 +9360,61 @@ class OfficeWizardDialog(PulseDialog):
         intro.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(intro)
 
-        opt_a = GlassCard({
-            "icon": "🚀", "title": "Automated Cloud Download",
-            "desc": "Pulse downloads the Deployment Tool and applies a standard configuration for you.",
-        }, t["accent"], t)
-        opt_a.setMinimumHeight(88)
-        opt_a.clicked.connect(lambda: self._goto("auto_confirm"))
-        lay.addWidget(opt_a)
-
-        opt_b = GlassCard({
-            "icon": "📁", "title": "I already have my Office folder ready",
-            "desc": "Auto-detect the Office folder on your Desktop, or browse to it.",
-        }, t["accent"], t)
-        opt_b.setMinimumHeight(88)
-        opt_b.clicked.connect(self._enter_locate_from_choice)
-        lay.addWidget(opt_b)
-
-        opt_c = GlassCard({
-            "icon": "📘", "title": "Step-by-Step Beginner Guide",
-            "desc": "New to this? A plain-language walkthrough of the official Microsoft tools.",
-        }, t["accent"], t)
-        opt_c.setMinimumHeight(88)
-        opt_c.clicked.connect(lambda: self._goto("guide"))
-        lay.addWidget(opt_c)
+        # THREE ACTION CARDS, and what changed is what they are MADE of
+        # rather than how they are arranged.
+        #
+        # They were already GlassCards, so they already had this app's
+        # whole card material — a bevelled frame, a contact shadow, a top
+        # sheen, a hover glow that follows the pointer, a ripple and a
+        # weighted press tint, all painted, all on the shared 120ms
+        # curve. What made the step read as "primitive, rigid and
+        # uninspired" beside the rest of the app was the two things the
+        # cards were being handed:
+        #
+        #   EMOJI. GlassCard prefers item["glyph"] (a Fluent codepoint,
+        #   rendered in the icon font at plaque size, in a tinted well)
+        #   and falls back to item["icon"] only when there is no glyph
+        #   key. These three passed a rocket, a folder and a blue book,
+        #   so the one dialog a beginner is most likely to open was the
+        #   one place in Pulse still drawing colour emoji where every
+        #   other surface draws a vector mark.
+        #
+        #   ONE ACCENT FOR ALL THREE. Passing t["accent"] three times
+        #   makes three identical periwinkle plaques, so the icon column
+        #   carries no information and the eye has to read all three
+        #   titles to find the one it wants. Each path now carries its
+        #   own colour — download blue, folder amber, guidance violet —
+        #   which is the same reasoning the bloatware purge's marks
+        #   follow, and the colours go through the same contrast guard.
+        #
+        # THE HEIGHT GOES UP with the padding the brief asks for: 88 was
+        # the floor for a two-line card with a 42px plaque, i.e. exactly
+        # enough and no more. GlassCard.CARD_STEPS is the app's own
+        # height ladder and its middle rung is what a card carrying a
+        # full description without a meta footer measures, so these sit
+        # on that rather than on a number picked here.
+        surface = TH.blend(t["dialog_bg"], t["plaque_well"])
+        for glyph, brand, title, desc, slot in (
+            ("cloud", "#3AA0E8", "Automated Cloud Download",
+             "Pulse fetches Microsoft's Deployment Tool and applies a "
+             "standard configuration for you. Nothing to find, nothing to "
+             "browse to.",
+             lambda: self._goto("auto_confirm")),
+            ("folder", "#F0A93C", "I already have my Office folder ready",
+             "Auto-detect the Office folder on your Desktop, or browse to "
+             "wherever you saved it.",
+             self._enter_locate_from_choice),
+            ("checklist", "#9070F5", "Step-by-Step Beginner Guide",
+             "New to this? A plain-language walkthrough of Microsoft's own "
+             "tools, which then hands off to the step above.",
+             lambda: self._goto("guide")),
+        ):
+            card = GlassCard(
+                {"glyph": glyph, "title": title, "desc": desc},
+                appicons.readable_glyph_color(brand, surface, t), t)
+            card.setMinimumHeight(GlassCard.CARD_STEPS[1])
+            card.clicked.connect(slot)
+            lay.addWidget(card)
 
         lay.addStretch()
         row = QHBoxLayout()
@@ -10057,6 +10141,10 @@ class UpdateRow(QFrame):
     #: dialog has nothing to do when a vendor page opens, and the handler
     #: that used to sit there is where "clear every tick" lived.
 
+    #: Rasterises a mark at the SCREEN's device-pixel ratio — see
+    #: PulseDialog.rescale_marks.
+    RATIO_BAKED = True
+
     def __init__(self, app_id: str, name: str, current: str, available: str,
                  t: dict, running: list[str] | None = None):
         super().__init__()
@@ -10075,6 +10163,18 @@ class UpdateRow(QFrame):
 
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["md"])
+        # The app's own mark, on the same well and at the same size the
+        # catalog's rows use — this row was built to match DevHubRow and
+        # was missing the one column that makes a list of forty upgrade
+        # candidates scannable. app_icon resolves the bundled brand mark
+        # for a catalogued id and reads the INSTALLED binary's icon for
+        # everything else, which is most of this list: the Update Center
+        # reports whatever winget finds, not what Pulse curates.
+        self._icon = QLabel()
+        self._icon.setFixedSize(APP_ICON_PX, APP_ICON_PX)
+        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon.setStyleSheet("background: transparent; border: none;")
+        row.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignVCenter)
         self.checkbox = QCheckBox(name)
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.checkbox.setChecked(True)
@@ -10125,6 +10225,9 @@ class UpdateRow(QFrame):
 
     def apply_theme(self, t: dict):
         self.setStyleSheet(TH.dev_hub_row_qss(t))
+        self._icon.setPixmap(
+            appicons.app_icon(self.app_name, APP_ICON_PX, t,
+                              app_id=self.app_id))
         self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
         self._current.setStyleSheet(TH.version_chip_qss(t, accent=False))
         self._available.setStyleSheet(TH.version_chip_qss(t, accent=True))
@@ -10910,7 +11013,7 @@ class BloatRow(QFrame):
     """
 
     #: The plaque glyph per catalog GROUP. The fallback, not the answer —
-    #: see _APP_GLYPHS.
+    #: see _APP_MARKS.
     _GLYPHS = {
         "promo":  "delete",
         "core":   "layers",
@@ -10918,13 +11021,14 @@ class BloatRow(QFrame):
         "codec":  "disk",
     }
 
-    #: Catalog Id -> its own pictogram, for the rows with no bundled brand
-    #: mark. Read AFTER the manifest and BEFORE the group glyph.
+    #: Catalog Id -> its own pictogram AND that product's own colour, for
+    #: the rows with no bundled brand mark. Read AFTER the manifest and
+    #: BEFORE the group glyph.
     #:
     #: ONE MARK PER APP, and this is a reversal. The group glyph was
     #: chosen on the reasoning that "fifty distinct icons would be a
     #: spectrum, which is exactly what the palette pass removed from the
-    #: rest of the app" — right about a COLOUR spectrum and wrong about
+    #: rest of the app" - right about a COLOUR spectrum and wrong about
     #: this list, because the palette pass was about tinting rows by
     #: category while this is about telling one app from another. What it
     #: actually produced was twenty-five identical trash cans in the promo
@@ -10932,45 +11036,81 @@ class BloatRow(QFrame):
     #: every label in a dialog whose whole job is deciding about apps one
     #: at a time.
     #:
-    #: NOT LOGOS, and not claimed to be. Fourteen rows carry real brand
-    #: artwork (BLOAT_LOGO_MAP in tools/fetch_app_icons.py); these are
-    #: Fluent pictograms of what the app IS, in the app's own icon font,
-    #: which nothing could mistake for a vendor's mark. Disney+ and Prime
-    #: Video are here rather than in the manifest for exactly that reason:
-    #: every published mark for either is a WORDMARK, illegible at 20px,
-    #: and a lookalike is worse than an honest pictogram.
-    _APP_GLYPHS = {
+    #: THE COLOUR IS v10.11, AND IT IS THE HALF THAT WAS MISSING. Every
+    #: pictogram here was painted in ONE colour - t["accent"] when the
+    #: package was present and t["text_faint"] when it was not - so a
+    #: purge list on a clean machine was thirty near-invisible grey
+    #: outlines, reported as "faint, monochrome, low-contrast grey
+    #: outlines that blend into the dark background". Two things were
+    #: wrong with that:
+    #:
+    #:   The FAINT TONE said "absent" a second time. The row already dims
+    #:   its whole surface (startup_row_qss's `disabled_item`), disables
+    #:   its checkbox and prints a NOT PRESENT badge. Draining the icon on
+    #:   top of three existing signals bought nothing and cost the only
+    #:   part of the row that is recognisable at a glance. Worse, it was
+    #:   INCONSISTENT: the fourteen rows carrying a bundled SVG render in
+    #:   full colour whether present or not, so an absent Xbox row was
+    #:   vivid beside an absent Maps row that was a ghost.
+    #:
+    #:   The SINGLE ACCENT made the pictograms do half their job. A
+    #:   weather glyph and a news glyph in identical periwinkle are two
+    #:   shapes to decode; a blue one and a red one are two things you
+    #:   have already told apart before reading either label.
+    #:
+    #: THESE ARE NOT LOGOS, and are not claimed to be - the same bounded
+    #: departure DRAWN_MAP records in tools/fetch_app_icons.py, and for
+    #: the same reason. Fourteen rows carry real brand artwork
+    #: (BLOAT_LOGO_MAP); these are Fluent pictograms of what the app IS,
+    #: in the app's own colour, which nothing could mistake for a
+    #: vendor's mark. The alternative was re-checked before it was
+    #: dismissed rather than taken on trust: Iconify's federated search
+    #: returns no SQUARE colour artwork for any of these products, and
+    #: the marks it does return for Prime Video and Disney+ are
+    #: WORDMARKS, measured at 3.25:1 and 1.84:1 - an illegible smear in
+    #: the 20px box every mark here is drawn into.
+    #:
+    #: EVERY COLOUR GOES THROUGH THE CONTRAST GUARD (appicons.
+    #: readable_glyph_color) against the well it will actually sit in, so
+    #: a value chosen for a vendor's white page cannot ship unreadable on
+    #: obsidian. Sticky Notes' #f5d34e survives untouched on dark and
+    #: resolves to #b9950a on porcelain.
+    _APP_MARKS = {
         # -- promo -----------------------------------------------------
-        "PrimeVideo": "video",
-        "DisneyPlus": "video",
-        "ZuneVideo": "video",
-        "ZuneMusic": "music",
-        "KingGames": "game",
-        "MarchOfEmpires": "game",
-        "Sudoku": "game",
-        "Solitaire": "game",
-        "Paint3D": "palette",
-        "Builder3D": "cube",
-        "MixedReality": "sparkle",
-        "StickyNotes": "note",
-        "OfficeHub": "document",
+        "PrimeVideo": ("video", "#1FA2E1"),
+        "DisneyPlus": ("video", "#5B7BF5"),
+        "ZuneVideo": ("video", "#4F6BED"),
+        "ZuneMusic": ("music", "#F0663F"),
+        "KingGames": ("game", "#F2A33C"),
+        "MarchOfEmpires": ("game", "#C08A5A"),
+        "Sudoku": ("game", "#5B8DEF"),
+        "Solitaire": ("game", "#2FA85F"),
+        "Paint3D": ("palette", "#E8479B"),
+        "Builder3D": ("cube", "#3FB4EF"),
+        "MixedReality": ("sparkle", "#8B6BF0"),
+        "StickyNotes": ("note", "#F5D34E"),
+        "OfficeHub": ("document", "#E8622B"),
         # -- core ------------------------------------------------------
-        "PhoneLink": "phone",
-        "PhoneExperience": "phone",
-        "Cortana": "mic",
-        "MailCalendar": "mail",
-        "BingWeather": "weather",
-        "BingNews": "news",
-        "BingFinance": "finance",
-        "BingSports": "sports",
-        "Maps": "map",
-        "FeedbackHub": "feedback",
-        "GetHelp": "help",
-        "Tips": "tip",
-        "People": "people",
-        "Widgets": "widgets",
+        "PhoneLink": ("phone", "#3AA0E8"),
+        # The system cross-device component, deliberately a DIFFERENT
+        # blue from the app it is constantly mistaken for - see the
+        # catalog note in 01-Catalogs.ps1.
+        "CrossDevice": ("phone", "#4CC2FF"),
+        "PhoneExperience": ("phone", "#3AA0E8"),
+        "Cortana": ("mic", "#28C4CE"),
+        "MailCalendar": ("mail", "#3A87DE"),
+        "BingWeather": ("weather", "#59B4F0"),
+        "BingNews": ("news", "#E05561"),
+        "BingFinance": ("finance", "#2FB56B"),
+        "BingSports": ("sports", "#F0862B"),
+        "Maps": ("map", "#28B364"),
+        "FeedbackHub": ("feedback", "#9070F5"),
+        "GetHelp": ("help", "#31AFEF"),
+        "Tips": ("tip", "#F0B429"),
+        "People": ("people", "#7C82F0"),
+        "Widgets": ("widgets", "#54A0F5"),
         # -- codec -----------------------------------------------------
-        "KLiteCodec": "disk",
+        "KLiteCodec": ("disk", "#5EA9E0"),
     }
 
     #: `Presence` -> (badge text, its tone). The backend reports the
@@ -11046,8 +11186,9 @@ class BloatRow(QFrame):
         else:
             self.plaque = IconPlaque("")
             self.plaque.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
-            glyph_key = self._APP_GLYPHS.get(
-                self.entry_id, self._GLYPHS.get(self.group, "delete"))
+            glyph_key, self._mark_hex = self._APP_MARKS.get(
+                self.entry_id,
+                (self._GLYPHS.get(self.group, "delete"), ""))
             char, is_fluent = TH.glyph(glyph_key)
             self._plaque_font = (TH.icon_font(TH.ICON["plaque"])
                                  if is_fluent else None)
@@ -11095,8 +11236,25 @@ class BloatRow(QFrame):
             if len(set(packages)) > 3:
                 shown += ", …"
             note = f"{note}  ·  {shown}" if note else shown
-        self._note = QLabel(note)
-        self._note.setWordWrap(True)
+        # A HARD TWO-LINE BUDGET, so the list has a rhythm.
+        #
+        # This was a word-wrapping QLabel, and a word-wrapping QLabel's
+        # height is a function of how long somebody's sentence happened to
+        # be. Measured across the whole catalog at the dialog's own width:
+        # 49 rows in FIVE distinct heights — 26 at 71px, 9 at 72px, 12 at
+        # 76px, and two outliers at 88px and 100px. The 71/72 pair is the
+        # tell: a one-pixel difference nobody can name and everybody can
+        # see, which is exactly the "almost aligned" quality GlassCard's
+        # height ladder was introduced to remove.
+        #
+        # ClampedLabel is this app's own answer to that (it is what a
+        # card's description uses): it lays the text out itself, keeps at
+        # most `max_lines`, elides the last kept line, pins its height to
+        # the lines actually used, and puts the FULL string in the
+        # tooltip — so the package names appended above stay reachable
+        # rather than being truncated away.
+        self._note = ClampedLabel(note, max_lines=2)
+        self._note.setToolTip(note)
         col.addWidget(self._note)
         outer.addLayout(col, 1)
 
@@ -11119,8 +11277,21 @@ class BloatRow(QFrame):
             self._mark.setPixmap(appicons.app_icon(
                 self._name, TH.PLAQUE_SIZE, t, app_id=self._mark_id))
         if self.plaque is not None:
-            accent = t["accent"] if self.detected else t["text_faint"]
-            self.plaque.apply_theme(t, accent)
+            # THE SAME COLOUR WHETHER THE PACKAGE IS HERE OR NOT. Absence
+            # is already said three times over - the row dims, the
+            # checkbox is disabled and the badge reads NOT PRESENT - and
+            # saying it a fourth time by draining the icon is what made
+            # this list unreadable. See _APP_MARKS.
+            #
+            # Solved against the WELL, not against the card: the glyph
+            # sits inside plaque_well, which lightens the surface on dark
+            # and darkens it on light, so a contrast measured against the
+            # bare card would be measuring a surface the glyph never
+            # touches.
+            surface = TH.blend(t["card"], t["plaque_well"])
+            tone = appicons.readable_glyph_color(
+                self._mark_hex or t["accent"], surface, t)
+            self.plaque.apply_theme(t, tone)
             if self._plaque_font is not None:
                 self.plaque.setFont(self._plaque_font)
         self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
@@ -11650,11 +11821,20 @@ class StartupRow(QFrame):
     #: it pushing anything.
     NAME_MAX_W = 380
 
+    #: This row rasterises the target binary's own icon at the SCREEN's
+    #: device-pixel ratio, so it has to be redrawn when that ratio
+    #: changes. Same contract DevHubRow and BloatRow declare — see
+    #: PulseDialog.rescale_marks.
+    RATIO_BAKED = True
+
     toggle_requested = Signal(str, bool)   # (encoded_id, want_enabled)
 
     def __init__(self, item: dict, t: dict):
         super().__init__()
         self.item_id = str(item["Id"])
+        #: The Run-key command or shortcut target, which is what the icon
+        #: is read out of. Kept because apply_theme re-renders the mark.
+        self._command = str(item.get("Command") or "")
         self._enabled = bool(item["Enabled"])
         self._impact = str(item.get("Impact") or "Medium")
         self._recommendation = str(item.get("Recommendation") or "Review")
@@ -11668,6 +11848,26 @@ class StartupRow(QFrame):
         outer = QHBoxLayout(self)
         row_padding(outer)
         outer.setSpacing(TH.SPACE["md"])
+
+        # THE PROGRAM'S OWN ICON, read out of the binary the Run key
+        # points at (utils.appicons.binary_icon).
+        #
+        # This list had no icon column at all, and it is the list that
+        # needed one most: a startup entry is identified by a REGISTRY
+        # VALUE NAME, so the rows read "MicrosoftEdgeAutoLaunch_1C40B5E8",
+        # "SecurityHealth", "RtkAudUService" — strings that name the
+        # thing perfectly and identify it to nobody. The icon is the only
+        # part of the row most people can match against something they
+        # recognise.
+        #
+        # An entry whose target cannot be resolved gets the generic
+        # executable mark on the same well, so the column stays a column.
+        self._icon = QLabel()
+        self._icon.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
+        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._icon.setStyleSheet("background: transparent; border: none;")
+        self._icon.setToolTip(self._command or "This entry names no target.")
+        outer.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignVCenter)
 
         col = QVBoxLayout()
         col.setSpacing(TH.SPACE["xs"])
@@ -11741,6 +11941,10 @@ class StartupRow(QFrame):
 
     def apply_theme(self, t: dict):
         self.setStyleSheet(TH.startup_row_qss(t))
+        # The well is theme-solved; the extracted artwork is not, and is
+        # served from cache after the first render (see appicons).
+        self._icon.setPixmap(
+            appicons.binary_icon(self._command, TH.PLAQUE_SIZE, t))
         self._name.setStyleSheet(TH.label_qss(t, "card"))
         # The stylesheet changes the metrics the elision was measured
         # against, so re-run it against the new font rather than leaving

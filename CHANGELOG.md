@@ -15,19 +15,257 @@ long after `VERSION` had become the single source.
 
 ---
 
-## [Unreleased]
+## [10.11.0] — 2026-09-06
+
+### Fixed — the focus ring belonged to whoever touched the app first
+
+- **A clicked card kept the keyboard's focus ring for the rest of the
+  session.** `GlassCard.mousePressEvent` calls `setFocus`, and both painted
+  rings — the card's and the sidebar entry's — were drawn on `hasFocus()`
+  alone, which cannot tell a Tab from a click. Clicking the page
+  *background* then moves focus nowhere, because a plain `QWidget` is not a
+  focus candidate, so Qt leaves the previous holder where it was: a 2px
+  accent border welded to whichever card was touched first, on a window
+  nobody had pressed a key on. Clicking a different card only moved the
+  weld.
+
+  The ring now follows the focus **reason** rather than the fact of focus —
+  the same thing `:focus-visible` settled on, for the same reason. A
+  pointer is already visible to the person holding it, and a click is
+  answered by the ripple, the press tint and the glow; the ring exists to
+  answer "where would my next keystroke go?" for someone who cannot see a
+  cursor. Re-activating the window changes nothing in either direction, so
+  alt-tabbing away and back neither invents a ring nor erases one.
+
+- **A ring survived a click on the card that already had focus.** Qt
+  delivers no `focusInEvent` when `setFocus` names the widget that already
+  holds focus, so a fix living only in that handler left the ring on for
+  the exact sequence a person performs: tab to a card, then reach for the
+  mouse. Measured at zero changed pixels before the press handlers cleared
+  it themselves.
+
+- **`Tab` / `Shift+Tab` was missing from the F1 sheet** — the one row a
+  keyboard user needs first. Arrow keys move *within* the card grid; Tab is
+  what reaches the grid and leaves it again for the sidebar, the search
+  doorway and the status rail. Documenting only the arrows described the
+  second half of a journey whose first half the sheet never mentioned.
+
+### Fixed — a screen subscription that silently stopped working
+
+- **PulseApp held a `QScreen` that PySide could destroy underneath it.**
+  Measured: one window keeps `handle.screen()`, a second top-level window
+  is built and deleted, and the first window's reference comes back
+  *"Internal C++ object (QScreen) already deleted"* while
+  `QGuiApplication` still reports one screen and hands out a fresh, valid
+  wrapper for it — with no `screenAdded` or `screenRemoved` emitted,
+  because from Qt's point of view nothing happened.
+
+  `logicalDotsPerInchChanged` was then connected to a dead object, so
+  re-scaling the display Pulse is sitting on stopped re-rendering every
+  ratio-baked pixmap — precisely the defect `_watch_screen_dpi` exists to
+  prevent, failing silently. `dpi_screen()` re-establishes the
+  subscription when it finds the reference invalid. A monitor being
+  unplugged destroys a `QScreen` for real, so this is not only a
+  test-harness accident; a test harness is simply where it surfaced,
+  because building and tearing down windows is what a suite does and what
+  an application does not.
+
+### Added — the app's own icon, read out of its own binary
+
+- **The Startup Manager and the Update Center had no icon column at all,**
+  and they are the two lists that needed one most. A startup entry is
+  identified by a *registry value name*, so the rows read
+  `MicrosoftEdgeAutoLaunch_1C40B5E8F2…`, `RtkAudUService`,
+  `SecurityHealth` — strings that name the thing exactly and identify it to
+  nobody. The Update Center lists whatever winget reports, so it is not
+  limited to the catalog and its rows are winget ids. Both ask for a
+  decision per row; the icon is the only part of the row most people can
+  match against something they recognise.
+
+- **`utils/nativeicons.py` reaches the 256px artwork Qt cannot ask for.**
+  `QFileIconProvider` requests `SHGFI_LARGEICON` — 32×32 — and every mark
+  in this app is drawn into a 36px well, 54 device pixels at 150%. So the
+  one tier showing the vendor's real artwork was the one tier delivering
+  an upscale, and it degraded as the display improved. Windows has carried
+  a 256px frame for every well-behaved binary since Vista; Qt6 exposes no
+  way to ask for it, `QtWinExtras` and `QtWin::fromHICON` having gone with
+  Qt5. The ladder is `SHIL_JUMBO` → `SHIL_EXTRALARGE` → `ExtractIconExW` →
+  the generic mark, and the last real rung matters more than its size
+  suggests: `ExtractIconExW` reads the binary's own `RT_GROUP_ICON`
+  resource and still answers for a file the shell's association layer has
+  given up on.
+
+- **Every Win32 signature is declared, and that is a correctness fix
+  rather than tidiness.** ctypes assumes a 32-bit C int for anything
+  undeclared, so a 64-bit handle raises `OverflowError: int too long to
+  convert` for *some* inputs and not others, depending on where Windows
+  happened to allocate it. Measured mid-development: `notepad.exe`
+  extracted perfectly while `explorer.exe`, `cmd.exe` and `git.exe` all
+  raised, in one process, on one call path — a bug that reads as "those
+  binaries have no icon" and moves between runs.
+
+- **`IImageList::GetIcon` is vtable slot 10.** Written as slot 9 it is not
+  a failed call but a *different* one: slot 9 is `Remove(int i)`, whose
+  signature the first argument alone satisfies, and the object it removes
+  from is the shell's own system image list, shared by every process on
+  the desktop. Windows answered `E_INVALIDARG`, which was the good
+  outcome.
+
+- **Startup rows resolve their target out of the command line.** A `Run`
+  key holds whatever an installer wrote, and the unquoted-with-spaces form
+  is both the hard case and a common one — splitting on the first space
+  turns `C:\Program Files\App\app.exe /q` into `C:\Program`, which exists
+  on no machine. The longest leading run that names a real file wins,
+  which is how Windows itself resolves it. Nothing resolvable yields the
+  generic executable mark rather than a guess: drawing the *wrong*
+  application's icon beside a startup entry is worse than drawing a
+  neutral one, because people act on what they recognise.
+
+### Changed — PATH Doctor becomes a PATH sanitizer
+
+- **The catalogue stopped recommending software.** It is walked on every
+  run and every tool it does not find prints a `[MISSING]` line telling the
+  user to install it — fair for a toolchain a developer machine is expected
+  to have, a nag for one it is not. Measured on the maintainer's own
+  machine the two `[MISSING]` lines were GCC and **Ollama**, and the Ollama
+  line was advice to install a local LLM runner offered to someone who had
+  deliberately uninstalled it. The test for an entry is not "is this tool
+  good" but "is a machine without it *misconfigured*", and the universal
+  half of the doctor is unaffected: it reads the machine's actual PATH, so
+  it finds the dead Ollama entry the uninstall left behind without needing
+  to have heard of Ollama.
+
+- **Shadowed toolchains are reported.** Every entry can exist, be unique
+  and be well-formed, and the machine can still run the wrong Python: the
+  first directory on PATH wins, always, and nothing in Windows says so. A
+  user who installs 3.13 and keeps getting 3.11 is not looking at a broken
+  install. `[CONFLICT]` names the winner, `[SHADOWED]` names each copy that
+  can never be reached.
+
+- **"Prune Dead & Duplicate Entries" — the repair half, behind its own
+  confirmation.** The scan's doctrine was right and was read as an argument
+  against pruning at all, which left the user with a list of four dead
+  entries and an instruction to edit the registry by hand. Only what is
+  *provably* safe is removed: a duplicate (the first copy already answers
+  everything the second would), a malformed entry (Windows already skips
+  it), and a folder missing from a **mounted internal disk**. Everything
+  else is kept with its reason printed — `C:\Tools\Ollama` missing from a
+  mounted `C:` is rubbish an uninstaller left, while `D:\Tools` missing
+  because `D:` is a USB stick in a drawer is a working entry with the drive
+  unplugged. A restore point and a readable copy of the previous PATH are
+  written first, and the prune refuses to run if the backup fails.
+
+- **PATH Doctor is a hub,** for the reason the Edge and OneDrive teardowns
+  are: the scan and the prune are a pair, and the destructive half is only
+  safe to offer beside the report that justifies it. `VerifyEnvironment`
+  stays read-only and its guarantee stays asserted against its own source.
+
+### Changed — the Bloatware Purge says what it means
+
+- **Cross-Device Experience is not Phone Link.** These were one row
+  matching `*YourPhone*|MicrosoftWindows.CrossDevice`, on the reading that
+  the app had simply been renamed the way the Xbox app was. It had not:
+  `Microsoft.YourPhone` **is** the Phone Link app, while
+  `MicrosoftWindows.CrossDevice` is the system component behind *Settings →
+  Bluetooth & devices → Mobile devices* — phone photos in File Explorer,
+  using a phone as a connected camera — and is present on machines that
+  have never opened Phone Link. Folded together, someone searching the list
+  for "Phone Link" found a ticked, removable row on a machine where the app
+  was not installed, and removing it took their Settings page instead. Two
+  rows now, each carrying its own consequence.
+
+- **Every pictogram carries its product's colour.** They were painted in
+  one colour — the accent when the package was present, `text_faint` when
+  it was not — so a purge list on a clean machine was thirty near-invisible
+  grey outlines. Two things were wrong with that. The faint tone said
+  "absent" a *fourth* time, after the row's own dimming, the disabled
+  checkbox and the NOT PRESENT badge, and it was inconsistent: the fourteen
+  rows carrying bundled brand artwork render in full colour whether present
+  or not, so an absent Xbox row was vivid beside an absent Maps row that
+  was a ghost. And one accent made the pictograms do half their job — a
+  weather glyph and a news glyph in identical periwinkle are two shapes to
+  decode, where a blue one and a red one are already told apart.
+
+  These are **not logos** and are not claimed to be: the same bounded,
+  labelled departure `DRAWN_MAP` records for the hardware-diagnostics
+  marks. The alternative was re-checked rather than assumed — Iconify's
+  federated search returns no square colour artwork for any of these
+  products, and the marks it does return for Prime Video and Disney+ are
+  wordmarks, measured at 3.25∶1 and 1.84∶1, an illegible smear in a 20px
+  box. Every colour is solved against the well it actually sits in, so a
+  value chosen for a vendor's white page cannot ship unreadable on
+  obsidian.
+
+- **The purge list has a rhythm.** The note under each package name was a
+  word-wrapping `QLabel`, so a row's height was a function of how long
+  somebody's sentence happened to be. Measured across the whole catalog at
+  the dialog's own width: 49 rows in **five** distinct heights — 26 at
+  71px, 9 at 72px, 12 at 76px, and outliers at 88px and 100px. The 71/72
+  pair is the tell, a one-pixel difference nobody can name and everybody
+  can see, which is the same "almost aligned" quality `GlassCard`'s height
+  ladder exists to remove. The note is now a `ClampedLabel` on a two-line
+  budget — this app's own answer to that problem, and what a card's
+  description already uses — with the full string in the tooltip so the
+  package names appended to it stay reachable. Three heights now, 7px
+  apart, and the two outliers are gone.
+
+- **The Office deployment step is three Fluent action cards.** They were
+  already `GlassCard`s, so they already had the app's whole card material —
+  bevelled frame, contact shadow, top sheen, pointer-tracking glow, ripple
+  and weighted press tint. What made the step read as primitive was what
+  they were handed: colour **emoji** (a rocket, a folder, a blue book) in
+  the one dialog a beginner is most likely to open, and one accent for all
+  three, so the icon column carried no information at all.
+
+### Removed
+
+- **"Fetch Missing Hardware Drivers", and the plumbing that served only
+  it.** The errand moved before it died: a dashboard card in v10.9, the
+  Runtimes pillar's `action` in v10.10, and gone in v10.11 along with the
+  `DriverSync` dispatcher case, `Invoke-PulseDriverSync`, and the anchored
+  `UsoClient.exe` path that existed for nothing else. The section `action`
+  mechanism went with it — `SoftwareCatalogDialog`'s second accepted
+  outcome and `main.py`'s branch on it had exactly one declared caller in
+  the app's history, and generic support for a feature nothing declares
+  reads as maintained while being dead. `DriverScan`, the read-only card,
+  is a different task and stays; so does console mode's own driver scan,
+  which never went through this code.
+
+### Changed — motion
+
+- **`PRESS_MS`, and hover and press on one 120ms ease-out.** The press ramp
+  was a bare `90` written twice — once as the animation's duration and once
+  as the timer that releases it — in different methods, with nothing saying
+  they had to agree. Naming it makes the pair provably equal, which is what
+  keeps an <kbd>Enter</kbd> press feeling like a click.
+
+- **Windows' own animation setting is honoured.** *Settings →
+  Accessibility → Visual effects → Animation effects* is a real
+  accessibility control — it is what someone with a vestibular disorder
+  turns off, and what some managed images and remote-desktop profiles
+  disable wholesale — and nothing in this app had ever asked. Every hover
+  ramp, press tint and glow ran at full length regardless. `motion_ms()`
+  returns zero when the user has said no, which still runs the animation
+  and still ends in the right resting state; it simply gets there in one
+  frame, so honouring the preference is one call per `setDuration` rather
+  than a branch around every ramp.
 
 ### Fixed — the Bloatware Purge was reporting the wrong machine
 
-- **Two catalog patterns named products that had been renamed.** The Xbox
+- **A catalog pattern named a product that had been renamed.** The Xbox
   console companion is `Microsoft.XboxApp` on Windows 10 and
-  `Microsoft.GamingApp` on 11; Phone Link is `Microsoft.YourPhone` and then
-  `MicrosoftWindows.CrossDevice`. Matching only the retired name printed
+  `Microsoft.GamingApp` on 11, and matching only the retired name printed
   **NOT PRESENT** beside a visible Xbox tile. A `Match` may now carry
   alternatives separated by `|` — one row, several names, which keeps the
   catalog's "one entry is one decision" promise. (Two entries would not:
   this file already carries the scar from `*CandyCrush*` beside `king.com.*`
   matching the same packages twice.)
+
+  Phone Link was folded into the same fix on the reading that it had been
+  renamed to `MicrosoftWindows.CrossDevice`, which turned out to be wrong —
+  see *Cross-Device Experience is not Phone Link* above, in this same
+  release. The alternatives mechanism is for a **rename**; a related but
+  separate product gets its own row.
 
 - **The scan declared a blind spot it did not have.**
   `Get-AppxProvisionedPackage -Online` needs Administrator, so an unelevated

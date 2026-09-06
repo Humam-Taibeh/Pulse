@@ -100,8 +100,17 @@ function Resolve-BloatwareTargets {
     # ONE ENTRY, SEVERAL NAMES. A `Match` may carry alternatives separated
     # by "|", because a single product routinely ships under more than one
     # package name across Windows versions: the Xbox console companion is
-    # Microsoft.XboxApp on 10 and Microsoft.GamingApp on 11, and Phone Link
-    # is Microsoft.YourPhone then MicrosoftWindows.CrossDevice.
+    # Microsoft.XboxApp on 10 and Microsoft.GamingApp on 11.
+    #
+    # THE TEST IS "SAME PRODUCT", NOT "RELATED PRODUCT", and this comment
+    # used to fail it. It cited Phone Link as a second example -
+    # Microsoft.YourPhone "then" MicrosoftWindows.CrossDevice - and they
+    # are not one product under two names: the first is the Phone Link
+    # app, the second is the system cross-device component behind
+    # Settings > Mobile devices, and a machine can have either without
+    # the other. They are two catalog rows now (see 01-Catalogs.ps1).
+    # Alternatives are for a RENAME; anything else belongs in its own
+    # entry, where the user can decide about it separately.
     #
     # THE ALTERNATIVE WAS TWO CATALOG ENTRIES AND IT IS WORSE. This file
     # already carries the scar: "*CandyCrush*" beside "king.com.*" matched

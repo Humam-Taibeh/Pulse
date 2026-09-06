@@ -348,35 +348,6 @@ SOFTWARE_CATALOG = [
             "hint": "Ticks every core runtime below — Visual C++, DirectX, "
                     ".NET and OpenAL — in one pass.",
         },
-        #: THE OTHER HALF OF A FRESH INSTALL, and it is a TASK rather than
-        #: a selection — which is why it is declared here instead of as a
-        #: second `bulk`.
-        #:
-        #: Chipset, Realtek audio, Wi-Fi and Bluetooth drivers are not
-        #: software anyone downloads by name. They arrive from Windows
-        #: Update's driver channel, and on a new machine that channel is
-        #: not scanned until Windows decides to; USOClient StartScan asks
-        #: it to. There is no AppId to tick, so it cannot be a row in a
-        #: list whose every other row is a winget id.
-        #:
-        #: IT LIVES HERE BECAUSE THIS IS THE PILLAR FOR THE STATE IT
-        #: SERVES. Pillar 3 is reached with something already broken —
-        #: a device in Device Manager with a yellow bang is exactly that
-        #: state — and it used to be a standalone dashboard card next to
-        #: "Install All Essential Dependencies", which was the same
-        #: errand's other half sitting outside the hub that owns it.
-        #: `admin` is deliberately absent: the Update Orchestrator runs as
-        #: SYSTEM and takes the request either way, so gating it would
-        #: raise a UAC prompt that buys nothing.
-        "action": {
-            "task": "DriverSync",
-            "label": "Fetch Missing Hardware Drivers",
-            "hint": "Asks Windows Update for the chipset, audio, Wi-Fi and "
-                    "Bluetooth drivers this board needs — the ones a fresh "
-                    "install leaves as 'Unknown device'. Installs nothing "
-                    "from the list below.",
-            "timeout": 900,
-        },
         "groups": [
             ("⚙️ Core Runtimes & Dependencies", [
                 ("Pulse.VCRedistAIO", "Visual C++ Runtimes (All Versions, x86 + x64)",
@@ -659,9 +630,39 @@ CATEGORIES = [
                 # than to Maintenance: it exists to fix the aftermath of
                 # installing developer tooling — a winget install that
                 # landed a binary Windows then cannot find by name.
-                {"icon": "🧭", "title": "PATH Doctor",
-                 "desc": "Makes Windows find your dev tools by name in any terminal.",
-                 "glyph": "terminal", "task": "VerifyEnvironment", "timeout": 300},
+                #
+                # A HUB SINCE v10.11, for the reason the Edge and OneDrive
+                # teardowns are hubs: the scan and the prune are a pair,
+                # and the destructive half is only safe to offer BESIDE
+                # the report that justifies it. Flattening them into two
+                # sibling cards would put "Prune my PATH" on the page for
+                # someone who has never seen their PATH; a hub keeps the
+                # order (look, then decide) without spending a second card
+                # on the dashboard.
+                {"icon": "🧭", "glyph": "terminal", "title": "PATH Doctor",
+                 "desc": "Find what Windows cannot run by name — and clean the "
+                         "dead and duplicate entries out of your PATH.",
+                 "hub": True,
+                 "items": [
+                     {"icon": "🧭", "title": "Scan PATH & Environment",
+                      "desc": "Dead folders, duplicates, malformed entries and "
+                              "shadowed toolchains — reported, nothing changed.",
+                      "glyph": "terminal", "task": "VerifyEnvironment",
+                      "timeout": 300, "action": "Scan"},
+                     # `confirm` and `danger` are both deliberate. It is
+                     # reversible three ways over (restore point, a saved
+                     # copy of the previous string, and a prune that
+                     # refuses every ambiguous entry) and it still edits
+                     # the variable every program on the machine reads to
+                     # find its tools. That earns a confirmation.
+                     {"icon": "🧹", "title": "Prune Dead & Duplicate Entries",
+                      "desc": "Removes only what is provably safe: duplicates, "
+                              "unparseable entries, and folders missing from a "
+                              "mounted internal disk. A restore point and a copy "
+                              "of your current PATH are saved first.",
+                      "glyph": "delete", "task": "PathSanitize", "timeout": 300,
+                      "confirm": True, "danger": True, "action": "Prune"},
+                 ]},
             ]},
             # -- THE BUNDLED MICROSOFT APPS -------------------------------
             #
@@ -1270,6 +1271,13 @@ ADMIN_REQUIRED_TASKS = frozenset({
     # (NetworkAdapterReport, NetworkDriverCheck) are deliberately absent —
     # reading what hardware is fitted needs no rights.
     "NetworkStackReset",
+    # The PATH prune writes the MACHINE PATH and opens with a restore
+    # point, and both need rights. It degrades honestly without them —
+    # the user scope is still cleaned and the machine entries are
+    # reported as left alone — but the card promises a checkpoint, and a
+    # checkpoint an unelevated session cannot take is a promise it cannot
+    # keep. Its read-only twin, VerifyEnvironment, is deliberately absent.
+    "PathSanitize",
 })
 
 

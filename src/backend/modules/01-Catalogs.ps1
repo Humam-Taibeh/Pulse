@@ -554,10 +554,31 @@ $Script:DevToolCatalog = @(
     @{ Command = "node";   Name = "Node.js";    WingetId = "OpenJS.NodeJS.LTS"
        Why     = "so 'node' and 'npm' work from any terminal to run JavaScript projects and install packages."
        Probes  = @("$env:ProgramFiles\nodejs") }
-    @{ Command = "ollama"; Name = "Ollama";     WingetId = "Ollama.Ollama"
-       Why     = "so 'ollama' works from any terminal to run local AI models."
-       Probes  = @("$env:LOCALAPPDATA\Programs\Ollama") }
 )
+
+#  OLLAMA IS NOT HERE ANY MORE, and the reason generalises to anything
+#  proposed for this list.
+#
+#  The catalogue is walked on EVERY PATH Doctor run and every tool it
+#  does not find prints a [MISSING] line telling the user to install it.
+#  That is a fair trade for a toolchain a developer machine is expected
+#  to have; it is a nag for one it is not. Measured on the maintainer's
+#  own machine, the report's two [MISSING] lines were GCC and Ollama -
+#  and the Ollama line was advice to install a local LLM runner offered
+#  to someone who had deliberately uninstalled it. A doctor that
+#  recommends software is not diagnosing the patient.
+#
+#  THE TEST FOR AN ENTRY, then, is not "is this tool good" but "is a
+#  machine without it MISCONFIGURED". Git, Python, a JDK, VS Code, a C
+#  compiler and Node are the six where the answer can be yes, because
+#  each is the thing some OTHER installed thing expects to find by name.
+#  A niche runtime is a preference, and preferences do not belong in a
+#  report the user cannot dismiss.
+#
+#  The universal half of the doctor is unaffected and is where the value
+#  now sits: Write-PathScanReport reads the machine's ACTUAL PATH, so it
+#  finds the dead Ollama entry that uninstalling it left behind without
+#  needing to have heard of Ollama.
 
 # ============================================================
 #  SERVICES OPTIMIZER CATALOG
@@ -641,12 +662,38 @@ $Script:BloatCatalog = @(
     @{ Id = "ZuneVideo";        Name = "Movies & TV";             Group = "promo";  Match = "Microsoft.ZuneVideo";        Note = "Legacy video player." }
 
     # ---- B. REDUNDANT WINDOWS CORE AND TELEMETRY BLOAT --------------
-    #  RENAMED THE SAME WAY. Phone Link was Microsoft.YourPhone and is
-    #  MicrosoftWindows.CrossDevice on current Windows 11 builds; the old
-    #  pattern alone reported a machine with Phone Link installed as not
-    #  having it.
-    @{ Id = "PhoneLink";        Name = "Phone Link";              Group = "core";   Match = "*YourPhone*|MicrosoftWindows.CrossDevice"; Note = "Android/iPhone linking. Removing it ends notification mirroring." }
-    @{ Id = "PhoneExperience";  Name = "Phone Link host";         Group = "core";   Match = "*PhoneExperienceHost*";      Note = "Phone Link's background host. Remove alongside Phone Link." }
+    #  TWO ENTRIES, BECAUSE THEY ARE TWO THINGS. These were one row
+    #  matching "*YourPhone*|MicrosoftWindows.CrossDevice", on the
+    #  reading that Phone Link had simply been renamed between Windows
+    #  versions the way the Xbox app was. That is wrong, and it is the
+    #  kind of wrong that makes a purge dialog lie to the person reading
+    #  it:
+    #
+    #    Microsoft.YourPhone            IS the Phone Link app - the
+    #                                   Store-delivered window you open
+    #                                   from the Start menu to read texts
+    #                                   and mirror notifications.
+    #
+    #    MicrosoftWindows.CrossDevice   is NOT that app. It is the
+    #                                   system-level cross-device
+    #                                   experience: the "Mobile devices"
+    #                                   page in Settings, the phone
+    #                                   photos that appear in File
+    #                                   Explorer, "Use my phone as a
+    #                                   connected camera". It ships as a
+    #                                   Windows component and is present
+    #                                   on machines that have never had
+    #                                   Phone Link opened.
+    #
+    #  Folded together, a user searching the purge list for "Phone Link"
+    #  found a row that was ticked and removable on a machine where the
+    #  Phone Link APP was not installed at all - and removing it took
+    #  their Settings page away instead. The names now say which is
+    #  which, and CrossDevice carries the consequence its own removal has
+    #  rather than Phone Link's.
+    @{ Id = "PhoneLink";        Name = "Phone Link (app)";        Group = "core";   Match = "*YourPhone*";                Note = "The Phone Link app itself - texts, calls and notification mirroring from an Android or iPhone. Removing it does not touch the Mobile devices settings page." }
+    @{ Id = "CrossDevice";      Name = "Mobile devices (Cross-Device Experience)"; Group = "core"; Match = "MicrosoftWindows.CrossDevice"; Note = "The system component behind Settings > Bluetooth & devices > Mobile devices: phone photos in File Explorer, and using a phone as a connected camera. Not the Phone Link app - removing this leaves that page with nothing to configure." }
+    @{ Id = "PhoneExperience";  Name = "Phone Link host";         Group = "core";   Match = "*PhoneExperienceHost*";      Note = "Phone Link's background host. Remove alongside Phone Link (app)." }
     @{ Id = "Copilot";          Name = "Microsoft Copilot";       Group = "core";   Match = "*Windows.Copilot*";          Note = "The Copilot app. The taskbar button is a separate tweak." }
     @{ Id = "CopilotWeb";       Name = "Copilot (web wrapper)";   Group = "core";   Match = "Microsoft.Copilot";          Note = "The Store wrapper build shipped on newer 11 images." }
     @{ Id = "Cortana";          Name = "Cortana";                 Group = "core";   Match = "*549981C3F5F10*";           Note = "Retired assistant. Windows Search is unaffected." }
@@ -853,5 +900,11 @@ $Script:AdminRequiredTasks = @(
     # absent for the same reason ContextMenuScan is: asking what
     # adapters are fitted and which driver they run needs no rights,
     # and gating it would raise a UAC prompt just to look.
-    "NetworkStackReset"
+    "NetworkStackReset",
+    # The PATH prune writes the MACHINE PATH and opens with a restore
+    # point; both need rights. Its READ-ONLY twin, VerifyEnvironment, is
+    # deliberately absent for the same reason ContextMenuScan and the two
+    # network reports are: reading a PATH needs nothing, and gating the
+    # scan would raise a UAC prompt just to look at it.
+    "PathSanitize"
 )

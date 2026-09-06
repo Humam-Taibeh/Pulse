@@ -1,6 +1,6 @@
 # Pulse — Roadmap
 
-**Current release: v10.10.0** · engine contract `##PULSE##` · 1,303-test
+**Current release: v10.11.0** · engine contract `##PULSE##` · 1,629-test
 regression suite · CI on `windows-latest`.
 
 Guiding principle, unchanged: **quality over quantity** — every item here must

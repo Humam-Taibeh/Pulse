@@ -167,6 +167,24 @@ def _locate_icon() -> str | None:
     return resources.find_resource("assets/pulse.ico")
 
 
+def _live(obj):
+    """`obj`, or None when its C++ half has already been destroyed.
+
+    PySide hands back a Python wrapper whose underlying object Qt (or
+    shiboken's own refcounting) may delete independently. Touching one
+    afterwards raises RuntimeError from deep inside the binding, which is
+    both unhelpful and easy to miss, so the check is made explicit at the
+    one place that keeps such a reference across events.
+    """
+    if obj is None:
+        return None
+    try:
+        import shiboken6
+    except ImportError:          # pragma: no cover - shiboken ships with PySide
+        return obj
+    return obj if shiboken6.isValid(obj) else None
+
+
 def _focus_neighbour(cards: list, cols: int, current, direction: str) -> bool:
     """Move keyboard focus to `current`'s neighbour in a `cols`-wide grid.
 
@@ -2677,7 +2695,14 @@ class PulseApp(QMainWindow):
         ("Ctrl+H",        "Go to the dashboard"),
         ("Ctrl+1 … 4",    "Jump to a module"),
         ("Ctrl+\\",       "Show / hide live output"),
-        ("↑ ↓ ← →",       "Move between cards"),
+        # THE TAB ROW WAS MISSING, and it was the one row a keyboard user
+        # needs FIRST. Arrow keys move within the card grid; Tab is what
+        # gets you to the grid, and out of it again to the sidebar, the
+        # search doorway and the status rail. Documenting only the arrows
+        # described the second half of a journey whose first half the
+        # sheet never mentioned.
+        ("Tab / Shift+Tab", "Move between sections — search, sidebar, cards"),
+        ("↑ ↓ ← →",       "Move between cards in the grid"),
         ("Enter / Space", "Run the focused card"),
         ("Esc",           "Back to the dashboard"),
         ("F1  or  ?",     "This shortcut sheet"),
@@ -2945,27 +2970,6 @@ class PulseApp(QMainWindow):
                 self, item, self.theme.t,
                 [section] if section else SOFTWARE_CATALOG)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
-                return
-            # TWO ACCEPTED OUTCOMES. A pillar may declare an `action` — a
-            # task with no AppId to tick, which for Runtimes & Hardware
-            # Drivers is the Windows Update driver scan — and pressing it
-            # accepts with `requested_task` set and no selection. Read
-            # BEFORE selected_ids because the two are mutually exclusive
-            # and this one replaces the item the card described.
-            if dialog.requested_task:
-                action = section["action"]
-                self._start_task({
-                    **item,
-                    "title": action["label"],
-                    "desc": action["hint"],
-                    "task": action["task"],
-                    "timeout": action.get("timeout", 900),
-                    # The catalog keys are what brought us into this
-                    # branch; carrying them onto the task item would send
-                    # it straight back through the dialog.
-                    "catalog": False,
-                    "catalog_section": "",
-                }, card)
                 return
             if dialog.selected_ids:
                 app_ids = dialog.selected_ids
@@ -3630,17 +3634,56 @@ class PulseApp(QMainWindow):
         """
         handle = self.windowHandle()
         screen = handle.screen() if handle is not None else None
-        if screen is self._dpi_screen:
+        previous = _live(self._dpi_screen)
+        if previous is None:
+            # Either we were subscribed to nothing, or the wrapper we held
+            # has been invalidated underneath us — see _live. Nothing to
+            # disconnect either way, and pretending otherwise would raise.
+            self._dpi_screen = None
+        if screen is previous and previous is not None:
             return
-        if self._dpi_screen is not None:
+        if previous is not None:
             try:
-                self._dpi_screen.logicalDotsPerInchChanged.disconnect(
+                previous.logicalDotsPerInchChanged.disconnect(
                     self._on_screen_changed)
             except (RuntimeError, TypeError):
                 pass
         self._dpi_screen = screen
         if screen is not None:
             screen.logicalDotsPerInchChanged.connect(self._on_screen_changed)
+
+    def dpi_screen(self):
+        """The screen this window's scale subscription is actually on.
+
+        READ THIS RATHER THAN `_dpi_screen`, because the attribute alone
+        can be a reference to a QScreen that no longer exists and this
+        re-establishes the subscription when it is.
+
+        HOW A LIVE APP LOSES A SCREEN IT NEVER STOPPED USING: the wrapper
+        is destroyed by PySide, not by Qt. Measured — one window holds
+        `handle.screen()`, a second top-level window is created and
+        deleted, and the FIRST window's reference comes back
+        "Internal C++ object (QScreen) already deleted" while
+        QGuiApplication still reports one screen and hands out a fresh,
+        valid wrapper for it. No screenAdded or screenRemoved is emitted,
+        because from Qt's point of view nothing happened.
+
+        The consequence is silent and is exactly the defect
+        _watch_screen_dpi exists to prevent: logicalDotsPerInchChanged is
+        left connected to a dead object, so re-scaling the display Pulse
+        is sitting on stops re-rendering the ratio-baked pixmaps, and the
+        icons quietly stay at the old scale for the rest of the session.
+
+        Nothing about that is specific to a test harness — a QScreen is
+        also destroyed for real when a monitor is unplugged — but a test
+        harness is where it was found, because building and tearing down
+        windows is what a test suite does and what an application does
+        not.
+        """
+        if self._dpi_screen is not None and _live(self._dpi_screen) is None:
+            self._dpi_screen = None
+            self._watch_screen_dpi()
+        return self._dpi_screen
 
     def _rescale_for_screen(self):
         """Redraw everything that was rasterised for the previous display.

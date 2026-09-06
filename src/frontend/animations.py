@@ -24,6 +24,8 @@ Import graph: theme.py <- animations.py <- widgets.py <- main.py
 """
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import (
     QEasingCurve, QEvent, QObject, QParallelAnimationGroup, QPoint,
     QPointF, QPropertyAnimation, QRectF, QSequentialAnimationGroup,
@@ -38,11 +40,104 @@ from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
 # ============================================================
 #  MOTION CONSTANTS — one place to tune the whole app's feel
 # ============================================================
-HOVER_MS      = 130    # glow ramp in/out
+HOVER_MS      = 120    # glow ramp in/out
+PRESS_MS      = 120    # press tint ramp, and the hold before it releases
 CASCADE_MS    = 170    # per-card entrance
 CASCADE_GAP   = 26     # stagger between waves
 CASCADE_RISE  = 18     # px slide-up distance
 PAGE_FADE_MS  = 150    # stacked-page cross fade
+
+#: PRESS_MS IS NEW AND HOVER_MS MOVED BY TEN MILLISECONDS, so both are
+#: worth a line rather than a silent retune.
+#:
+#: The press ramp was a bare `90` written twice in widgets.py — once as
+#: the QVariantAnimation's duration and once as the QTimer.singleShot
+#: that releases it after a keyboard activation. Two literals that had to
+#: agree, in different methods, with nothing saying so: the exact defect
+#: this block exists to prevent, and the same one test_motion_vocabulary
+#: found in the curves. Naming it also makes the pair provably equal,
+#: which is what keeps an Enter press feeling like a click.
+#:
+#: 120 is one number for both states, which is what "hover and pressed
+#: transitions on one curve" means in practice. It is inside the 100-150ms
+#: band where a state change reads as instant-but-not-abrupt, and it is
+#: short enough that a fast pointer crossing three cards does not leave a
+#: trail of half-lit ones behind it.
+
+
+# ============================================================
+#  THE SYSTEM'S OWN ANIMATION PREFERENCE
+# ============================================================
+#: SPI_GETCLIENTAREAANIMATION — Settings > Accessibility > Visual effects
+#: > Animation effects. Windows' answer to prefers-reduced-motion, and it
+#: is a real accessibility setting rather than a taste one: it is what a
+#: user with a vestibular disorder turns off, and it is turned off
+#: wholesale by some managed images and remote-desktop profiles.
+_SPI_GETCLIENTAREAANIMATION = 0x1042
+
+_MOTION_ALLOWED: bool | None = None
+
+
+def system_animations_enabled() -> bool:
+    """Has the user asked Windows to stop animating?
+
+    NOTHING IN THIS APP ASKED, WHICH IS THE DEFECT. Every hover ramp,
+    press tint, ripple, cascade and page fade ran at full length on a
+    machine whose owner had explicitly turned animation off — and an app
+    that ignores that setting is not "polished", it is one that has to be
+    endured.
+
+    Read ONCE and cached: this is consulted on the hover path, and
+    SystemParametersInfoW is a syscall. A user who changes the setting
+    while Pulse is open gets the old answer until refresh_motion_
+    preference() is called or the app restarts, which is the right
+    trade for a preference that changes about once a year.
+
+    DEFAULTS TO TRUE on every failure and on every non-Windows platform.
+    The cost of being wrong in that direction is an animation somebody
+    did not want; the other direction is a dead-looking application.
+    """
+    global _MOTION_ALLOWED
+    if _MOTION_ALLOWED is not None:
+        return _MOTION_ALLOWED
+    _MOTION_ALLOWED = True
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            enabled = wintypes.BOOL()
+            user32 = ctypes.windll.user32
+            user32.SystemParametersInfoW.restype = wintypes.BOOL
+            user32.SystemParametersInfoW.argtypes = [
+                wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+            if user32.SystemParametersInfoW(_SPI_GETCLIENTAREAANIMATION, 0,
+                                            ctypes.byref(enabled), 0):
+                _MOTION_ALLOWED = bool(enabled.value)
+        except Exception:
+            _MOTION_ALLOWED = True
+    return _MOTION_ALLOWED
+
+
+def refresh_motion_preference() -> bool:
+    """Re-read the setting — for a WM_SETTINGCHANGE handler, or a test."""
+    global _MOTION_ALLOWED
+    _MOTION_ALLOWED = None
+    return system_animations_enabled()
+
+
+def motion_ms(duration: int) -> int:
+    """`duration`, or 0 when the user has asked for no animation.
+
+    ZERO RATHER THAN "SKIP THE ANIMATION", deliberately. Every animated
+    property in this app also carries a resting value that something
+    paints — the glow's intensity, the press tint's alpha, a page's
+    opacity — so an animation that is simply not started leaves the
+    widget stuck at whatever it was last frame. A zero-length one still
+    runs, still emits its final value, and still ends in the right state;
+    it just gets there in one frame. That makes this a single call at
+    each setDuration site instead of a branch around every ramp.
+    """
+    return duration if system_animations_enabled() else 0
 
 #: Hard ceiling on a cascade's STAGGER window, and the reason navigation
 #: stopped feeling slow.
@@ -136,7 +231,7 @@ class GlowController(QObject):
         self.edge_alpha = 0.90
 
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(HOVER_MS)
+        self._anim.setDuration(motion_ms(HOVER_MS))
         self._anim.setEasingCurve(EASE_OUT)
         self._anim.valueChanged.connect(self._on_frame)
 
@@ -709,7 +804,9 @@ class RippleController(QObject):
         self._origin = QPointF()
 
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(duration_ms)
+        # The ripple is PRESS feedback, so it answers to the same system
+        # preference the press tint and the hover ramp do — see motion_ms.
+        self._anim.setDuration(motion_ms(duration_ms))
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.setEasingCurve(EASE_OUT)

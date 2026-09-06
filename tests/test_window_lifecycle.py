@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import settle, show_dialog
+from conftest import settle, show_dialog, wait_until
 
 
 def _open_palette(window, qapp):
@@ -85,9 +85,17 @@ class TestSheetsFollowTheWindowDown:
         assert sheet.isVisible(), "precondition: the sheet is up"
 
         floating.showMinimized()
-        settle(qapp, 300)
+        # A CONDITION WAIT, NOT A FIXED PAUSE, for the reason conftest's
+        # wait_until spells out: minimizing is asynchronous — Qt asks the
+        # platform and the sheet is parked when the platform answers — and
+        # 300ms covers that on an idle machine and not always inside the
+        # full suite. Measured: this passed alone and failed whenever
+        # test_close_guard's window construction ran before it, which is a
+        # failure that points at the wrong file and whose obvious fix
+        # (raise the sleep) only moves the threshold.
+        settled = wait_until(qapp, lambda: not sheet.isVisible(), 3000)
 
-        assert not sheet.isVisible(), (
+        assert settled, (
             "the shell minimized and the sheet stayed on screen — an "
             "orphan frosted panel floating over the desktop with no "
             "window behind it")
@@ -98,11 +106,11 @@ class TestSheetsFollowTheWindowDown:
         that went down must come back, or the user has lost a wizard they
         never cancelled — with its exec() loop still running."""
         floating.showMinimized()
-        settle(qapp, 300)
+        wait_until(qapp, lambda: not sheet.isVisible(), 3000)
         floating.showNormal()
-        settle(qapp, 300)
-
-        assert sheet.isVisible(), "the sheet did not come back with the window"
+        assert wait_until(qapp, sheet.isVisible, 3000), (
+            "the sheet did not come back with the window")
+        settle(qapp, 60)
         assert sheet.pos() == _body_origin(floating), (
             "the sheet came back at stale coordinates")
 
@@ -112,7 +120,7 @@ class TestSheetsFollowTheWindowDown:
         minimized is still open — nothing was cancelled. Deregistering it
         would drop the only reference that can restore it."""
         floating.showMinimized()
-        settle(qapp, 300)
+        wait_until(qapp, lambda: not sheet.isVisible(), 3000)
         try:
             from frontend.widgets import PulseDialog
             assert sheet in PulseDialog.open_dialogs(), (
@@ -200,6 +208,28 @@ class TestSheetsFollowTheWindowDown:
 # ============================================================
 #  DPI / MULTI-MONITOR
 # ============================================================
+def _dead_wrapper():
+    """A Qt wrapper whose C++ half really is gone.
+
+    A PLAIN PYTHON OBJECT DOES NOT REPRODUCE THIS, which is worth stating
+    because it is the obvious way to write the stand-in and it silently
+    tests nothing: shiboken6.isValid() answers True for anything it does
+    not recognise, so a bare `class Dead: pass` is indistinguishable from
+    a live screen to the very check under test — and the first draft of
+    this test passed a dead-looking object straight through the guard.
+
+    shiboken6.delete() on a real QObject produces the actual state: a
+    wrapper that exists in Python and whose C++ object does not.
+    """
+    from PySide6.QtCore import QObject
+    import shiboken6
+    victim = QObject()
+    shiboken6.delete(victim)
+    assert not shiboken6.isValid(victim), (
+        "the stand-in is still valid, so this test proves nothing")
+    return victim
+
+
 class TestSheetsSurviveAScaleChange:
 
     def test_the_window_listens_for_a_scale_change_on_its_own_screen(
@@ -209,14 +239,38 @@ class TestSheetsSurviveAScaleChange:
         Settings — that is logicalDotsPerInchChanged, on the QScreen, and
         nothing was subscribed to it."""
         assert floating.windowHandle() is not None
-        assert floating._dpi_screen is not None, (
+        assert floating.dpi_screen() is not None, (
             "PulseApp never subscribed to any screen's "
             "logicalDotsPerInchChanged, so re-scaling the display Pulse is "
             "sitting on leaves every ratio-baked pixmap rendered for the "
             "old scale")
-        assert floating._dpi_screen is floating.windowHandle().screen(), (
+        assert floating.dpi_screen() is floating.windowHandle().screen(), (
             "the DPI subscription is on a different screen from the one "
             "the window is on")
+
+    def test_the_subscription_survives_a_wrapper_pyside_deleted(
+            self, floating, qapp):
+        """READ THROUGH dpi_screen(), NOT OFF THE ATTRIBUTE, and this is
+        the test that says why.
+
+        PySide can destroy the QScreen wrapper a window is holding while
+        Qt still reports the screen as present — building and deleting a
+        second top-level window is enough to do it, with no screenAdded or
+        screenRemoved emitted. The attribute is then a reference to a
+        deleted C++ object and the scale subscription is silently dead:
+        re-scaling the display stops re-rendering the ratio-baked pixmaps,
+        which is the whole thing _watch_screen_dpi exists to prevent.
+
+        Reproduced here by invalidating the reference the only way a test
+        can state plainly — the real trigger is a fixture two files away,
+        which is a terrible thing to depend on and an even worse thing to
+        discover from.
+        """
+        floating._dpi_screen = _dead_wrapper()
+        recovered = floating.dpi_screen()
+        assert recovered is floating.windowHandle().screen(), (
+            "a dead wrapper was not replaced, so the window is still "
+            "subscribed to a screen that no longer exists")
 
     def test_the_dpi_subscription_moves_with_the_window(
             self, floating, qapp):
@@ -224,11 +278,11 @@ class TestSheetsSurviveAScaleChange:
         application. Staying subscribed to the old monitor after a move
         reports changes to a display Pulse is not on and misses changes to
         the one it is."""
-        original = floating._dpi_screen
+        original = floating.dpi_screen()
         floating._dpi_screen = None          # pretend we were on nothing
         floating._watch_screen_dpi()
-        assert floating._dpi_screen is floating.windowHandle().screen()
-        assert floating._dpi_screen is original
+        assert floating.dpi_screen() is floating.windowHandle().screen()
+        assert floating.dpi_screen() is original
 
     def test_a_scale_change_refits_every_open_sheet(
             self, floating, qapp, sheet):

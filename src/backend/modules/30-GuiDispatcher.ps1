@@ -434,23 +434,47 @@ function Invoke-GuiTask {
                 # sentence this task must never say.
                 $PathTxt = ""
                 $PathIssues = [int]$Report.DeadPathCount + [int]$Report.DuplicatePathCount +
-                              [int]$Report.InvalidPathCount
+                              [int]$Report.InvalidPathCount + [int]$Report.ConflictPathCount
                 if ($PathIssues -gt 0) {
                     $Parts = @()
                     if ($Report.DeadPathCount -gt 0)      { $Parts += "$($Report.DeadPathCount) dead" }
                     if ($Report.DuplicatePathCount -gt 0) { $Parts += "$($Report.DuplicatePathCount) duplicate" }
                     if ($Report.InvalidPathCount -gt 0)   { $Parts += "$($Report.InvalidPathCount) malformed" }
+                    # A shadowed toolchain is not an ENTRY problem - the
+                    # entries are all fine - so it is counted here but
+                    # phrased separately below, or the sentence would read
+                    # "2 shadowed entries of 28", which is not what happened.
+                    if ($Report.ConflictPathCount -gt 0)  { $Parts += "$($Report.ConflictPathCount) shadowed tool" + $(if ($Report.ConflictPathCount -eq 1) { "" } else { "s" }) }
                     # "a and b and c" once a third bucket exists; the last
                     # separator is the only one that stays "and".
                     $PartsTxt = if ($Parts.Count -le 2) { $Parts -join ' and ' }
                                 else { ($Parts[0..($Parts.Count - 2)] -join ', ') + ' and ' + $Parts[-1] }
-                    $PathTxt = " PATH scan: $PartsTxt entr" + $(if ($PathIssues -eq 1) { "y" } else { "ies" }) + " of $($Report.PathEntryCount) - listed above, none removed."
+                    $PathTxt = " PATH scan: $PartsTxt, across $($Report.PathEntryCount) entries - listed above, nothing removed. Use 'Prune Dead & Duplicate Entries' to clean the safe ones."
                 }
                 $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
                 if ($Report.MissingCount -eq 0 -and $Report.RepairedCount -eq 0 -and $PathIssues -eq 0) {
                     Write-Output "##PULSE##SUCCESS|${Prefix}Everything's wired up correctly - all $($Report.OkCount) dev tool(s) are ready to use from any terminal, and all $($Report.PathEntryCount) PATH entries resolve."
                 } else {
                     Write-Output "##PULSE##SUCCESS|${Prefix}PATH doctor: $($Report.OkCount) already working, $($Report.RepairedCount) fixed automatically.$MissingTxt$PathTxt"
+                }
+                break
+            }
+            # THE REPAIR HALF OF THE DOCTOR, and a SEPARATE task on
+            # purpose. VerifyEnvironment reports and never writes (its
+            # read-only guarantee is asserted against the source in
+            # PathDoctor.Tests.ps1); this one writes, behind its own card
+            # and its own confirmation. Folding the prune into the scan
+            # would mean a user who wanted to LOOK at their PATH had
+            # already changed it by the time they read the output.
+            "PathSanitize" {
+                $Result = Invoke-PathSanitizer
+                $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
+                if ($Result.Removed -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Nothing to prune - every PATH entry either resolves or is one Pulse will not judge (a missing folder on an unmounted or network drive stays put)."
+                } else {
+                    $Where = if ($Result.Scopes.Count -gt 0) { " (" + ($Result.Scopes -join " and ") + " PATH)" } else { "" }
+                    $Noun = if ($Result.Removed -eq 1) { "entry" } else { "entries" }
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Pruned $($Result.Removed) dead or duplicate PATH $Noun$Where. A restore point and a copy of the previous PATH were saved first; open a new terminal to see the change."
                 }
                 break
             }
@@ -751,22 +775,6 @@ function Invoke-GuiTask {
                 } else {
                     Write-Output "##PULSE##SUCCESS|No missing drivers — every device is covered by Windows Update."
                 }
-                break
-            }
-            # THE ACTION HALF OF DriverScan, and the distinction is the
-            # whole reason both exist. DriverScan READS: it asks the local
-            # update agent what it already knows is missing and writes the
-            # names to the log. On a fresh install the honest answer to
-            # that question is usually "nothing", because nothing has
-            # asked Windows Update to LOOK yet - and the chipset, Realtek
-            # audio, Wi-Fi and Bluetooth drivers a board needs arrive
-            # through exactly that channel, under names no one searches
-            # for. This case asks it to look, then reports what the look
-            # found.
-            "DriverSync" {
-                Complete-GuiTask -Action { Invoke-PulseDriverSync } `
-                    -SuccessMessage "Windows Update has been asked for this machine's drivers. Anything it found is downloading in the background — Settings > Windows Update shows the progress, and some drivers need a restart." `
-                    -FailureMessage "Windows Update could not be asked to scan for drivers. The Windows Update service may be disabled or managed by policy."
                 break
             }
             "CreateRestorePoint" {

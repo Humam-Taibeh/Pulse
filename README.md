@@ -638,8 +638,8 @@ calls DWM, the registry and `winget`.
 `vX.Y.Z` tag is the entire release procedure:
 
 ```powershell
-git tag -a v10.10.0 -m "Pulse v10.10.0"
-git push origin v10.10.0
+git tag -a v10.11.0 -m "Pulse v10.11.0"
+git push origin v10.11.0
 ```
 
 | Step | What it does |
@@ -692,7 +692,11 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Elapsed time in the state pill (`RUNNING · 02:41`) and console polish — colorized `SUCCESS` / `ERROR` / `[DRY-RUN]` lines, auto-scroll that pauses while you're scrolled up *(v10.9.4)*
 - [x] Sheets follow the window through every state — a minimize no longer strands an open dialog on the desktop, and a scale change re-fits and re-renders it for the display it is actually on *(v10.10.0)*
 - [x] Every catalog row carries authentic brand artwork — the icon fetcher was silently pairing a full-colour manifest record with a monochrome silhouette, so eight marks shipped as black blocks *(v10.10.0)*
-- [x] Windows Update driver synchronization — the chipset, audio, Wi-Fi and Bluetooth drivers a fresh install leaves as "Unknown device" *(v10.10.0)*
+- [x] ~~Windows Update driver synchronization~~ — shipped in v10.10.0 and **removed in v10.11.0**. The read-only `DriverScan` card stays; the "Fetch Missing Hardware Drivers" action, its dispatcher case and the section-`action` plumbing that served only it are gone *(v10.11.0)*
+- [x] Focus rings follow the keyboard, not the pointer — a clicked card no longer keeps the 2px accent ring for the rest of the session, and `Tab` / `Shift+Tab` is documented on the F1 sheet beside the arrow keys *(v10.11.0)*
+- [x] Startup Manager and Update Center rows carry the application's own icon, read out of its binary at 256px through the shell's jumbo image list — the resolution Qt6 exposes no way to ask for *(v10.11.0)*
+- [x] PATH Doctor became a PATH sanitizer — shadowed toolchains reported, and a "Prune Dead & Duplicate Entries" action that removes only what is provably safe, behind a restore point and a readable backup of the previous PATH *(v10.11.0)*
+- [x] Windows' own *Animation effects* accessibility setting is honoured, and hover and press share one 120ms ease-out *(v10.11.0)*
 
 **Planned**
 

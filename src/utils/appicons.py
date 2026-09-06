@@ -143,10 +143,10 @@ import re
 import sys
 
 from PySide6.QtCore import QFileInfo, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-from utils import resources
+from utils import nativeicons, resources
 
 # name-normalisation strips everything but letters/digits so catalog names
 # ("VLC Media Player") can meet registry names ("VLC media player 3.0.20")
@@ -169,7 +169,7 @@ _UNSET = object()          # "not resolved yet", distinct from "resolved to None
 #: and Windows' placeholder gets shown as though it were the app's own
 #: icon. Rendering at the screen's ratio introduces exactly that second
 #: size, so the key has to be per-size to keep the guard honest.
-_GENERIC_KEYS: dict[int, bytes | None] = {}
+_GENERIC_KEYS: dict[int, frozenset[bytes]] = {}
 
 _UNINSTALL_ROOTS = (
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -263,6 +263,42 @@ def _installed_icon_path(app_name: str) -> str | None:
     return None
 
 
+def _generic_keys(device_px: int) -> frozenset[bytes]:
+    """EVERY rendering of Windows' blank-page placeholder at this size.
+
+    Two extractors now feed _shell_pixmap, and they do not agree
+    byte-for-byte about the same picture: Qt asks for the 32px shell icon
+    and scales it, utils.nativeicons scales the jumbo frame down. A guard
+    holding one of those keys silently stops rejecting placeholders that
+    arrived through the other — and it keeps LOOKING like it works,
+    which is the worst property a guard can have.
+
+    So both are collected, and membership is the test.
+    """
+    if device_px in _GENERIC_KEYS:
+        return _GENERIC_KEYS[device_px]
+    keys: set[bytes] = set()
+    qt_key = _generic_shell_key(device_px)
+    if qt_key is not None:
+        keys.add(qt_key)
+    try:
+        image = nativeicons.generic_image()
+        if image is not None and not image.isNull():
+            if image.width() != device_px or image.height() != device_px:
+                image = image.scaled(
+                    device_px, device_px,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+            pm = QPixmap.fromImage(image)
+            if not pm.isNull():
+                keys.add(bytes(pm.toImage().constBits()))
+    except Exception:
+        pass
+    frozen = frozenset(keys)
+    _GENERIC_KEYS[device_px] = frozen
+    return frozen
+
+
 def _generic_shell_key(device_px: int) -> bytes | None:
     """The raw bytes of Windows' GENERIC document icon at `device_px`.
 
@@ -277,8 +313,6 @@ def _generic_shell_key(device_px: int) -> bytes | None:
     it returns are only comparable against a pixmap requested at the same
     size — see _GENERIC_KEYS.
     """
-    if device_px in _GENERIC_KEYS:
-        return _GENERIC_KEYS[device_px]
     key: bytes | None = None
     try:
         from PySide6.QtWidgets import QFileIconProvider
@@ -290,7 +324,6 @@ def _generic_shell_key(device_px: int) -> bytes | None:
             key = bytes(image.constBits())
     except Exception:
         key = None
-    _GENERIC_KEYS[device_px] = key
     return key
 
 
@@ -388,23 +421,41 @@ def _shell_pixmap(path: str, px: int) -> QPixmap | None:
         return None
     try:
         size, dpr = _device_px(px)
-        if path.lower().endswith(".ico"):
-            from PySide6.QtGui import QIcon
-            icon = QIcon(path)
-        else:
-            icon = _icon_provider().icon(QFileInfo(path))
-        if icon.isNull():
-            return None
-        pm = icon.pixmap(QSize(size, size))
-        if pm.isNull():
+        # THE NATIVE EXTRACTOR FIRST, and the difference is resolution
+        # rather than correctness. QFileIconProvider asks the shell for
+        # the LARGEICON variant — 32x32 — and every mark in this app is
+        # drawn into a 36px well, which is 54 device pixels at 150%. So
+        # the one tier showing the vendor's real artwork was the one tier
+        # delivering an upscale, and it degraded as the display improved.
+        # utils.nativeicons reaches the 256px frame Windows has carried
+        # since Vista and that Qt6 exposes no way to ask for.
+        #
+        # Qt stays as the fallback rather than being replaced: it answers
+        # for .ico files and for anything the shell hands back through a
+        # path the native ladder cannot walk, and a tier that sometimes
+        # returns nothing is not an improvement on one that always
+        # returns something.
+        pm = None
+        if not path.lower().endswith(".ico"):
+            pm = nativeicons.icon_pixmap(path, size)
+        if pm is None:
+            if path.lower().endswith(".ico"):
+                from PySide6.QtGui import QIcon
+                icon = QIcon(path)
+            else:
+                icon = _icon_provider().icon(QFileInfo(path))
+            if icon.isNull():
+                return None
+            pm = icon.pixmap(QSize(size, size))
+        if pm is None or pm.isNull():
             return None
         # Compared against a placeholder requested at the SAME device size:
         # these are raw image bytes, so a mismatched size never compares
         # equal and the guard would silently pass everything through.
-        generic = _generic_shell_key(size)
-        if generic is not None:
+        generic = _generic_keys(size)
+        if generic:
             try:
-                if bytes(pm.toImage().constBits()) == generic:
+                if bytes(pm.toImage().constBits()) in generic:
                     return None       # the blank-page placeholder
             except Exception:
                 pass
@@ -936,9 +987,139 @@ def _neutral_pixmap(px: int, tone: QColor) -> QPixmap:
     return pm
 
 
+def _executable_pixmap(px: int, tone: QColor) -> QPixmap:
+    """The generic EXECUTABLE mark — an application window, drawn.
+
+    A SECOND FALLBACK BESIDE _neutral_pixmap, not a replacement for it,
+    because the two answer different questions. The parcel says "this is
+    a product we have no logo for", which is the right thing to tell
+    someone reading a catalog of installable apps. A startup entry is not
+    a product — it is a program on this disk, and half of them are
+    helpers and updaters no vendor ever drew a logo for. "An application"
+    is the honest answer there, and a parcel would be claiming the row is
+    software you might install.
+
+    DRAWN AT FULL CONTRAST, and that is the point of it. The rows this
+    lands on previously had no icon at all; the failure to avoid is
+    replacing "nothing" with "a grey smudge you cannot see", which is
+    exactly the complaint the bloatware list's faint glyphs earned. The
+    caller passes the theme's own foreground, not its faint tone.
+    """
+    from PySide6.QtGui import QPen
+
+    size, dpr = _device_px(px)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    ink = QColor(tone)
+    ink.setAlphaF(0.92)
+    pen_w = max(2.0, size * 0.055)
+    box = _mark_rect(size).adjusted(pen_w / 2, pen_w / 2,
+                                    -pen_w / 2, -pen_w / 2)
+
+    # The window body.
+    p.setPen(QPen(ink, pen_w))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawRoundedRect(box, size * 0.09, size * 0.09)
+
+    # A FILLED TITLE BAR rather than a drawn line. A hairline seam at
+    # 20px is one antialiased row of pixels and reads as a rendering
+    # artefact; a solid band reads as a window at any size this is drawn
+    # at, which is the whole job of a 20px pictogram.
+    bar_h = max(pen_w, box.height() * 0.26)
+    bar = QRectF(box.left(), box.top(), box.width(), bar_h)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(ink)
+    path = QPainterPath()
+    path.addRoundedRect(box, size * 0.09, size * 0.09)
+    p.save()
+    p.setClipPath(path)
+    p.drawRect(bar)
+    p.restore()
+    p.end()
+    pm.setDevicePixelRatio(dpr)
+    return pm
+
+
+def binary_icon(command: str, px: int, t: dict) -> QPixmap:
+    """The icon of the program a command line launches, in the standard well.
+
+    FOR THE TWO LISTS THAT NAME A BINARY RATHER THAN A PRODUCT: the
+    Startup Manager, whose rows carry a Run-key command, and any caller
+    holding a path rather than a winget id. app_icon is the wrong entry
+    point for those — it keys on an app NAME and searches the Uninstall
+    hives, and a startup entry's name is a registry value like
+    "MicrosoftEdgeAutoLaunch_1C40B5E8" that matches nothing.
+
+    The ladder is deliberately short, because there is no curated mark to
+    prefer here: resolve the executable out of the command line, ask
+    Windows for its icon, and draw the generic executable mark when
+    either step fails. Every rung ends up on the SAME well as every other
+    icon in the app (see _in_well), so a list where two rows fell back is
+    still one column of consistently-sized marks rather than a ragged
+    one.
+
+    ALWAYS RETURNS A PIXMAP. A row that asks for an icon and gets None
+    has to grow a branch and a second widget; every such branch is a
+    chance for the layout to differ between the two cases, which is the
+    "awkward blank space" this exists to prevent.
+    """
+    dark = t.get("name", "dark") == "dark"
+    surface = _parse_color(t.get("dialog_bg", ""),
+                           "#16181d" if dark else "#ffffff")
+    path = nativeicons.executable_from_command(command or "")
+    key = ("\x00binary", path or (command or ""), px,
+           "d" if dark else "l", _screen_dpr())
+    cached = _PIXMAP_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    pm = None
+    if path:
+        shell = _shell_pixmap(path, px)
+        if shell is not None:
+            pm = _in_well(shell, px, _well_color(surface, dark))
+    if pm is None:
+        ink = _parse_color(t.get("text", ""),
+                           "#eef1f6" if dark else "#15191f")
+        pm = _in_well(_executable_pixmap(px, ink), px,
+                      _well_color(surface, dark))
+
+    _PIXMAP_CACHE[key] = pm
+    return pm
+
+
 # ============================================================
 #  PUBLIC ENTRY POINT
 # ============================================================
+def readable_glyph_color(brand: str, surface: str, t: dict) -> str:
+    """`brand`, made legible on `surface` — as a '#rrggbb' string.
+
+    THE PUBLIC DOOR ON THE CONTRAST GUARD. _readable_brand_color has
+    solved this since v16 for the SVG marks, and the bloatware purge's
+    pictogram tier needs exactly the same answer for exactly the same
+    reason: a per-product colour chosen against the vendor's own white
+    backdrop can be invisible on obsidian, and picking colours by eye is
+    how a list ends up with three rows nobody can see.
+
+    Exposed as a function rather than by letting widgets.py reach for the
+    underscore name, because the surface a glyph sits on is the CALLER'S
+    fact — a bloat row's plaque well is the card tier blended with
+    `plaque_well`, and this module has no business knowing that.
+    """
+    dark = t.get("name", "dark") == "dark"
+    ink = _parse_color(t.get("text", ""), "#eef1f6" if dark else "#15191f")
+    colour = QColor(brand)
+    if not colour.isValid():
+        colour = QColor(t.get("accent", "#7d9bff"))
+    solved = _readable_brand_color(
+        colour, _parse_color(surface, "#16181d" if dark else "#ffffff"),
+        dark, ink)
+    return solved.name()
+
+
 def manifest_ids() -> frozenset[str]:
     """Every app id this build ships a mark for.
 
