@@ -35,6 +35,46 @@
   "source": "thesvg-color:itunes",
   "title": "Itunes"
  },
+ "Bloat.BingFinance": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.BingFinance.svg",
+  "hex": "#2fb56b",
+  "source": "pulse-drawn",
+  "title": "Finance"
+ },
+ "Bloat.BingNews": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.BingNews.svg",
+  "hex": "#d6403f",
+  "source": "pulse-drawn",
+  "title": "News"
+ },
+ "Bloat.BingSports": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.BingSports.svg",
+  "hex": "#f5811f",
+  "source": "pulse-drawn",
+  "title": "Sports"
+ },
+ "Bloat.BingWeather": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.BingWeather.svg",
+  "hex": "#ffc42e",
+  "source": "pulse-drawn",
+  "title": "Weather"
+ },
+ "Bloat.Builder3D": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Builder3D.svg",
+  "hex": "#2e8bd8",
+  "source": "pulse-drawn",
+  "title": "3D Builder"
+ },
  "Bloat.Clipchamp": {
   "color": true,
   "file": "Bloat.Clipchamp.svg",
@@ -53,11 +93,51 @@
   "source": "thesvg-color:microsoft-copilot",
   "title": "Microsoft Copilot"
  },
+ "Bloat.Cortana": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Cortana.svg",
+  "hex": "#22c5d6",
+  "source": "pulse-drawn",
+  "title": "Cortana"
+ },
+ "Bloat.CrossDevice": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.CrossDevice.svg",
+  "hex": "#4cc2ff",
+  "source": "pulse-drawn",
+  "title": "Mobile devices"
+ },
+ "Bloat.DisneyPlus": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.DisneyPlus.svg",
+  "hex": "#0b4fd0",
+  "source": "pulse-drawn",
+  "title": "Disney+"
+ },
  "Bloat.Facebook": {
   "color": true,
   "file": "Bloat.Facebook.svg",
   "source": "logos:facebook",
   "title": "Facebook"
+ },
+ "Bloat.FeedbackHub": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.FeedbackHub.svg",
+  "hex": "#8161c8",
+  "source": "pulse-drawn",
+  "title": "Feedback Hub"
+ },
+ "Bloat.GetHelp": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.GetHelp.svg",
+  "hex": "#2b88d8",
+  "source": "pulse-drawn",
+  "title": "Get Help"
  },
  "Bloat.Instagram": {
   "color": true,
@@ -65,17 +145,71 @@
   "source": "thesvg-color:instagram",
   "title": "Instagram"
  },
+ "Bloat.KLiteCodec": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.KLiteCodec.svg",
+  "hex": "#2c74c4",
+  "source": "pulse-drawn",
+  "title": "K-Lite Codec Pack"
+ },
+ "Bloat.KingGames": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.KingGames.svg",
+  "hex": "#e8453c",
+  "source": "pulse-drawn",
+  "title": "Candy Crush and King games"
+ },
  "Bloat.LinkedIn": {
   "color": true,
   "file": "Bloat.LinkedIn.svg",
   "source": "logos:linkedin-icon",
   "title": "Linkedin Icon"
  },
+ "Bloat.MailCalendar": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.MailCalendar.svg",
+  "hex": "#2b7cd3",
+  "source": "pulse-drawn",
+  "title": "Mail and Calendar"
+ },
+ "Bloat.Maps": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Maps.svg",
+  "hex": "#57b85f",
+  "source": "pulse-drawn",
+  "title": "Windows Maps"
+ },
+ "Bloat.MarchOfEmpires": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.MarchOfEmpires.svg",
+  "hex": "#c0392b",
+  "source": "pulse-drawn",
+  "title": "March of Empires"
+ },
  "Bloat.Messenger": {
   "color": true,
   "file": "Bloat.Messenger.svg",
   "source": "logos:messenger",
   "title": "Messenger"
+ },
+ "Bloat.MixedReality": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.MixedReality.svg",
+  "hex": "#6e56cf",
+  "source": "pulse-drawn",
+  "title": "Mixed Reality Portal"
+ },
+ "Bloat.OfficeHub": {
+  "color": true,
+  "file": "Bloat.OfficeHub.svg",
+  "source": "thesvg-color:microsoft-office",
+  "title": "Microsoft Office"
  },
  "Bloat.OneNoteWin10": {
   "color": true,
@@ -89,17 +223,81 @@
   "source": "thesvg-color:microsoft-outlook",
   "title": "Microsoft Outlook"
  },
+ "Bloat.Paint3D": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Paint3D.svg",
+  "hex": "#e8479b",
+  "source": "pulse-drawn",
+  "title": "Paint 3D"
+ },
+ "Bloat.People": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.People.svg",
+  "hex": "#2b7cd3",
+  "source": "pulse-drawn",
+  "title": "People"
+ },
+ "Bloat.PhoneExperience": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.PhoneExperience.svg",
+  "hex": "#1f8fe0",
+  "source": "pulse-drawn",
+  "title": "Phone Link host"
+ },
+ "Bloat.PhoneLink": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.PhoneLink.svg",
+  "hex": "#0f9bf0",
+  "source": "pulse-drawn",
+  "title": "Phone Link"
+ },
+ "Bloat.PrimeVideo": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.PrimeVideo.svg",
+  "hex": "#00a8e1",
+  "source": "pulse-drawn",
+  "title": "Prime Video"
+ },
  "Bloat.Skype": {
   "color": true,
   "file": "Bloat.Skype.svg",
   "source": "logos:skype",
   "title": "Skype"
  },
+ "Bloat.Solitaire": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Solitaire.svg",
+  "hex": "#2e9e5b",
+  "source": "pulse-drawn",
+  "title": "Solitaire Collection"
+ },
  "Bloat.SpotifyStub": {
   "color": true,
   "file": "Bloat.SpotifyStub.svg",
   "source": "logos:spotify-icon",
   "title": "Spotify Icon"
+ },
+ "Bloat.StickyNotes": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.StickyNotes.svg",
+  "hex": "#f7d046",
+  "source": "pulse-drawn",
+  "title": "Sticky Notes"
+ },
+ "Bloat.Sudoku": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Sudoku.svg",
+  "hex": "#3b82f6",
+  "source": "pulse-drawn",
+  "title": "Microsoft Sudoku"
  },
  "Bloat.TeamsPersonal": {
   "color": true,
@@ -113,11 +311,27 @@
   "source": "thesvg-color:tiktok-light",
   "title": "Tiktok Light"
  },
+ "Bloat.Tips": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Tips.svg",
+  "hex": "#ffd24a",
+  "source": "pulse-drawn",
+  "title": "Tips"
+ },
  "Bloat.Todos": {
   "color": true,
   "file": "Bloat.Todos.svg",
   "source": "thesvg-color:microsoft-todo",
   "title": "Microsoft Todo"
+ },
+ "Bloat.Widgets": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.Widgets.svg",
+  "hex": "#2b7cd3",
+  "source": "pulse-drawn",
+  "title": "Widgets"
  },
  "Bloat.XboxApp": {
   "color": true,
@@ -154,6 +368,22 @@
   "file": "Bloat.XboxTCUI.svg",
   "source": "thesvg-color:xbox",
   "title": "Xbox"
+ },
+ "Bloat.ZuneMusic": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.ZuneMusic.svg",
+  "hex": "#f2622b",
+  "source": "pulse-drawn",
+  "title": "Groove Music"
+ },
+ "Bloat.ZuneVideo": {
+  "color": true,
+  "drawn": true,
+  "file": "Bloat.ZuneVideo.svg",
+  "hex": "#2b6fe0",
+  "source": "pulse-drawn",
+  "title": "Movies & TV"
  },
  "BlueStack.BlueStacks": {
   "color": true,

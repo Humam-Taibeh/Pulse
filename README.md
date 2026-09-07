@@ -638,8 +638,8 @@ calls DWM, the registry and `winget`.
 `vX.Y.Z` tag is the entire release procedure:
 
 ```powershell
-git tag -a v10.11.0 -m "Pulse v10.11.0"
-git push origin v10.11.0
+git tag -a v10.12.0 -m "Pulse v10.12.0"
+git push origin v10.12.0
 ```
 
 | Step | What it does |
@@ -697,6 +697,9 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Startup Manager and Update Center rows carry the application's own icon, read out of its binary at 256px through the shell's jumbo image list — the resolution Qt6 exposes no way to ask for *(v10.11.0)*
 - [x] PATH Doctor became a PATH sanitizer — shadowed toolchains reported, and a "Prune Dead & Duplicate Entries" action that removes only what is provably safe, behind a restore point and a readable backup of the previous PATH *(v10.11.0)*
 - [x] Windows' own *Animation effects* accessibility setting is honoured, and hover and press share one 120ms ease-out *(v10.11.0)*
+- [x] Every row in the debloat catalog carries a full-colour mark — twenty-eight drawn here in each product's own palette and labelled `drawn: true`, plus the Office launcher's genuine vendor artwork that the first pass had missed. The single-colour pictogram tier is gone *(v10.12.0)*
+- [x] Startup Manager resolves what a command line actually names — `.lnk` shortcuts followed to their targets through `IShellLinkW`, and Store apps answered from `AppxManifest.xml` at 256px instead of Windows' generic placeholder *(v10.12.0)*
+- [x] PATH Doctor can fix the conflict it finds — "Fix Shadowed Tools" promotes the copy you pick by REORDERING the PATH, never removing an entry, and refuses the one case reordering cannot reach instead of pretending to fix it *(v10.12.0)*
 
 **Planned**
 

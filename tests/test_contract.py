@@ -75,6 +75,12 @@ _PROGRAMMATIC = {
     # (ContextMenuScan); these two are fired per row from inside
     # widgets.ContextMenuDialog. Both admin-gated in both lists.
     "ContextMenuToggle", "ContextMenuRestore",
+    # v10.12 PATH priority fix. Same shape once more: the card declares
+    # the read task (PathConflictReport) and this mutation is fired per
+    # conflict from inside widgets.PathConflictDialog. Admin-gated in
+    # both lists — it writes a PATH and opens with a restore point,
+    # exactly like the prune beside it.
+    "PathPrioritize",
 }
 
 
@@ -341,10 +347,26 @@ class TestAppIcons:
         # function swallowed that map's keys too). A parser that reads
         # too much does not fail here — it silently demands entries no
         # one declared.
-        start = tool.index("DRAWN_MAP: dict[str, tuple[str, str]] = {")
-        body = tool[start:tool.index(chr(10) + "}", start)]
-        declared = set(re.findall(r'^\s{4}"([^"]+)":', body, re.M))
-        assert declared, "DRAWN_MAP did not parse"
+        #
+        # TWO REGISTERS SINCE v10.12, parsed separately for the reason
+        # ICON_MAP and BLOAT_LOGO_MAP are checked separately below: they
+        # are two KEY SPACES. DRAWN_MAP is keyed by winget AppId,
+        # BLOAT_DRAWN_MAP by `Bloat.<BloatCatalog Id>`, and pooling them
+        # would let a typo in either pass by matching an entry in the
+        # other catalog.
+        def register(name: str) -> set[str]:
+            start = tool.index(f"{name}: dict[str, tuple[str, str]] = {{")
+            body = tool[start:tool.index(chr(10) + "}", start)]
+            found = set(re.findall(r'^\s{4}"([^"]+)":', body, re.M))
+            assert found, f"{name} did not parse"
+            return found
+
+        winget_drawn = register("DRAWN_MAP")
+        bloat_drawn = register("BLOAT_DRAWN_MAP")
+        assert not (winget_drawn & bloat_drawn), (
+            "the two drawn registers overlap, so one mark has two "
+            f"declarations: {sorted(winget_drawn & bloat_drawn)}")
+        declared = winget_drawn | bloat_drawn
 
         drawn = {a for a, e in manifest.items() if e.get("drawn")}
         assert drawn == declared, (
@@ -362,10 +384,17 @@ class TestAppIcons:
             f"drawn marks claiming a fetched source: {mislabelled}")
 
         # And none of them is a keyword lookalike wearing the flag: a
-        # drawn mark must be for an app the catalog actually offers.
+        # drawn mark must be for something a catalog actually offers —
+        # each register checked against ITS OWN catalog.
+        from conftest import bloat_catalog_ids
         from frontend.menu_structure import catalog_app_ids
-        stray = sorted(drawn - set(catalog_app_ids()))
+        stray = sorted(winget_drawn - set(catalog_app_ids()))
         assert not stray, f"drawn marks for apps not in the catalog: {stray}"
+        bloat_ids = bloat_catalog_ids()
+        stray = sorted(a for a in bloat_drawn
+                       if a[len(_BLOAT_PREFIX):] not in bloat_ids)
+        assert not stray, (
+            f"drawn marks for purge rows the catalog does not have: {stray}")
 
     def test_every_bundled_mark_has_a_traceable_source(self):
         """Each mark names where it came from — a Simple Icons slug via

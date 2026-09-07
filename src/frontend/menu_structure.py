@@ -655,6 +655,30 @@ CATEGORIES = [
                      # refuses every ambiguous entry) and it still edits
                      # the variable every program on the machine reads to
                      # find its tools. That earns a confirmation.
+                     # THE THIRD CARD IS THE ONE THE SCAN USED TO END
+                     # WITHOUT. Write-PathScanReport has always printed
+                     # [SHADOWED] lines — "you have two Pythons and this
+                     # is the one that runs" — and then stopped, because
+                     # the only fix on offer was for the user to go and
+                     # reorder an environment variable by hand. This is
+                     # that fix.
+                     #
+                     # NOT `danger`, and not `confirm`, and both are
+                     # deliberate beside the red card above it. The prune
+                     # DELETES entries; this REORDERS them, so every copy
+                     # that answered a command before still answers it,
+                     # and the worst outcome of a wrong choice is one
+                     # click to change it back. Dressing a reversible
+                     # reorder in the same red as an irreversible delete
+                     # would teach the user that the red means nothing.
+                     {"icon": "🔀", "title": "Fix Shadowed Tools",
+                      "desc": "Two Pythons, two Nodes, two Javas — see which "
+                              "copy your terminal actually runs, and promote "
+                              "the one you want. Reorders your PATH; removes "
+                              "nothing.",
+                      "glyph": "layers", "task": "PathConflictReport",
+                      "timeout": 300, "path_conflicts": True,
+                      "action": "Fix"},
                      {"icon": "🧹", "title": "Prune Dead & Duplicate Entries",
                       "desc": "Removes only what is provably safe: duplicates, "
                               "unparseable entries, and folders missing from a "
@@ -1278,6 +1302,17 @@ ADMIN_REQUIRED_TASKS = frozenset({
     # checkpoint an unelevated session cannot take is a promise it cannot
     # keep. Its read-only twin, VerifyEnvironment, is deliberately absent.
     "PathSanitize",
+    # The priority fix writes a PATH and opens with a restore point, so
+    # it is gated exactly like the prune. Its read-only twin,
+    # PathConflictReport, is deliberately absent — listing which tools
+    # have two copies needs no rights, and gating it would raise a UAC
+    # prompt to LOOK at the problem.
+    #
+    # THE DIALOG STILL OPENS UNELEVATED, which is why this entry is not
+    # the whole story: PathConflictDialog takes `is_admin` and renders
+    # the findings either way, disabling only the buttons that would
+    # write. A user who cannot fix it can still find out what is wrong.
+    "PathPrioritize",
 })
 
 

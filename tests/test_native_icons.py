@@ -333,3 +333,365 @@ class TestTheRowsThatNeededIt:
 
         assert StartupRow.RATIO_BAKED is True
         assert UpdateRow.RATIO_BAKED is True
+
+
+# ============================================================
+#  THE TWO SHAPES THE EXTRACTOR COULD NOT SEE  (v10.12)
+# ============================================================
+#  A BINARY PATH IS NOT WHAT THE STARTUP MANAGER MOSTLY HOLDS, and that
+#  is the gap this section covers. Every entry in the Startup FOLDER is a
+#  `.lnk`, and a Store app has no path to point at in the first place —
+#  it is addressed by an identifier, and its artwork is a PNG named in
+#  AppxManifest.xml rather than a resource inside its .exe.
+#
+#  Both used to reach the SAME place by different routes: the generic
+#  executable mark. A shortcut got the shell's rendering of the shortcut
+#  (the target's icon with the "this is a link" arrow stamped on it), and
+#  a packaged app got Windows' blank application placeholder, which
+#  appicons correctly rejects and then falls back from. So the two lists
+#  that most need an icon column were the two most likely not to have one.
+def _lnk_bytes(target: str) -> bytes:
+    """A minimal, well-formed .lnk naming `target`.
+
+    HAND-BUILT RATHER THAN SHELL-CREATED, on purpose. Asking the shell to
+    make the fixture would test the reader against a file written by the
+    same component it is about to be read by, which passes even if both
+    are wrong about the format — and it would skip on any machine where
+    COM is the thing that is broken, which is precisely when the
+    fallback parser is what the app is relying on.
+
+    Shapes only the fields MS-SHLLINK requires plus the LinkInfo block
+    that carries a local path: a 0x4C header, LinkFlags = HasLinkInfo |
+    IsUnicode, a minimal VolumeID, and the ANSI LocalBasePath.
+    """
+    import struct
+
+    link_clsid = bytes.fromhex("01140200000000000000000000000000")[:4]
+    link_clsid = (struct.pack("<IHH", 0x00021401, 0, 0)
+                  + bytes((0xC0, 0, 0, 0, 0, 0, 0, 0x46)))
+    header = struct.pack("<I", 0x4C) + link_clsid
+    header += struct.pack("<I", 0x2 | 0x80)      # HasLinkInfo | IsUnicode
+    header += struct.pack("<I", 0x20)            # FileAttributes
+    header += b"\x00" * 24                       # three FILETIMEs
+    header += struct.pack("<IIIHHII", 0, 0, 1, 0, 0, 0, 0)
+    assert len(header) == 0x4C, len(header)
+
+    volume = struct.pack("<IIII", 0x11, 3, 0, 0x10) + b"\x00"
+    base = target.encode("mbcs") + b"\x00"
+    suffix = b"\x00"
+    head_size = 0x1C
+    volume_offset = head_size
+    path_offset = volume_offset + len(volume)
+    suffix_offset = path_offset + len(base)
+    total = suffix_offset + len(suffix)
+    link_info = struct.pack(
+        "<IIIIIII", total, head_size, 0x1, volume_offset, path_offset,
+        0, suffix_offset) + volume + base + suffix
+    return header + link_info + struct.pack("<I", 0)
+
+
+class TestFollowingAShortcut:
+    """A Startup-folder entry's `Command` IS a .lnk path."""
+
+    def test_the_parser_reads_a_local_target(self, tmp_path):
+        """The reader that does not need COM. It is the fallback, and it
+        is the one that has to keep working on a machine where the shell
+        is the thing that is unwell."""
+        from utils import nativeicons
+
+        target = _present()[0]
+        link = tmp_path / "thing.lnk"
+        link.write_bytes(_lnk_bytes(target))
+        assert nativeicons._shortcut_target_parsed(str(link)) == target
+
+    def test_resolve_shortcut_answers_for_that_link(self, tmp_path):
+        from utils import nativeicons
+
+        target = _present()[0]
+        link = tmp_path / "thing.lnk"
+        link.write_bytes(_lnk_bytes(target))
+        assert nativeicons.resolve_shortcut(str(link)) == target
+
+    def test_a_command_naming_a_shortcut_resolves_to_the_binary(
+            self, tmp_path):
+        """THE DEFECT, stated as the row saw it: executable_from_command
+        used to return the .lnk itself, because a .lnk IS a file. The
+        icon then came back with the shell's shortcut arrow stamped on
+        it — a badge that says "this is a link" in a column where that is
+        never the interesting fact."""
+        from utils import nativeicons
+
+        target = _present()[0]
+        link = tmp_path / "spaced name.lnk"
+        link.write_bytes(_lnk_bytes(target))
+        assert nativeicons.executable_from_command(str(link)) == target
+        assert nativeicons.resolve_command(str(link)).binary == target
+
+    def test_a_shortcut_to_a_missing_target_resolves_to_nothing(
+            self, tmp_path):
+        """The generic mark is CORRECT here, and this pins that it is
+        reached for the right reason. A stale Start-menu shortcut naming
+        an uninstalled binary must not resolve to something else nearby."""
+        from utils import nativeicons
+
+        link = tmp_path / "stale.lnk"
+        link.write_bytes(_lnk_bytes(r"C:\definitely\not\here.exe"))
+        assert nativeicons.resolve_shortcut(str(link)) is None
+        assert nativeicons.executable_from_command(str(link)) is None
+
+    def test_the_real_start_menu_resolves(self):
+        """Measured against the machine rather than a fixture, because
+        the fixture cannot produce the shapes that actually break a
+        reader: ID-list-only links, KNOWNFOLDER indirections, and targets
+        written with environment variables in them."""
+        import glob
+
+        from utils import nativeicons
+
+        roots = [os.path.join(os.environ.get("ProgramData", ""),
+                              r"Microsoft\Windows\Start Menu\Programs"),
+                 os.path.join(os.environ.get("APPDATA", ""),
+                              r"Microsoft\Windows\Start Menu\Programs")]
+        links = []
+        for root in roots:
+            if root and os.path.isdir(root):
+                links += glob.glob(os.path.join(root, "**", "*.lnk"),
+                                   recursive=True)
+        if len(links) < 5:
+            pytest.skip("no Start menu shortcuts to measure against")
+
+        sample = links[:40]
+        resolved = [link for link in sample
+                    if nativeicons.resolve_shortcut(link)]
+        # Not "all of them": a Start menu accumulates shortcuts to
+        # software that has been uninstalled, and None is the right
+        # answer for those. A majority is what says the reader works.
+        assert len(resolved) > len(sample) // 2, (
+            f"only {len(resolved)} of {len(sample)} Start-menu shortcuts "
+            "resolved — the reader is not working on this machine")
+
+    def test_the_two_readers_never_disagree(self):
+        """The fallback must not point at a DIFFERENT file from the one
+        the shell names. A parser that is merely incomplete is safe —
+        the caller draws a glyph; one that is confidently wrong puts
+        another application's icon on the row."""
+        import glob
+
+        from utils import nativeicons
+
+        root = os.path.join(os.environ.get("ProgramData", ""),
+                            r"Microsoft\Windows\Start Menu\Programs")
+        if not root or not os.path.isdir(root):
+            pytest.skip("no all-users Start menu here")
+        links = glob.glob(os.path.join(root, "**", "*.lnk"), recursive=True)
+        if not links:
+            pytest.skip("no shortcuts to compare")
+
+        disagreements = []
+        for link in links[:60]:
+            shell = nativeicons._shortcut_target_com(link)
+            parsed = nativeicons._shortcut_target_parsed(link)
+            if shell and parsed and os.path.normcase(shell) != os.path.normcase(parsed):
+                disagreements.append((link, shell, parsed))
+        assert not disagreements, (
+            f"the .lnk parser contradicts the shell: {disagreements}")
+
+
+class TestPackagedApps:
+    """A Store app keeps its artwork in AppxManifest.xml, not in its
+    .exe. Every rung of the extraction ladder answers for one anyway —
+    with Windows' generic application placeholder."""
+
+    @staticmethod
+    def _package(tmp_path, declared="Assets\\Square44x44Logo.png",
+                 variants=("Square44x44Logo.scale-200.png",
+                           "Square44x44Logo.targetsize-256.png",
+                           "Square44x44Logo.targetsize-256_altform-unplated.png")):
+        from PySide6.QtGui import QColor, QImage
+
+        root = tmp_path / "Fake.Package_1.0.0.0_x64__abcdefghijklm"
+        assets = root / "Assets"
+        assets.mkdir(parents=True)
+        (root / "AppxManifest.xml").write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<Package><Properties><DisplayName>Fake</DisplayName>'
+            f'<Logo>Assets\\StoreLogo.png</Logo></Properties>'
+            f'<Applications><Application><uap:VisualElements '
+            f'Square44x44Logo="{declared}" '
+            f'Square150x150Logo="Assets\\Square150x150Logo.png"/>'
+            '</Application></Applications></Package>',
+            encoding="utf-8")
+        for name in variants:
+            image = QImage(8, 8, QImage.Format.Format_ARGB32)
+            image.fill(QColor("#3366cc"))
+            image.save(str(assets / name), "PNG")
+        return root
+
+    def test_the_manifest_answers_for_a_package_folder(self, tmp_path, qapp):
+        from utils import nativeicons
+
+        root = self._package(tmp_path)
+        asset = nativeicons.appx_asset_for_root(str(root))
+        assert asset is not None, "the manifest's logo was not found"
+        assert os.path.isfile(asset)
+
+    def test_the_biggest_plated_variant_wins(self, tmp_path, qapp):
+        """THE DECLARED PATH IS OFTEN NOT A FILE — MSIX resolves it
+        through resources.pri — so the declaration is a stem and the
+        directory is read.
+
+        Biggest wins because this is scaled DOWN into a 20px box.
+        PLATED wins over `altform-unplated` because every icon in this
+        app sits on a neutral well: the unplated form is the mark with
+        its brand background removed, which is what a taskbar wants
+        because the taskbar supplies its own.
+        """
+        from utils import nativeicons
+
+        root = self._package(tmp_path)
+        asset = os.path.basename(nativeicons.appx_asset_for_root(str(root)))
+        assert asset == "Square44x44Logo.targetsize-256.png", (
+            f"picked {asset} — the largest plated variant should win")
+
+    def test_a_binary_inside_the_package_finds_its_own_logo(
+            self, tmp_path, qapp):
+        from utils import nativeicons
+
+        root = self._package(tmp_path)
+        (root / "app.exe").write_bytes(b"MZ")
+        asset = nativeicons.appx_asset_for_path(str(root / "app.exe"))
+        assert asset is not None and os.path.isfile(asset)
+
+    def test_a_binary_outside_any_package_finds_nothing(self, qapp):
+        """The walk is bounded and must not climb out of a package into
+        a coincidence."""
+        from utils import nativeicons
+
+        assert nativeicons.appx_asset_for_path(_present()[0]) is None
+
+    def test_an_aumid_is_read_out_of_a_command_line(self):
+        from utils import nativeicons
+
+        cases = {
+            r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App":
+                "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+            r"C:\Windows\explorer.exe shell:AppsFolder\Microsoft.SkypeApp_kzf8qxf38zg5c!Skype":
+                "Microsoft.SkypeApp_kzf8qxf38zg5c",
+            r"C:\Windows\System32\notepad.exe": None,
+            "": None,
+        }
+        for command, expected in cases.items():
+            assert nativeicons.aumid_from_command(command) == expected, command
+
+    def test_a_real_installed_package_resolves_to_real_artwork(self, qapp):
+        """The end-to-end claim, measured against this machine's own
+        Store packages rather than a fixture: an app addressed the way
+        Windows addresses it must produce the vendor's PNG."""
+        import winreg
+
+        from utils import nativeicons
+
+        try:
+            packages = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                      nativeicons._APPX_REPOSITORY)
+        except OSError:
+            pytest.skip("no Appx repository on this machine")
+
+        found = None
+        index = 0
+        while found is None and index < 4000:
+            try:
+                full = winreg.EnumKey(packages, index)
+            except OSError:
+                break
+            index += 1
+            try:
+                with winreg.OpenKey(packages, full) as entry:
+                    root = winreg.QueryValueEx(entry, "PackageRootFolder")[0]
+            except OSError:
+                continue
+            if not root or not os.path.isdir(root):
+                continue
+            if not nativeicons.appx_asset_for_root(root):
+                continue
+            # <Name>_<Version>_<Arch>_<ResourceId>_<PublisherId>, and the
+            # resource id is EMPTY only for the common case — Windows'
+            # own in-box packages carry a real one, so the family name is
+            # the first segment and the last, never a "__" split.
+            parts = full.split("_")
+            found = (f"{parts[0]}_{parts[-1]}", root)
+        if found is None:
+            pytest.skip("no readable packaged app on this machine")
+
+        family, _root = found
+        asset = nativeicons.appx_asset_for_family(family)
+        assert asset and os.path.isfile(asset), (
+            f"{family} is installed but its logo did not resolve")
+        target = nativeicons.resolve_command(
+            rf"shell:AppsFolder\{family}!App")
+        assert target.asset == asset
+        assert target.kind == "aumid"
+
+    def test_a_packaged_app_does_not_draw_the_generic_mark(
+            self, tmp_path, qapp):
+        """THE WHOLE POINT. binary_icon must reach the manifest asset —
+        a row for a Store app that renders the same parcel as an
+        unresolvable command has learned nothing from any of this."""
+        from frontend import theme as TH
+        from utils import appicons
+
+        root = self._package(tmp_path)
+        (root / "app.exe").write_bytes(b"MZ")
+        tokens = TH.tokens("dark")
+        packaged = _digest(appicons.binary_icon(
+            str(root / "app.exe"), 36, tokens))
+        generic = _digest(appicons.binary_icon("", 36, tokens))
+        assert packaged != generic, (
+            "a packaged app still renders the generic executable mark")
+
+
+class TestEnvironmentVariablesAndArguments:
+    """"Strip the command line down to the binary", pinned on BOTH
+    branches.
+
+    NEITHER OF THESE IS A FIX, and saying so is the point of this
+    docstring. Environment expansion has always been done on both the
+    quoted and the unquoted path; the reason they are pinned now is that
+    v10.12 restructured this function — the file-finding half became
+    _file_from_command and executable_from_command became the half that
+    follows a shortcut — and a refactor is exactly the moment a branch
+    quietly loses a call that nothing was asserting on.
+    """
+
+    def test_a_quoted_path_expands_its_variables(self):
+        r"""`"%LOCALAPPDATA%\App\app.exe" --minimized` is an entirely
+        ordinary Run value, and the quoted branch has to expand before it
+        tests the file system or it answers no on every machine."""
+        from utils import nativeicons
+
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        target = os.path.join(root, "System32", "notepad.exe")
+        if not os.path.isfile(target):
+            pytest.skip("notepad is absent")
+        assert nativeicons.executable_from_command(
+            r'"%SystemRoot%\System32\notepad.exe" --minimized') == target
+
+    def test_an_unquoted_path_expands_its_variables(self):
+        from utils import nativeicons
+
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        target = os.path.join(root, "System32", "notepad.exe")
+        if not os.path.isfile(target):
+            pytest.skip("notepad is absent")
+        assert nativeicons.executable_from_command(
+            r"%SystemRoot%\System32\notepad.exe /background") == target
+
+    def test_resolve_command_reports_which_route_answered(self):
+        """`kind` is not decoration: it is how a future reader (and this
+        suite) tells "resolved a path" from "followed a shortcut" from
+        "read a manifest" without re-deriving any of it."""
+        from utils import nativeicons
+
+        assert nativeicons.resolve_command(_present()[0]).kind == "path"
+        assert nativeicons.resolve_command("nonsense at all").kind == ""
+        assert nativeicons.resolve_command("").kind == ""

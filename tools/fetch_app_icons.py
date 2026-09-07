@@ -345,10 +345,17 @@ ICONIFY_SVG = "https://api.iconify.design/{prefix}/{name}.svg"
 #:                          wordmark; there is no square one
 #:   thesvg-color:prime-video   the "prime video" wordmark, likewise
 #:
-#: Disney+ and Prime Video therefore have NO mark here and fall through to
-#: the per-app Fluent pictogram in widgets.BloatRow — which is the honest
-#: answer for a streaming stub whose only artwork is a piece of lettering.
-#: Nothing is invented for them, and no lookalike is taken.
+#: Disney+ and Prime Video therefore have NO FETCHED mark here. They are
+#: covered by BLOAT_DRAWN_MAP instead, in their own brands' colours and
+#: labelled `drawn: true` like everything else there — the wordmark stays
+#: rejected, and no lookalike is taken.
+#:
+#: THE MEASUREMENTS WERE RE-TAKEN rather than carried over: `thesvg-color:
+#: prime-video` is 800.3x246.3 (3.25:1) and `thesvg-color:disney-plus` is
+#: 1041x565 (1.84:1), exactly as recorded. The whole of Iconify's
+#: `thesvg-color` (4855 marks) and `logos` (1880) were also re-listed for
+#: anything Microsoft-published that the purge catalog names: the only hit
+#: that was not already here is `microsoft-office`, now taken above.
 #:
 #: SIX ROWS SHARE THE XBOX SPHERE, deliberately: the gaming tier is six
 #: components of one product (TCUI, the two overlays, speech, identity,
@@ -368,6 +375,13 @@ BLOAT_LOGO_MAP: dict[str, str] = {
     "Bloat.TeamsPersonal": "logos:microsoft-teams",
     "Bloat.OutlookNew": "thesvg-color:microsoft-outlook",
     "Bloat.Todos": "thesvg-color:microsoft-todo",
+    # THE OFFICE LAUNCHER TILE, and the mark is the real one. The purge
+    # row is Microsoft.MicrosoftOfficeHub — the "Office" tile, not Office
+    # itself — and `thesvg-color:microsoft-office` is that product's own
+    # full-colour artwork: the red document at 78.8x96, which is square
+    # enough to survive the 20px box every mark here is drawn into. It was
+    # missed on the first pass because the id carries no "hub".
+    "Bloat.OfficeHub": "thesvg-color:microsoft-office",
     # -- core ---------------------------------------------------------
     "Bloat.Copilot": "thesvg-color:microsoft-copilot",
     "Bloat.CopilotWeb": "thesvg-color:microsoft-copilot",
@@ -485,6 +499,99 @@ DRAWN_MAP: dict[str, tuple[str, str]] = {
     # library provides. In OpenAL's own cyan/blue. See the note above for
     # why the authentic wordmark cannot be used at this size.
     "CreativeTechnology.OpenAL": ("OpenAL", "#2aa9e0"),
+}
+
+
+# ============================================================
+#  THE PURGE CATALOG'S DRAWN MARKS  (NOT vendor logos)
+# ============================================================
+#: `Bloat.<BloatCatalog Id>` -> (title, the product's own colour), for the
+#: purge rows with no artwork in any open, licensed set.
+#:
+#: ITS OWN MAP FOR THE REASON BLOAT_LOGO_MAP IS ONE: two key spaces, kept
+#: apart so a winget typo cannot pass by matching a purge id, and so the
+#: manifest can hold a `Bloat.Skype` and a hypothetical winget `Skype`
+#: without either answering for the other.
+#:
+#: WHY THE WHOLE CATALOG IS HERE, when DRAWN_MAP's own note says this
+#: departure is bounded. The bound was never a COUNT — it is the argument
+#: DRAWN_MAP states and then applies: a group where every row falls back
+#: is not a graceful fallback, it is a list with no icons in it. The purge
+#: dialog is the strongest case of that argument in the app, and it was
+#: the one place still losing it.
+#:
+#: WHAT WAS THERE BEFORE, and why replacing it is the fix rather than a
+#: change of taste. Twenty-eight of these rows rendered a Fluent PICTOGRAM
+#: in ONE colour (widgets.BloatRow._APP_MARKS, now deleted), and one
+#: colour is the whole problem: a pictogram is a shape you decode, and on
+#: a clean Windows install where most of the catalog is a Start-menu stub,
+#: the purge list was a column of single-tone outlines that the user has
+#: to READ to tell apart. The rows that already carried real artwork made
+#: it worse rather than better — a full-colour Skype logo sitting two rows
+#: above a flat periwinkle cloud does not read as two tiers, it reads as
+#: the second one having failed to load.
+#:
+#: THESE ARE NOT LOGOS, and the manifest says so in the same two fields
+#: everything else in the third pass uses (`drawn: true`, `source:
+#: "pulse-drawn"`). What changed against the old pictograms is not
+#: provenance — both are ours — but FIDELITY: each mark is now built from
+#: several paths in that product's real palette, so Weather is a golden
+#: sun behind a two-tone blue cloud, Maps is a folded route card with
+#: green land, blue water and a red pin, and Solitaire is a fanned deck
+#: with a red heart and a black spade on a green baize. That is a thing
+#: you recognise at 20px without reading the label, which is the entire
+#: job of the icon column.
+#:
+#: THE GAP WAS RE-MEASURED, NOT ASSUMED, and the measurement is in
+#: BLOAT_LOGO_MAP's note above: both of Iconify's full-colour brand
+#: collections were listed in full, and every Microsoft-published mark
+#: they carry that the purge catalog names was already taken. There is
+#: nothing here left to fetch.
+#:
+#: THE DAY REAL ARTWORK APPEARS for any of these, delete the entry and add
+#: one to BLOAT_LOGO_MAP: the fetched mark then wins, because the pass
+#: that reads this map runs last only so a download cannot clobber it.
+BLOAT_DRAWN_MAP: dict[str, tuple[str, str]] = {
+    # -- promo -------------------------------------------------------
+    "Bloat.PrimeVideo": ("Prime Video", "#00a8e1"),
+    "Bloat.DisneyPlus": ("Disney+", "#0b4fd0"),
+    "Bloat.KingGames": ("Candy Crush and King games", "#e8453c"),
+    "Bloat.MarchOfEmpires": ("March of Empires", "#c0392b"),
+    "Bloat.Sudoku": ("Microsoft Sudoku", "#3b82f6"),
+    "Bloat.Solitaire": ("Solitaire Collection", "#2e9e5b"),
+    "Bloat.Paint3D": ("Paint 3D", "#e8479b"),
+    "Bloat.MixedReality": ("Mixed Reality Portal", "#6e56cf"),
+    "Bloat.Builder3D": ("3D Builder", "#2e8bd8"),
+    "Bloat.StickyNotes": ("Sticky Notes", "#f7d046"),
+    "Bloat.ZuneMusic": ("Groove Music", "#f2622b"),
+    "Bloat.ZuneVideo": ("Movies & TV", "#2b6fe0"),
+    # -- core --------------------------------------------------------
+    #  PhoneLink, CrossDevice and PhoneExperience are THREE marks for
+    #  three rows the catalog itself keeps apart (see its note on why
+    #  folding the app into the system component made the purge lie).
+    #  Drawing them alike would undo that in the one place the user is
+    #  actually looking.
+    "Bloat.PhoneLink": ("Phone Link", "#0f9bf0"),
+    "Bloat.CrossDevice": ("Mobile devices", "#4cc2ff"),
+    "Bloat.PhoneExperience": ("Phone Link host", "#1f8fe0"),
+    "Bloat.Cortana": ("Cortana", "#22c5d6"),
+    "Bloat.MailCalendar": ("Mail and Calendar", "#2b7cd3"),
+    "Bloat.BingWeather": ("Weather", "#ffc42e"),
+    "Bloat.BingNews": ("News", "#d6403f"),
+    "Bloat.BingFinance": ("Finance", "#2fb56b"),
+    "Bloat.BingSports": ("Sports", "#f5811f"),
+    "Bloat.Maps": ("Windows Maps", "#57b85f"),
+    "Bloat.FeedbackHub": ("Feedback Hub", "#8161c8"),
+    "Bloat.GetHelp": ("Get Help", "#2b88d8"),
+    "Bloat.Tips": ("Tips", "#ffd24a"),
+    "Bloat.People": ("People", "#2b7cd3"),
+    "Bloat.Widgets": ("Widgets", "#2b7cd3"),
+    # -- codec -------------------------------------------------------
+    #  A stack of media containers with a play mark, not a film strip:
+    #  Movies & TV is already the film strip, and two rows in one dialog
+    #  wearing the same picture is the sameness this whole map exists to
+    #  remove.
+    "Bloat.KLiteCodec": ("K-Lite Codec Pack", "#2c74c4"),
 }
 
 #: Brand hex for LOGO_MAP entries that turn out to be SILHOUETTES rather
@@ -797,8 +904,13 @@ def main() -> int:
     # one for vendor artwork). Running last means a LOGO_MAP entry added
     # later for the same app silently wins, which is the outcome we want
     # the day one of these brands publishes a real mark.
+    #  BOTH REGISTERS THROUGH ONE PASS, exactly as the colour pass takes
+    #  LOGO_MAP and BLOAT_LOGO_MAP together: the record written is
+    #  identical, so a near-copy of this loop would only be a second place
+    #  for the `drawn`/`source` stamping to drift out of step.
     drawn_missing: list[str] = []
-    for app_id, (title, hex_colour) in sorted(DRAWN_MAP.items()):
+    for app_id, (title, hex_colour) in sorted(
+            {**DRAWN_MAP, **BLOAT_DRAWN_MAP}.items()):
         safe = app_id.replace("/", "_").replace("\\", "_")
         path = os.path.join(ASSET_DIR, f"{safe}.svg")
         if not os.path.isfile(path):

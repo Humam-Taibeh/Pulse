@@ -436,7 +436,9 @@ class PowerShellTask(QObject):
                  startup_item_id: str | None = None,
                  scan_path: str | None = None,
                  adapter_name: str | None = None,
-                 dns_profile: str | None = None):
+                 dns_profile: str | None = None,
+                 path_command: str | None = None,
+                 path_directory: str | None = None):
         super().__init__()
         self.ps1_path = ps1_path
         self.task_name = task_name
@@ -456,6 +458,12 @@ class PowerShellTask(QObject):
         # contain a comma, so neither rides on -AppIds.
         self.adapter_name = adapter_name
         self.dns_profile = dns_profile
+        # PATH Doctor's priority fix: the command to promote and the
+        # directory to promote it to. Own parameters for the reason
+        # scan_path is one — a PATH entry is a directory and may contain
+        # a comma, which -AppIds would split into fragments.
+        self.path_command = path_command
+        self.path_directory = path_directory
         # Resolved by the Office ODT wizard (widgets.OfficeWizardDialog)
         # before this worker is ever constructed — both set, or both None.
         self.office_setup = office_setup
@@ -550,6 +558,13 @@ class PowerShellTask(QObject):
         if self.dns_profile:
             argv += ["-DnsProfile",
                      validate_backend_arg("The DNS profile", self.dns_profile)]
+        if self.path_command:
+            argv += ["-PathCommand",
+                     validate_backend_arg("The PATH command", self.path_command)]
+        if self.path_directory:
+            argv += ["-PathDirectory",
+                     validate_backend_arg("The PATH directory",
+                                          self.path_directory)]
         if self.dry_run:
             argv.append("-WhatIf")
         return argv

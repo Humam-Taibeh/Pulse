@@ -101,6 +101,14 @@ param(
     # an adapter name can contain a comma ("Ethernet 2, vEthernet").
     [string]$AdapterName,
     [string]$DnsProfile,
+    # PATH Doctor's priority fix (03-Environment.ps1). TWO PARAMETERS, and
+    # neither rides on $AppIds, for the reason $ScanPath does not: that one
+    # is a comma-separated LIST and a PATH entry is a Windows directory,
+    # which may legitimately contain a comma ("C:\Program Files\Acme, Inc\
+    # bin") - splitting it would produce fragments matching no directory,
+    # and the plan would refuse a promotion the user could see was valid.
+    [string]$PathCommand,
+    [string]$PathDirectory,
     [switch]$WhatIf
 )
 
@@ -208,7 +216,7 @@ $ErrorActionPreference = "Stop"
 # two lines above, so an unreadable file here would abort the engine before
 # a single module loaded — over a string used in a banner. Being
 # approximately right about a version beats refusing to run.
-$Script:ScriptVersion = "10.11.0"
+$Script:ScriptVersion = "10.12.0"
 try {
     $VersionFile = Join-Path $PSScriptRoot "..\..\VERSION"
     if (Test-Path -LiteralPath $VersionFile) {

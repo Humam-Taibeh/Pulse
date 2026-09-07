@@ -474,3 +474,361 @@ Describe "Invoke-PathSanitizer" {
         Should -Invoke New-SystemRestorePoint -Times 0
     }
 }
+
+
+# ============================================================
+#  THE PRIORITY FIX  (v10.12)
+#
+#  THE SCAN HAS ALWAYS BEEN ABLE TO SAY "you have two Pythons and this is
+#  the one that runs". What it could not do was change the answer, so the
+#  advice ended at "go and edit an environment variable by hand" - which
+#  is the same place the user was before they opened the tool.
+#
+#  WHAT MAKES THIS SAFE IS THAT IT IS A PERMUTATION. Nothing is removed:
+#  the scope's entry list comes out carrying exactly the strings it went
+#  in with, in a different order, so every binary that answered a command
+#  before still answers it and the worst outcome of a wrong choice is one
+#  click to change it back. That property is asserted directly below
+#  rather than inferred from the absence of a Remove call.
+#
+#  AND THE CASE IT REFUSES IS THE INTERESTING ONE. Windows composes the
+#  search path as machine-then-user, so a user-scope folder can never
+#  overtake a machine-scope one however the user list is sorted. A tool
+#  that offered the button anyway would appear to succeed and change
+#  nothing, which is worse than not offering it.
+# ============================================================
+Describe "PathConflictCommands covers the modern toolchains" {
+
+    It "includes the package managers and runtimes people actually double up" {
+        # An entry here costs one Test-Path per PATH directory and prints
+        # NOTHING unless a second copy exists - which is why this list can
+        # grow where $Script:DevToolCatalog cannot. See the note above it.
+        foreach ($command in @('pwsh', 'docker', 'bun', 'uv', 'uvx',
+                               'pnpm', 'cargo', 'rustup', 'go', 'gofmt', 'deno')) {
+            $Script:PathConflictCommands | Should -Contain $command
+        }
+    }
+
+    It "still carries every command it carried before" {
+        # The additions must not have displaced anything: a name dropped
+        # from this list is a conflict that silently stops being reported.
+        foreach ($command in @('python', 'node', 'npm', 'java', 'javac',
+                               'git', 'gcc', 'clang', 'cmake', 'dotnet',
+                               'ruby', 'perl', 'php', 'curl', 'ffmpeg')) {
+            $Script:PathConflictCommands | Should -Contain $command
+        }
+    }
+
+    It "names each command once" {
+        $unique = @($Script:PathConflictCommands | Select-Object -Unique)
+        $unique.Count | Should -Be $Script:PathConflictCommands.Count
+    }
+}
+
+Describe "Get-PathCommandConflicts reports the scope of each copy" {
+
+    It "carries a Providers list with the scope every copy sits in" {
+        # THE FIELD THE PRIORITY FIX IS BUILT ON. Winner/Shadowed are
+        # bare strings because the report prints them; the scope is what
+        # decides whether a conflict can be fixed by reordering at all.
+        Mock Test-Path {
+            param($LiteralPath)
+            return ($LiteralPath -like '*python.exe')
+        }
+        $entries = @(
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='User';    Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+        )
+        $python = @(Get-PathCommandConflicts -Entries $entries |
+            Where-Object { $_.Command -eq 'python' })[0]
+        @($python.Providers).Count | Should -Be 2
+        @($python.Providers)[0].Scope | Should -Be 'Machine'
+        @($python.Providers)[1].Scope | Should -Be 'User'
+        # And the old shape is untouched, because the report still reads it.
+        $python.Winner | Should -Be 'C:\Py311'
+        @($python.Shadowed)[0] | Should -Be 'C:\Py313'
+    }
+}
+
+Describe "Get-BinaryVersionLabel" {
+
+    It "reads a version out of a real binary without running it" {
+        $exe = Join-Path $env:SystemRoot "System32\notepad.exe"
+        if (-not (Test-Path -LiteralPath $exe)) { Set-ItResult -Skipped -Because "notepad is absent" ; return }
+        (Get-BinaryVersionLabel -Path $exe) | Should -Not -BeNullOrEmpty
+    }
+
+    It "returns an empty string for anything it cannot read" {
+        (Get-BinaryVersionLabel -Path 'C:\no\such\file.exe') | Should -Be ''
+        (Get-BinaryVersionLabel -Path '') | Should -Be ''
+    }
+
+    It "never EXECUTES the file it is labelling" {
+        # THE POINT OF THE FUNCTION. The obvious way to tell two Pythons
+        # apart is `--version`, and that is the one thing a PATH
+        # diagnostic must never do: the binaries it is looking at are, by
+        # definition, ones the user did not choose and may not know
+        # about. Asserted against the source, because the guarantee is
+        # the ABSENCE of a call.
+        $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "03-Environment.ps1") -Raw
+        $body = $source.Substring($source.IndexOf("function Get-BinaryVersionLabel"))
+        $body = $body.Substring(0, $body.IndexOf("`nfunction "))
+        foreach ($execution in @('Start-Process', 'Invoke-Expression', '& $', '&$')) {
+            $body | Should -Not -BeLike "*$execution*" -Because "a PATH diagnostic must not run the binaries it finds"
+        }
+    }
+}
+
+Describe "Get-PathPriorityPlan" {
+
+    BeforeAll {
+        function script:TwoUserPythons {
+            @(
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Other'; Path='C:\Other'; Exists=$true; Valid=$true; Duplicate=$false }
+            )
+        }
+    }
+
+    It "moves the chosen folder to the front of its scope" {
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries (TwoUserPythons)
+        $plan.Action | Should -Be 'reorder'
+        $plan.Scope  | Should -Be 'User'
+        @($plan.Order)[0] | Should -Be 'C:\Py313'
+    }
+
+    It "produces a PERMUTATION - every entry survives, none is added" {
+        # THE SAFETY PROPERTY, asserted directly. A reorder that drops an
+        # entry is a removal wearing a reorder's name, and it would take a
+        # working toolchain off the PATH without ever saying so.
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $entries = TwoUserPythons
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
+        $before = @($entries | Where-Object { $_.Scope -eq 'User' } | ForEach-Object { $_.Raw } | Sort-Object)
+        $after  = @(@($plan.Order) | Sort-Object)
+        $after.Count | Should -Be $before.Count
+        (Compare-Object -ReferenceObject $before -DifferenceObject $after -SyncWindow 0) | Should -BeNullOrEmpty
+    }
+
+    It "says there is nothing to do when the folder already wins" {
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py311' -Entries (TwoUserPythons)
+        $plan.Action | Should -Be 'none'
+        @($plan.Order).Count | Should -Be 0
+    }
+
+    It "refuses a folder that does not contain the command" {
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Other' -Entries (TwoUserPythons)
+        $plan.Action | Should -Be 'blocked'
+        $plan.Reason | Should -BeLike '*does not contain*'
+    }
+
+    It "refuses a command that is not contested at all" {
+        Mock Test-Path { return $false }
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries (TwoUserPythons)
+        $plan.Action | Should -Be 'blocked'
+        $plan.Reason | Should -BeLike '*not answered by more than one*'
+    }
+
+    It "REFUSES to promote a user folder over a system one, and says why" {
+        <#
+            THE CASE REORDERING CANNOT REACH, and the one this whole
+            function exists to be honest about.
+
+            Windows searches the machine PATH before the user PATH, so no
+            ordering of the user list will ever put a user-scope folder in
+            front of a machine-scope one. A tool that offered the button
+            anyway would write a change, report success, and leave
+            `python --version` answering exactly as it did before - which
+            is a worse outcome than not offering it, because the user now
+            believes the problem is fixed.
+
+            The two ways to actually do it are both out of bounds:
+            removing the system entry is the destructive act the card
+            promises not to perform, and copying a per-user folder into
+            the machine PATH publishes one account's tools to every
+            account on the box.
+        #>
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $entries = @(
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='User';    Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+        )
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
+        $plan.Action | Should -Be 'blocked'
+        $plan.Reason | Should -BeLike '*system PATH first*'
+        $plan.Reason | Should -BeLike '*will not remove*'
+    }
+
+    It "CAN promote a system folder, because the machine list is searched first" {
+        # The mirror of the case above: a machine entry moved to the front
+        # of the machine list beats every other machine entry AND the
+        # whole user list, so this one is achievable.
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        $entries = @(
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+        )
+        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
+        $plan.Action | Should -Be 'reorder'
+        $plan.Scope  | Should -Be 'Machine'
+        @($plan.Order)[0] | Should -Be 'C:\Py313'
+    }
+}
+
+Describe "Set-PathToolPriority" {
+
+    It "changes nothing under -WhatIf" {
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        Mock Get-PathPriorityPlan {
+            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='User'; Reason='r'
+                               Order=@(@($userPath -split ";" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() }))
+                               Providers=@() }
+        }
+        Mock New-SystemRestorePoint { }
+        Mock Save-PathBackup { return $true }
+        Mock Test-IsElevatedSession { return $true }
+
+        $Script:DryRun = $true
+        try {
+            $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+            $result.Changed | Should -Be $true -Because "the simulation still reports what it would have done"
+            Should -Invoke Save-PathBackup -Times 0 -Because "a dry run must not even write the backup"
+        } finally {
+            $Script:DryRun = $false
+        }
+        [Environment]::GetEnvironmentVariable("Path", "User") | Should -Be $userPath
+    }
+
+    It "refuses a plan that is not a permutation of the live PATH" {
+        <#
+            THE CHECK THAT MAKES "removes nothing" TRUE RATHER THAN
+            INTENDED. Set-PathToolPriority re-reads the live value and
+            compares it against the plan as SORTED MULTISETS before it
+            writes, so a plan that has dropped an entry - because the PATH
+            changed under it, or because a future edit to the planner
+            introduced a bug - is refused instead of applied.
+        #>
+        Mock Get-PathPriorityPlan {
+            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='User'; Reason='r'
+                               Order=@('C:\OnlyThis'); Providers=@() }
+        }
+        Mock New-SystemRestorePoint { }
+        Mock Save-PathBackup { return $true }
+        Mock Test-IsElevatedSession { return $true }
+
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+        $result.Changed | Should -Be $false
+        $result.Reason  | Should -BeLike '*nothing was written*'
+        Should -Invoke Save-PathBackup -Times 0
+        [Environment]::GetEnvironmentVariable("Path", "User") | Should -Be $userPath
+    }
+
+    It "leaves the machine PATH alone when the session is not elevated" {
+        Mock Get-PathPriorityPlan {
+            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='Machine'; Reason='r'
+                               Order=@('C:\Py313'); Providers=@() }
+        }
+        Mock New-SystemRestorePoint { }
+        Mock Save-PathBackup { return $true }
+        Mock Test-IsElevatedSession { return $false }
+
+        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+        $result.Changed | Should -Be $false
+        $result.Reason  | Should -BeLike '*needs Administrator*'
+        Should -Invoke Save-PathBackup -Times 0
+    }
+
+    It "does nothing at all when the folder already wins" {
+        Mock Get-PathPriorityPlan {
+            [PSCustomObject]@{ Command='python'; Directory='C:\Py311'
+                               Action='none'; Scope='User'
+                               Reason="'python' already runs the copy in C:\Py311."
+                               Order=@(); Providers=@() }
+        }
+        Mock New-SystemRestorePoint { }
+        Mock Save-PathBackup { return $true }
+
+        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py311'
+        $result.Changed | Should -Be $false
+        Should -Invoke New-SystemRestorePoint -Times 0 -Because "a checkpoint for a no-op is noise in the list a user reaches when something has gone wrong"
+    }
+
+    It "takes the restore point BEFORE it writes, and backs up before that" {
+        $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "03-Environment.ps1") -Raw
+        $body = $source.Substring($source.IndexOf("function Set-PathToolPriority"))
+        $body = $body.Substring(0, $body.IndexOf("`nfunction "))
+        $restore = $body.IndexOf("New-SystemRestorePoint")
+        $backup  = $body.IndexOf("Save-PathBackup")
+        $write   = $body.IndexOf("SetEnvironmentVariable")
+        $restore | Should -BeGreaterThan 0
+        $restore | Should -BeLessThan $backup -Because "the checkpoint is the outer safety net"
+        $backup  | Should -BeLessThan $write  -Because "a write with no saved copy of the old value is not reversible"
+    }
+
+    It "never removes an entry" {
+        # Asserted against the source, the way the scan's read-only
+        # guarantee is: the promise is the ABSENCE of a removal, and the
+        # value written is built from the plan's Order rather than by
+        # filtering anything out of the live list.
+        $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "03-Environment.ps1") -Raw
+        $body = $source.Substring($source.IndexOf("function Set-PathToolPriority"))
+        $body = $body.Substring(0, $body.IndexOf("`nfunction "))
+        $body | Should -Not -BeLike '*Remove-ItemProperty*'
+        $body | Should -BeLike '*Compare-Object*' -Because "the permutation check is what makes this safe"
+    }
+}
+
+Describe "Get-PathConflictReport" {
+
+    It "shapes each conflict with one option per copy, and marks the winner" {
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        Mock Get-PathEntryReport {
+            @(
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+            )
+        }
+        $report = Get-PathConflictReport
+        $python = @($report.conflicts | Where-Object { $_.command -eq 'python' })[0]
+        $python | Should -Not -BeNullOrEmpty
+        @($python.options).Count | Should -Be 2
+        @($python.options | Where-Object { $_.winner }).Count | Should -Be 1
+        @($python.options | Where-Object { $_.path -eq 'C:\Py313' })[0].action | Should -Be 'reorder'
+    }
+
+    It "computes fixability in the BACKEND, so the GUI cannot offer a refused button" {
+        # A dialog that draws a button the backend will decline is worse
+        # than one that draws nothing: the user clicks it, sees a success
+        # toast, and the problem is still there.
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        Mock Get-PathEntryReport {
+            @(
+                [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User';    Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+            )
+        }
+        $report = Get-PathConflictReport
+        $python = @($report.conflicts | Where-Object { $_.command -eq 'python' })[0]
+        $user = @($python.options | Where-Object { $_.path -eq 'C:\Py313' })[0]
+        $user.action | Should -Be 'blocked'
+        $user.reason | Should -BeLike '*system PATH first*'
+    }
+
+    It "reports an empty conflict list without throwing on a clean PATH" {
+        Mock Test-Path { return $false }
+        Mock Get-PathEntryReport {
+            @([PSCustomObject]@{ Scope='Machine'; Raw='C:\Windows'; Path='C:\Windows'; Exists=$true; Valid=$true; Duplicate=$false })
+        }
+        $report = Get-PathConflictReport
+        @($report.conflicts).Count | Should -Be 0
+        $report.entries | Should -Be 1
+    }
+}

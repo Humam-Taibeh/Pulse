@@ -536,6 +536,12 @@ _WORKER_DIALOGS = [
     # own thread before the user chooses anything, so it needs the same
     # settle-on-close guard as every other scanning dialog.
     "BloatwarePurgeDialog",
+    # v10.12: the PATH conflict fixer scans on open and again after every
+    # promotion. IN THE ROSTER rather than in the exemption list beside
+    # DnsSwitcherDialog: its `is_admin` argument has a default, so it
+    # builds with the same (window, "", t) the others use and there is no
+    # reason to settle for inheriting the guard when it can be measured.
+    "PathConflictDialog",
 ]
 
 

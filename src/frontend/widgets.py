@@ -6261,6 +6261,240 @@ class DnsSwitcherDialog(InspectorDialog):
         self._status.setText(f"Could not change DNS: {message}")
 
 
+class PathConflictDialog(InspectorDialog):
+    """Which copy of a tool your terminal actually runs — and a safe way
+    to change the answer.
+
+    THE PROBLEM IS INVISIBLE BY CONSTRUCTION. A user installs Python 3.13,
+    types `python --version`, and gets 3.11. Nothing is broken and nothing
+    says so: an older entry simply sits earlier in the PATH, and the only
+    way to find that out is to know that `where python` exists. The PATH
+    scan already REPORTS this (Write-PathScanReport's [SHADOWED] lines);
+    what it could not do was fix it, so the advice ended at "here is a
+    problem, go and edit an environment variable".
+
+    SELF-CONTAINED, like the DNS switcher and for the same reason: this is
+    a per-row action on a live list, re-scanned after every change so the
+    cards show the machine rather than the request.
+
+    IT REORDERS AND NEVER REMOVES, which is the whole safety argument and
+    is why this is a separate surface from Prune. Every copy that answered
+    a command before still answers it afterwards; one of them simply
+    answers first. A wrong choice here costs a click to undo. The prune
+    beside it deletes entries, which is why that one is red, confirmed,
+    and refuses everything it cannot prove.
+
+    THE CHOICES IT DOES NOT OFFER ARE THE INTERESTING ONES. Windows
+    composes the search path as machine-then-user, so a user-scope folder
+    can never overtake a machine-scope one — no ordering of the user PATH
+    will do it. Rather than showing a button that would appear to work and
+    change nothing, the backend marks that option `blocked` and the reason
+    is printed under the card. See Get-PathPriorityPlan.
+    """
+
+    TASK = "PathConflictReport"
+    TITLE = "🧭  Shadowed Tools"
+    LOADING = "Scanning your PATH for tools with more than one copy…"
+    ACCENT_KEY = "optimization"
+    TIMEOUT = 180
+
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict,
+                 is_admin: bool = True):
+        self._is_admin = is_admin
+        self._busy = False
+        super().__init__(parent, ps1_path, t)
+
+    def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        return [
+            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
+            self._button("Re-scan", TH.dialog_secondary_go_qss(t, accent),
+                         self._start),
+        ]
+
+    # -- rendering ------------------------------------------------
+    def _render(self, report: dict):
+        conflicts = report.get("conflicts") or []
+        entries = int(report.get("entries") or 0)
+        # THE MEASUREMENT BEATS THE ASSUMPTION. `is_admin` is what the GUI
+        # believes about ITSELF; `elevated` is what the process that would
+        # actually perform the write reported about the token it is
+        # holding. They agree on every ordinary run — the scan is a child
+        # of this process — and where they do not, the child is right, and
+        # believing the parent would mean offering a button whose task
+        # comes back refused.
+        if "elevated" in report:
+            self._is_admin = self._is_admin and bool(report["elevated"])
+
+        if not conflicts:
+            self._status.setText(
+                f"Nothing is shadowed. Across {entries} PATH entries, every "
+                "tool Pulse checks is answered by exactly one folder.")
+            card = self._card("Nothing to fix")
+            card.note(
+                "Pulse looks for a second copy of the tools where "
+                "\"which one wins?\" is a question people actually have to "
+                "debug — interpreters, package managers, compilers and "
+                "build drivers. A machine with one of each has nothing to "
+                "show here, which is the healthy result.")
+            return
+
+        noun = "tool" if len(conflicts) == 1 else "tools"
+        self._status.setText(
+            f"{len(conflicts)} {noun} on this machine have more than one "
+            f"copy on the PATH, across {entries} entries. Choosing a folder "
+            "REORDERS your PATH so that copy is found first — nothing is "
+            "removed, and every other copy stays exactly where it is.")
+
+        if not self._is_admin:
+            warn = self._card("Administrator required", ("NOT ELEVATED", "warn"))
+            warn.note(
+                "Reordering the PATH takes a restore point and a backup "
+                "first, and both need an elevated Pulse. You can still see "
+                "which tools are shadowed and where each copy lives.")
+
+        for conflict in conflicts:
+            self._conflict_card(conflict)
+
+    def _conflict_card(self, conflict: dict):
+        command = str(conflict.get("command") or "")
+        options = conflict.get("options") or []
+        count = int(conflict.get("count") or len(options))
+
+        card = self._card(command, (f"{count} COPIES", "warn"))
+        winner = next((o for o in options if o.get("winner")), None)
+        if winner:
+            card.row("Runs now", str(winner.get("path") or ""),
+                     label_width=self._LABEL_W)
+
+        for option in options:
+            path = str(option.get("path") or "")
+            scope = str(option.get("scope") or "")
+            version = str(option.get("version") or "")
+            where = "System PATH" if scope == "Machine" else "Your PATH"
+            label = f"{where}  ·  {version}" if version else where
+            card.row(label, path, label_width=self._LABEL_W)
+
+        strip, row = _chip_strip(self._t)
+        for option, label in zip(options, self._option_labels(options)):
+            row.addWidget(self._option_button(command, option, label))
+        row.addStretch()
+        card.add(strip)
+
+        # Only the options that CANNOT be taken need explaining. A button
+        # that works needs no caption; one that is greyed out and silent
+        # is the thing that makes an interface feel broken.
+        for option in options:
+            if option.get("action") == "blocked" and not option.get("winner"):
+                card.note(str(option.get("reason") or ""))
+                break
+
+    @staticmethod
+    def _option_labels(options: list[dict]) -> list[str]:
+        """One SHORT, DISTINCT label per option in a card.
+
+        THE OBVIOUS ANSWER IS WRONG FOR THE COMMONEST CASE. A chip cannot
+        carry the full path — "C:\\Users\\me\\AppData\\Local\\Programs\\
+        Python\\Python312\\Scripts\\" is a paragraph pretending to be a
+        button, and the row above it already prints it. But the leaf
+        folder alone, measured against this machine's real PATH, produced
+        THREE CHIPS READING "Scripts" on the `pip` card: the three Python
+        installations differ several segments up. Three identical buttons
+        is the same defect the purge dialog's icons were fixed for, in a
+        new place.
+
+        SO: THE VERSION WHEN IT DISTINGUISHES EVERY OPTION, because that
+        is the fact the user is actually choosing between — `java` reads
+        "21.0.12.1" against "26.0.2.0", which answers the question
+        without anybody parsing a path. It is used only when EVERY option
+        has one and they are all different, so a card never mixes two
+        kinds of label.
+
+        OTHERWISE the shortest trailing run of path segments that is
+        unique within this card, up to three, with a leading ellipsis
+        when it is not the whole path. `python` needs one segment
+        (Python314 / Python312 / WindowsApps); `pip` needs three.
+        """
+        versions = [str(o.get("version") or "").strip() for o in options]
+        if all(versions) and len(set(versions)) == len(versions):
+            return versions
+
+        paths = [str(o.get("path") or "").rstrip("\\") for o in options]
+        for depth in (1, 2, 3):
+            labels = []
+            for path in paths:
+                parts = [p for p in path.split("\\") if p]
+                tail = "\\".join(parts[-depth:]) if parts else path
+                labels.append(tail if len(parts) <= depth else "…\\" + tail)
+            if len(set(labels)) == len(labels):
+                return labels
+        # Nothing short is unique — the paths differ only beyond three
+        # segments. The full path is ugly on a chip and it is still the
+        # only honest label left.
+        return paths
+
+    def _option_button(self, command: str, option: dict,
+                       label: str) -> QPushButton:
+        path = str(option.get("path") or "")
+        scope = str(option.get("scope") or "")
+        current = bool(option.get("winner"))
+        action = str(option.get("action") or "")
+        btn = QPushButton(label.replace("&", "&&"))
+        btn.setFixedHeight(_CHIP_H)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(TH.catalog_tab_qss(self._t, self._accent, current))
+
+        needs_admin = scope == "Machine"
+        enabled = (action == "reorder" and not self._busy
+                   and (self._is_admin or not needs_admin))
+        btn.setEnabled(enabled)
+        if current:
+            btn.setToolTip(f"'{command}' already runs the copy in {path}.")
+        elif action == "blocked":
+            btn.setToolTip(str(option.get("reason") or "").strip())
+        elif needs_admin and not self._is_admin:
+            btn.setToolTip("Changing the system PATH needs an elevated Pulse.")
+        else:
+            btn.setToolTip(
+                f"Move {path} to the front of the {scope} PATH so "
+                f"'{command}' runs that copy. Nothing is removed.")
+        btn.clicked.connect(
+            lambda _c=False, c=command, p=path: self._apply(c, p))
+        return btn
+
+    # -- mutation -------------------------------------------------
+    def _apply(self, command: str, directory: str):
+        """Promote one folder for one command, then re-scan so the cards
+        reflect what the registry actually holds rather than what was
+        asked for."""
+        if self._busy or self._worker is not None:
+            return
+        self._busy = True
+        self._status.setText(f"Making {directory} the copy '{command}' runs…")
+
+        thread = QThread(self)
+        worker = PowerShellTask(
+            self._ps1, "PathPrioritize", timeout=self.TIMEOUT,
+            path_command=command, path_directory=directory)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_applied)
+        worker.failed.connect(self._on_apply_failed)
+        for signal in (worker.finished, worker.failed, worker.cancelled):
+            signal.connect(thread.quit)
+        thread.finished.connect(self._cleanup)
+        self._thread, self._worker = thread, worker
+        thread.start()
+
+    def _on_applied(self, result: TaskResult):
+        self._busy = False
+        self._status.setText(result.message or "PATH updated.")
+        QTimer.singleShot(120, self._start)
+
+    def _on_apply_failed(self, message: str):
+        self._busy = False
+        self._status.setText(f"The PATH was not changed: {message}")
+
+
 class ContextMenuDialog(InspectorDialog):
     """F5 — every right-click entry, with the clutter switchable off.
 
@@ -11012,8 +11246,17 @@ class BloatRow(QFrame):
     while Pulse denied it existed had been told something plainly false.
     """
 
-    #: The plaque glyph per catalog GROUP. The fallback, not the answer —
-    #: see _APP_MARKS.
+    #: The plaque glyph per catalog GROUP — the FLOOR, and as of v10.12
+    #: a floor nothing stands on.
+    #:
+    #: Every one of the catalog's rows now carries a bundled full-colour
+    #: mark (assets/appicons/Bloat.*.svg), so this is reached only by an
+    #: entry added to 01-Catalogs.ps1 before its artwork lands. That is a
+    #: real window — the catalog and the asset folder are edited in two
+    #: different files — and one grey glyph for one new row is a better
+    #: outcome than a KeyError or a blank column. TestBrandMarks pins that
+    #: no CATALOGUED row reaches it, so this cannot quietly become the
+    #: answer again.
     _GLYPHS = {
         "promo":  "delete",
         "core":   "layers",
@@ -11021,97 +11264,45 @@ class BloatRow(QFrame):
         "codec":  "disk",
     }
 
-    #: Catalog Id -> its own pictogram AND that product's own colour, for
-    #: the rows with no bundled brand mark. Read AFTER the manifest and
-    #: BEFORE the group glyph.
-    #:
-    #: ONE MARK PER APP, and this is a reversal. The group glyph was
-    #: chosen on the reasoning that "fifty distinct icons would be a
-    #: spectrum, which is exactly what the palette pass removed from the
-    #: rest of the app" - right about a COLOUR spectrum and wrong about
-    #: this list, because the palette pass was about tinting rows by
-    #: category while this is about telling one app from another. What it
-    #: actually produced was twenty-five identical trash cans in the promo
-    #: section, so recognising Clipchamp from Candy Crush meant reading
-    #: every label in a dialog whose whole job is deciding about apps one
-    #: at a time.
-    #:
-    #: THE COLOUR IS v10.11, AND IT IS THE HALF THAT WAS MISSING. Every
-    #: pictogram here was painted in ONE colour - t["accent"] when the
-    #: package was present and t["text_faint"] when it was not - so a
-    #: purge list on a clean machine was thirty near-invisible grey
-    #: outlines, reported as "faint, monochrome, low-contrast grey
-    #: outlines that blend into the dark background". Two things were
-    #: wrong with that:
-    #:
-    #:   The FAINT TONE said "absent" a second time. The row already dims
-    #:   its whole surface (startup_row_qss's `disabled_item`), disables
-    #:   its checkbox and prints a NOT PRESENT badge. Draining the icon on
-    #:   top of three existing signals bought nothing and cost the only
-    #:   part of the row that is recognisable at a glance. Worse, it was
-    #:   INCONSISTENT: the fourteen rows carrying a bundled SVG render in
-    #:   full colour whether present or not, so an absent Xbox row was
-    #:   vivid beside an absent Maps row that was a ghost.
-    #:
-    #:   The SINGLE ACCENT made the pictograms do half their job. A
-    #:   weather glyph and a news glyph in identical periwinkle are two
-    #:   shapes to decode; a blue one and a red one are two things you
-    #:   have already told apart before reading either label.
-    #:
-    #: THESE ARE NOT LOGOS, and are not claimed to be - the same bounded
-    #: departure DRAWN_MAP records in tools/fetch_app_icons.py, and for
-    #: the same reason. Fourteen rows carry real brand artwork
-    #: (BLOAT_LOGO_MAP); these are Fluent pictograms of what the app IS,
-    #: in the app's own colour, which nothing could mistake for a
-    #: vendor's mark. The alternative was re-checked before it was
-    #: dismissed rather than taken on trust: Iconify's federated search
-    #: returns no SQUARE colour artwork for any of these products, and
-    #: the marks it does return for Prime Video and Disney+ are
-    #: WORDMARKS, measured at 3.25:1 and 1.84:1 - an illegible smear in
-    #: the 20px box every mark here is drawn into.
-    #:
-    #: EVERY COLOUR GOES THROUGH THE CONTRAST GUARD (appicons.
-    #: readable_glyph_color) against the well it will actually sit in, so
-    #: a value chosen for a vendor's white page cannot ship unreadable on
-    #: obsidian. Sticky Notes' #f5d34e survives untouched on dark and
-    #: resolves to #b9950a on porcelain.
-    _APP_MARKS = {
-        # -- promo -----------------------------------------------------
-        "PrimeVideo": ("video", "#1FA2E1"),
-        "DisneyPlus": ("video", "#5B7BF5"),
-        "ZuneVideo": ("video", "#4F6BED"),
-        "ZuneMusic": ("music", "#F0663F"),
-        "KingGames": ("game", "#F2A33C"),
-        "MarchOfEmpires": ("game", "#C08A5A"),
-        "Sudoku": ("game", "#5B8DEF"),
-        "Solitaire": ("game", "#2FA85F"),
-        "Paint3D": ("palette", "#E8479B"),
-        "Builder3D": ("cube", "#3FB4EF"),
-        "MixedReality": ("sparkle", "#8B6BF0"),
-        "StickyNotes": ("note", "#F5D34E"),
-        "OfficeHub": ("document", "#E8622B"),
-        # -- core ------------------------------------------------------
-        "PhoneLink": ("phone", "#3AA0E8"),
-        # The system cross-device component, deliberately a DIFFERENT
-        # blue from the app it is constantly mistaken for - see the
-        # catalog note in 01-Catalogs.ps1.
-        "CrossDevice": ("phone", "#4CC2FF"),
-        "PhoneExperience": ("phone", "#3AA0E8"),
-        "Cortana": ("mic", "#28C4CE"),
-        "MailCalendar": ("mail", "#3A87DE"),
-        "BingWeather": ("weather", "#59B4F0"),
-        "BingNews": ("news", "#E05561"),
-        "BingFinance": ("finance", "#2FB56B"),
-        "BingSports": ("sports", "#F0862B"),
-        "Maps": ("map", "#28B364"),
-        "FeedbackHub": ("feedback", "#9070F5"),
-        "GetHelp": ("help", "#31AFEF"),
-        "Tips": ("tip", "#F0B429"),
-        "People": ("people", "#7C82F0"),
-        "Widgets": ("widgets", "#54A0F5"),
-        # -- codec -----------------------------------------------------
-        "KLiteCodec": ("disk", "#5EA9E0"),
-    }
+    #  THE PICTOGRAM TIER IS GONE (v10.12), and what replaced it is the
+    #  thing it was standing in for: a bundled, full-colour mark for every
+    #  row in the catalog. `_APP_MARKS` used to live here — twenty-eight
+    #  Catalog Id -> (Fluent glyph, brand hex) pairs, painted through the
+    #  contrast guard — and it was a real improvement on what preceded IT
+    #  (twenty-five identical trash cans, one per promo row). It is
+    #  recorded here rather than deleted silently because the reasoning
+    #  that produced it was sound and the reasoning that removes it is
+    #  narrower than "it looked better this way".
+    #
+    #  WHAT THE PICTOGRAMS COULD NOT DO. A pictogram is a shape the reader
+    #  DECODES: a cloud means weather, a map pin means Maps, and in one
+    #  colour each they are all equally a small outline until you have
+    #  looked at them. That cost is invisible on a machine where half the
+    #  catalog is installed and most rows are greyed out, and it is the
+    #  whole experience on a CLEAN Windows install, which is where this
+    #  dialog is most used: nearly every row is a Start-menu stub, and the
+    #  list was a column of single-tone glyphs to be read one label at a
+    #  time.
+    #
+    #  IT WAS ALSO A VISIBLE SEAM. Twenty-one rows already carried real
+    #  brand artwork, so the dialog rendered two tiers side by side — a
+    #  full-colour Skype logo two rows above a flat periwinkle cloud. A
+    #  reader does not see "vendor mark, then our pictogram"; they see one
+    #  icon that loaded and one that did not.
+    #
+    #  WHAT IS THERE NOW. Twenty-eight multi-path marks in each product's
+    #  real palette (tools/fetch_app_icons.py BLOAT_DRAWN_MAP), plus the
+    #  Office launcher's genuine vendor artwork, which had simply been
+    #  missed. They are still OURS and still say so — `drawn: true`,
+    #  `source: "pulse-drawn"` — so nothing here claims to be a logo that
+    #  is not one. They just carry enough of each product's own colour to
+    #  be recognised rather than parsed.
+    #
+    #  So this row now has ONE branch that ever fires. `_GLYPHS` stays as
+    #  the floor for a catalog entry added before its artwork; every
+    #  catalogued row takes the mark tier, and
+    #  TestBrandMarks.test_every_catalogued_row_has_a_full_colour_mark
+    #  fails if that stops being true.
 
     #: `Presence` -> (badge text, its tone). The backend reports the
     #: STRONGEST claim its evidence supports; this turns that into the one
@@ -11168,12 +11359,12 @@ class BloatRow(QFrame):
         row_padding(outer)
         outer.setSpacing(TH.SPACE["md"])
 
-        # THREE TIERS, THE SAME ORDER THE REST OF THE APP USES: the
-        # vendor's own mark where one exists and survives 20px, this
-        # app's pictogram where it does not, and the catalog group's glyph
-        # as the floor. Both branches occupy the SHARED 36px well (see
-        # theme.PLAQUE_SIZE), so the column reads as one set whichever
-        # tier answered.
+        # TWO TIERS, AND THE SECOND IS THE FLOOR RATHER THAN AN ANSWER:
+        # the bundled full-colour mark, which every catalogued row now
+        # has, and the catalog group's glyph for an entry whose artwork
+        # has not landed yet. Both branches occupy the SHARED 36px well
+        # (see theme.PLAQUE_SIZE), so the column reads as one set
+        # whichever tier answered.
         self.plaque: IconPlaque | None = None
         self._mark: QLabel | None = None
         self._plaque_font = None
@@ -11186,10 +11377,8 @@ class BloatRow(QFrame):
         else:
             self.plaque = IconPlaque("")
             self.plaque.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
-            glyph_key, self._mark_hex = self._APP_MARKS.get(
-                self.entry_id,
-                (self._GLYPHS.get(self.group, "delete"), ""))
-            char, is_fluent = TH.glyph(glyph_key)
+            char, is_fluent = TH.glyph(
+                self._GLYPHS.get(self.group, "delete"))
             self._plaque_font = (TH.icon_font(TH.ICON["plaque"])
                                  if is_fluent else None)
             self.plaque.setText(char)
@@ -11200,7 +11389,13 @@ class BloatRow(QFrame):
 
         name_row = QHBoxLayout()
         name_row.setSpacing(TH.SPACE["sm"])
-        self.checkbox = QCheckBox(self._name)
+        # "&&", AND IT IS NOT DEFENSIVE TIDYING — one catalog row was
+        # rendering wrong. Qt reads "&" in a control's label as a MNEMONIC
+        # marker, so `Movies & TV` drew as "Movies TV" with the T
+        # underlined, and the row for the app was the one row in the
+        # dialog whose name did not match the app. `self._name` stays raw
+        # because appicons.app_icon keys on it.
+        self.checkbox = QCheckBox(self._name.replace("&", "&&"))
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.checkbox.setEnabled(self.detected)
         name_row.addWidget(self.checkbox)
@@ -11281,7 +11476,7 @@ class BloatRow(QFrame):
             # is already said three times over - the row dims, the
             # checkbox is disabled and the badge reads NOT PRESENT - and
             # saying it a fourth time by draining the icon is what made
-            # this list unreadable. See _APP_MARKS.
+            # this list unreadable.
             #
             # Solved against the WELL, not against the card: the glyph
             # sits inside plaque_well, which lightens the surface on dark
@@ -11289,8 +11484,7 @@ class BloatRow(QFrame):
             # bare card would be measuring a surface the glyph never
             # touches.
             surface = TH.blend(t["card"], t["plaque_well"])
-            tone = appicons.readable_glyph_color(
-                self._mark_hex or t["accent"], surface, t)
+            tone = appicons.readable_glyph_color(t["accent"], surface, t)
             self.plaque.apply_theme(t, tone)
             if self._plaque_font is not None:
                 self.plaque.setFont(self._plaque_font)
@@ -11860,8 +12054,17 @@ class StartupRow(QFrame):
         # part of the row most people can match against something they
         # recognise.
         #
-        # An entry whose target cannot be resolved gets the generic
-        # executable mark on the same well, so the column stays a column.
+        # THE COMMAND IS NOT USUALLY A BINARY PATH, which is what
+        # nativeicons.resolve_command exists to deal with: every entry in
+        # the Startup FOLDER is a .lnk that has to be followed to its
+        # target, and a Store app has no path at all — it is addressed by
+        # identity and keeps its artwork in AppxManifest.xml rather than
+        # in its .exe.
+        #
+        # An entry whose target genuinely cannot be resolved — a stale
+        # shortcut to software that has been uninstalled — gets the
+        # generic executable mark on the same well, so the column stays a
+        # column.
         self._icon = QLabel()
         self._icon.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
         self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)

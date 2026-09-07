@@ -413,13 +413,45 @@ function Get-PathEntryReport {
 #: So: the names where "which one wins?" is a question a person has
 #: actually had to debug. Every entry is an interpreter, a package
 #: manager, a compiler or a build driver.
+#:
+#: ADDING A NAME HERE IS CHEAP, AND THAT IS THE OPPOSITE OF
+#: $Script:DevToolCatalog, so the two must not be reasoned about the same
+#: way. The catalogue prints a [MISSING] line for every tool it does not
+#: find, which is why Ollama was removed from it: an entry there is a
+#: recommendation, and a recommendation the user cannot dismiss is a nag.
+#: THIS list prints nothing unless a name is found TWICE. A machine
+#: without Bun sees no Bun line, ever. The cost of an entry is one
+#: Test-Path per PATH directory; the cost of an omission is a shadowed
+#: toolchain that goes unreported.
+#:
+#: So the bar is only "is this a name whose second copy would mislead
+#: somebody", and the v10.12 additions all clear it — every one is a tool
+#: that installs itself into a PATH directory of its own choosing, which
+#: is exactly how a second copy appears:
+#:
+#:   pwsh          PowerShell 7 ships in %ProgramFiles%\PowerShell\7 and
+#:                 is ALSO installed by the Store and by winget into two
+#:                 other directories. Three pwsh copies is a real machine.
+#:   docker        Docker Desktop, Rancher Desktop and a WSL passthrough
+#:                 all publish `docker`, and which one answers decides
+#:                 which daemon you are talking to.
+#:   uv / uvx      The installer offers ~\.local\bin, ~\.cargo\bin and
+#:                 pipx, and people end up with more than one.
+#:   bun / bunx    ~\.bun\bin plus whatever a Scoop or npm install added.
+#:   rustup        Sits beside cargo and rustc, and a second rustup is
+#:                 how a toolchain ends up managed by the wrong one.
+#:   gofmt         Ships inside every Go distribution, so it doubles
+#:                 exactly when `go` does and is the one that silently
+#:                 reformats to another version's rules.
+#:   deno          Same shape as bun.
 $Script:PathConflictCommands = @(
-    "python", "python3", "pip", "pip3", "conda",
-    "node", "npm", "npx", "yarn", "pnpm",
+    "python", "python3", "pip", "pip3", "conda", "uv", "uvx", "poetry",
+    "node", "npm", "npx", "yarn", "pnpm", "bun", "bunx", "deno",
     "java", "javac", "mvn", "gradle",
     "git", "gcc", "g++", "clang", "make", "cmake",
-    "go", "cargo", "rustc", "dotnet", "msbuild",
-    "ruby", "perl", "php",
+    "go", "gofmt", "cargo", "rustc", "rustup", "dotnet", "msbuild",
+    "docker", "docker-compose", "kubectl",
+    "pwsh", "ruby", "perl", "php",
     "curl", "openssl", "ffmpeg", "sqlite3"
 )
 
@@ -456,7 +488,16 @@ function Get-PathCommandConflicts {
         itself.
 
         Returns one object per contested command:
-        Command, Winner, Shadowed (the rest, in PATH order), Count.
+        Command, Winner, Shadowed (the rest, in PATH order), Count, and
+        Providers.
+
+        PROVIDERS CARRIES THE SCOPE, and the scope is not decoration: it
+        is what decides whether a conflict can be FIXED by reordering at
+        all. Windows composes the search path as the machine list
+        followed by the user list, so a user-scope directory can never
+        overtake a machine-scope one however the user list is sorted.
+        Winner/Shadowed stay plain strings because the report prints them
+        and every existing caller reads them that way.
 
         EVERY PROBE IS GUARDED for the reason Get-PathEntryReport's is: a
         PATH entry is a string, Join-Path and Test-Path can both throw on
@@ -467,35 +508,82 @@ function Get-PathCommandConflicts {
 
     if (-not $Entries) { $Entries = @(Get-PathEntryReport) }
 
-    $Dirs = @($Entries |
-        Where-Object { $_.Valid -and $_.Exists -and -not $_.Duplicate } |
-        ForEach-Object { $_.Path })
-    if ($Dirs.Count -lt 2) { return @() }
+    $Usable = @($Entries |
+        Where-Object { $_.Valid -and $_.Exists -and -not $_.Duplicate })
+    if ($Usable.Count -lt 2) { return @() }
 
     $Conflicts = New-Object System.Collections.ArrayList
     foreach ($Command in $Script:PathConflictCommands) {
         $Providers = New-Object System.Collections.ArrayList
-        foreach ($Dir in $Dirs) {
+        foreach ($Entry in $Usable) {
             foreach ($Ext in $Script:PathExecutableExtensions) {
                 $Hit = $false
+                $Full = $null
                 try {
-                    $Hit = Test-Path -LiteralPath (Join-Path $Dir "$Command.$Ext") -PathType Leaf
+                    $Full = Join-Path $Entry.Path "$Command.$Ext"
+                    $Hit = Test-Path -LiteralPath $Full -PathType Leaf
                 } catch {
                     $Hit = $false
                 }
-                if ($Hit) { [void]$Providers.Add($Dir); break }
+                if ($Hit) {
+                    [void]$Providers.Add([PSCustomObject]@{
+                        Path    = $Entry.Path
+                        Raw     = $Entry.Raw
+                        Scope   = $Entry.Scope
+                        File    = $Full
+                        Version = (Get-BinaryVersionLabel -Path $Full)
+                    })
+                    break
+                }
             }
         }
         if ($Providers.Count -gt 1) {
+            $Paths = @($Providers | ForEach-Object { $_.Path })
             [void]$Conflicts.Add([PSCustomObject]@{
-                Command  = $Command
-                Winner   = $Providers[0]
-                Shadowed = @($Providers[1..($Providers.Count - 1)])
-                Count    = $Providers.Count
+                Command   = $Command
+                Winner    = $Paths[0]
+                Shadowed  = @($Paths[1..($Paths.Count - 1)])
+                Count     = $Providers.Count
+                Providers = @($Providers)
             })
         }
     }
     return @($Conflicts)
+}
+
+function Get-BinaryVersionLabel {
+    <#
+    .SYNOPSIS
+        The version stamped in a binary's own resources, or "".
+
+    .DESCRIPTION
+        READ, NEVER RUN. The obvious way to tell two Pythons apart is to
+        execute each with --version, and that is the one thing a
+        diagnostic must not do: the entries this scans are, by
+        definition, binaries the user has not chosen and may not know
+        about, sitting on a PATH that anything can write to. Running them
+        to label them would hand execution to whatever a stray directory
+        contains, from a tool whose whole purpose is to find stray
+        directories.
+
+        VersionInfo is metadata in the file's resource table. A .cmd or
+        .bat shim has none, and "" is the honest answer for those — the
+        directory is still the thing the user is choosing between.
+    #>
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    try {
+        $Info = (Get-Item -LiteralPath $Path -ErrorAction Stop).VersionInfo
+        foreach ($Candidate in @($Info.ProductVersion, $Info.FileVersion)) {
+            if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
+                return $Candidate.Trim()
+            }
+        }
+    } catch {
+        return ""
+    }
+    return ""
 }
 
 function Write-PathScanReport {
@@ -884,6 +972,264 @@ function Invoke-PathSanitizer {
         Removed = $Removed
         Kept    = $Spared.Count
         Scopes  = @($Touched | Select-Object -Unique)
+    }
+}
+
+# ============================================================
+#  THE OTHER REPAIR - PROMOTE A TOOL, REMOVE NOTHING
+#
+#  THE PRUNE ANSWERS "WHAT IS RUBBISH"; THIS ANSWERS "WHICH ONE WINS".
+#  They are different questions with different risks, which is why this
+#  is not a mode of Invoke-PathSanitizer. A prune deletes entries it can
+#  prove are dead. This one deletes NOTHING - it reorders a list, so
+#  every directory that answered a command before still answers it
+#  afterwards and every binary is still on the PATH. The worst outcome of
+#  a wrong reorder is that the user picks the other option; the worst
+#  outcome of a wrong removal is a toolchain that has to be reinstalled.
+#
+#  WINDOWS COMPOSES THE PATH AS MACHINE-THEN-USER, and that single fact
+#  decides what this function can and cannot promise:
+#
+#    A MACHINE ENTRY can be promoted to beat anything at all - moving it
+#    to the front of the machine list puts it in front of every other
+#    machine entry and in front of the whole user list.
+#
+#    A USER ENTRY can only be promoted past OTHER USER ENTRIES. No
+#    ordering of the user list will ever put one ahead of a machine
+#    entry, because the machine list is concatenated first.
+#
+#  So a user-scope Python shadowed by a machine-scope Python CANNOT be
+#  fixed by reordering, and this refuses it and says so rather than
+#  writing a change that appears to succeed and alters nothing. The two
+#  ways to "fix" it are both out of bounds: removing the machine entry is
+#  the destructive act this exists to avoid, and copying the per-user
+#  directory into the machine PATH publishes one account's tools to every
+#  account on the box.
+# ============================================================
+function Get-PathPriorityPlan {
+    <#
+    .SYNOPSIS
+        Can `Directory` be made to win `Command`, and what would that
+        take? Read-only - it decides, it does not act.
+
+    .DESCRIPTION
+        Returns Action, Scope, Reason, Order and Providers.
+
+        Action is one of:
+          reorder  the scope's list can be rewritten to make this win
+          none     it already wins; there is nothing to do
+          blocked  reordering cannot achieve it - Reason says why
+
+        Order is the scope's NEW raw entry list, in full, with the chosen
+        directory moved to the front and everything else in its existing
+        order. Nothing is dropped: the list is a permutation of the one
+        that went in, which is the property that makes this safe and the
+        one Set-PathToolPriority re-checks before it writes.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [object[]]$Entries
+    )
+
+    if (-not $Entries) { $Entries = @(Get-PathEntryReport) }
+    $Blocked = {
+        param($Reason)
+        [PSCustomObject]@{
+            Command = $Command; Directory = $Directory
+            Action = "blocked"; Scope = ""; Reason = $Reason
+            Order = @(); Providers = @()
+        }
+    }
+
+    $Conflict = @(Get-PathCommandConflicts -Entries $Entries |
+        Where-Object { $_.Command -eq $Command }) | Select-Object -First 1
+    if (-not $Conflict) {
+        return (& $Blocked "'$Command' is not answered by more than one PATH directory, so there is nothing to reorder.")
+    }
+
+    $Providers = @($Conflict.Providers)
+    $Chosen = @($Providers | Where-Object {
+        $_.Path.TrimEnd('\') -eq $Directory.TrimEnd('\') }) |
+        Select-Object -First 1
+    if (-not $Chosen) {
+        return (& $Blocked "$Directory does not contain '$Command', so promoting it would change nothing.")
+    }
+    if ($Providers[0].Path.TrimEnd('\') -eq $Chosen.Path.TrimEnd('\')) {
+        return [PSCustomObject]@{
+            Command = $Command; Directory = $Directory
+            Action = "none"; Scope = $Chosen.Scope
+            Reason = "'$Command' already runs the copy in $Directory."
+            Order = @(); Providers = $Providers
+        }
+    }
+
+    # THE ONE CASE REORDERING CANNOT REACH. See the header above.
+    if ($Chosen.Scope -eq "User") {
+        $MachineAhead = @($Providers | Where-Object { $_.Scope -eq "Machine" })
+        if ($MachineAhead.Count -gt 0) {
+            return (& $Blocked ("$Directory is in your USER PATH and '$Command' is also in the SYSTEM PATH ($($MachineAhead[0].Path)). Windows always searches the system PATH first, so no reordering of your user PATH can put this copy in front. Pulse will not remove the system entry or copy a per-user folder into the system PATH."))
+        }
+    }
+
+    $Current = @($Entries | Where-Object { $_.Scope -eq $Chosen.Scope } |
+        ForEach-Object { $_.Raw })
+    $Moved = @($Current | Where-Object { $_ -eq $Chosen.Raw })
+    if ($Moved.Count -eq 0) {
+        return (& $Blocked "$Directory is no longer in the $($Chosen.Scope) PATH - re-scan and try again.")
+    }
+    $Rest = @($Current | Where-Object { $_ -ne $Chosen.Raw })
+    return [PSCustomObject]@{
+        Command   = $Command
+        Directory = $Directory
+        Action    = "reorder"
+        Scope     = $Chosen.Scope
+        Reason    = "moves $Directory to the front of the $($Chosen.Scope) PATH; nothing is removed."
+        Order     = @(@($Chosen.Raw) + $Rest)
+        Providers = $Providers
+    }
+}
+
+function Set-PathToolPriority {
+    <#
+    .SYNOPSIS
+        Makes `Directory` the copy of `Command` that Windows runs, by
+        REORDERING the PATH. Removes nothing.
+
+    .DESCRIPTION
+        Same order of operations as Invoke-PathSanitizer, and for the
+        same reason: restore point, then the readable per-scope backup,
+        then the write. There is no window in which the PATH has changed
+        and nothing has recorded what it was.
+
+        THE PERMUTATION CHECK IS THE SAFETY PROPERTY, and it is asserted
+        here rather than trusted from Get-PathPriorityPlan: the new value
+        must contain exactly the same entries as the old one, only in a
+        different order. A plan that has somehow dropped an entry is
+        refused, because the one thing this operation promises is that no
+        binary leaves the PATH.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Directory
+    )
+
+    Write-SectionHeader "PATH Priority"
+
+    $Plan = Get-PathPriorityPlan -Command $Command -Directory $Directory
+    if ($Plan.Action -eq "none") {
+        Write-TaggedLine -Tag "OK" -Text $Plan.Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = ""; Reason = $Plan.Reason }
+    }
+    if ($Plan.Action -ne "reorder") {
+        Write-TaggedLine -Tag "KEPT" -Text $Plan.Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = ""; Reason = $Plan.Reason }
+    }
+
+    $Scope = $Plan.Scope
+    if ($Scope -eq "Machine" -and -not (Test-IsElevatedSession)) {
+        $Reason = "The system PATH needs Administrator. Re-run Pulse elevated to promote a system-wide tool."
+        Write-TaggedLine -Tag "KEPT" -Text $Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
+    }
+
+    $Current = [Environment]::GetEnvironmentVariable("Path", $Scope)
+    if ([string]::IsNullOrWhiteSpace($Current)) {
+        $Reason = "The $Scope PATH is empty or unreadable - nothing was changed."
+        Write-TaggedLine -Tag "WARN" -Text $Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
+    }
+
+    $NewValue = (@($Plan.Order) -join ";")
+    # THE PERMUTATION CHECK. Compared as SORTED MULTISETS rather than as
+    # sets: a PATH that legitimately lists the same folder twice must come
+    # out still listing it twice, and a set comparison would wave through
+    # a plan that silently de-duplicated it.
+    $Before = @(@($Current -split ";") | Where-Object { $_.Trim() } |
+        ForEach-Object { $_.Trim() } | Sort-Object)
+    $After = @(@($Plan.Order) | Where-Object { $_.Trim() } |
+        ForEach-Object { $_.Trim() } | Sort-Object)
+    if ($Before.Count -ne $After.Count -or
+        (Compare-Object -ReferenceObject $Before -DifferenceObject $After -SyncWindow 0)) {
+        $Reason = "The $Scope PATH changed while this was being planned - nothing was written. Re-scan and try again."
+        Write-TaggedLine -Tag "FAIL" -Text $Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
+    }
+
+    Write-TaggedLine -Tag "PLAN" -Text "$Command -> $Directory moves to the front of the $Scope PATH ($($Plan.Providers.Count) copies stay on the PATH)"
+
+    if (Test-DryRun "Promote $Directory to the front of the $Scope PATH") {
+        return [PSCustomObject]@{ Changed = $true; Scope = $Scope; Reason = $Plan.Reason }
+    }
+
+    New-SystemRestorePoint -Action "PathPriority"
+    if (-not (Save-PathBackup -Scope $Scope -Value $Current)) {
+        return [PSCustomObject]@{ Changed = $false; Scope = $Scope
+                                  Reason = "The $Scope PATH could not be backed up - nothing was changed." }
+    }
+
+    try {
+        [Environment]::SetEnvironmentVariable("Path", $NewValue, $Scope)
+    } catch {
+        $Reason = "The $Scope PATH could not be written: $($_.Exception.Message)"
+        Write-TaggedLine -Tag "FAIL" -Text $Reason
+        return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
+    }
+
+    Write-TaggedLine -Tag "PRIORITY" -Text "$Scope PATH -> $Directory is now first; '$Command' runs the copy there"
+    foreach ($Provider in @($Plan.Providers)) {
+        if ($Provider.Path.TrimEnd('\') -eq $Directory.TrimEnd('\')) { continue }
+        Write-TaggedLine -Tag "KEPT" -Text "$($Provider.Scope) PATH -> $($Provider.Path)  (still on the PATH, now searched later)"
+    }
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("Path", "User")
+    Write-TaggedLine -Tag "INFO" -Text "A copy of the previous $Scope PATH is under HKCU\Software\Pulse\PathBackups, and the restore point above covers it too."
+    Write-TaggedLine -Tag "INFO" -Text "The change reaches NEW terminals only - anything already open keeps the PATH it started with."
+    return [PSCustomObject]@{ Changed = $true; Scope = $Scope; Reason = $Plan.Reason }
+}
+
+function Get-PathConflictReport {
+    <#
+    .SYNOPSIS
+        The shadowed-toolchain findings, shaped for the GUI. Read-only.
+
+    .DESCRIPTION
+        Every contested command with each of its providers, the scope the
+        provider sits in, the version stamped in the binary, and whether
+        promoting that provider is something reordering can actually
+        achieve. `Fixable` is computed HERE rather than in the dialog so
+        the rule that decides it lives beside the rule that enforces it -
+        a GUI that offers a button the backend will refuse is worse than
+        one that offers nothing.
+    #>
+    $Entries = @(Get-PathEntryReport)
+    $Conflicts = @(Get-PathCommandConflicts -Entries $Entries)
+    $Out = New-Object System.Collections.ArrayList
+    foreach ($Conflict in $Conflicts) {
+        $Options = New-Object System.Collections.ArrayList
+        foreach ($Provider in @($Conflict.Providers)) {
+            $Plan = Get-PathPriorityPlan -Command $Conflict.Command `
+                -Directory $Provider.Path -Entries $Entries
+            [void]$Options.Add([PSCustomObject]@{
+                path    = $Provider.Path
+                scope   = $Provider.Scope
+                version = $Provider.Version
+                winner  = ($Provider.Path -eq $Conflict.Winner)
+                action  = $Plan.Action
+                reason  = $Plan.Reason
+            })
+        }
+        [void]$Out.Add([PSCustomObject]@{
+            command = $Conflict.Command
+            winner  = $Conflict.Winner
+            count   = $Conflict.Count
+            options = @($Options)
+        })
+    }
+    return [PSCustomObject]@{
+        conflicts = @($Out)
+        entries   = $Entries.Count
+        elevated  = [bool](Test-IsElevatedSession)
     }
 }
 

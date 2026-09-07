@@ -15,6 +15,171 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.12.0] — 2026-09-07
+
+### Added — every row in the purge list looks like the app it names
+
+- **Twenty-nine of the forty-nine catalogued apps had no artwork.** They
+  rendered a per-app Fluent *pictogram* in one colour — which was itself a
+  fix, and a real one: before it, the twenty-five rows in "Pre-installed
+  stubs and promotions" were twenty-five identical trash cans. What one
+  colour could not buy is recognition. A pictogram is a shape the reader
+  **decodes**, and on a clean Windows install — where nearly every row is a
+  Start-menu stub and the dialog is most used — the list was a column of
+  single-tone outlines to be told apart by reading each label.
+
+  It was also a visible seam. Twenty-one rows already carried real vendor
+  artwork, so the dialog rendered two tiers side by side: a full-colour
+  Skype logo two rows above a flat periwinkle cloud. A reader does not see
+  "vendor mark, then our pictogram" — they see one icon that loaded and one
+  that did not.
+
+  **Every catalogued row now carries a full-colour mark.** Twenty-eight are
+  drawn here, each from several paths in that product's own palette:
+  Weather is a golden sun behind a two-tone blue cloud, Maps a folded route
+  card with green land, blue water and a red pin, Solitaire a fanned deck
+  with a red heart and a black spade on green baize. The twenty-ninth is
+  the Office launcher tile, which turned out to have genuine vendor artwork
+  (`thesvg-color:microsoft-office`) that the first pass had simply missed
+  because the catalog id carries no "hub".
+
+- **The drawn marks say they are ours, in the manifest, in two fields.**
+  `drawn: true` and `source: "pulse-drawn"` — the same labelling the twelve
+  hardware-tool marks have carried since v16, so a reader diffing
+  `assets/appicons/` can tell a vendor's mark from ours without knowing any
+  of this history. They are pictograms in a product's real colours; they do
+  not claim to be logos and nothing downstream treats them as such.
+
+- **The gap was re-measured before it was filled.** Iconify's two
+  full-colour brand collections were listed in full — `thesvg-color` (4,855
+  marks) and `logos` (1,880) — and every Microsoft-published mark in them
+  that the purge catalog names was already bundled. Disney+ and Prime Video
+  remain **wordmark-only** upstream, measured again at 1.84:1 and 3.25:1,
+  which is an illegible smear in the 20px square every mark here is drawn
+  into; they are drawn rather than taken. No lookalike is used.
+
+- **`BloatRow._APP_MARKS` is gone rather than emptied**, with the reasoning
+  that produced it recorded where it stood. `_GLYPHS` survives as the floor
+  for a catalog entry added before its artwork lands, and a test fails if
+  any *catalogued* row reaches it.
+
+### Added — the Startup Manager can see the two things it could not
+
+- **Every entry in the Startup *folder* is a `.lnk`, and a shortcut is a
+  file** — so `executable_from_command` returned it happily and the
+  extractor obliged, with the shell's rendering of a *shortcut*: the
+  target's artwork carrying the little arrow overlay. A column of those
+  says "these are links" in a list where that is never the interesting
+  fact, and for a link to uninstalled software it says it over a blank
+  page.
+
+  Shortcuts are now resolved to their targets through `IShellLinkW` +
+  `IPersistFile::Load`, with a `.lnk` binary reader as the fallback for a
+  machine where the shell is the thing that is unwell. `Resolve()` is
+  deliberately *not* called: it walks the volume and waits on the network
+  for a moved target, which in a list that resolves thirty rows while the
+  user watches is a UI freeze bought to improve the icon on a broken
+  shortcut. Measured on this machine: 38 of 40 Start-menu shortcuts
+  resolved, and both that did not point at binaries that have been
+  uninstalled — which is exactly when the generic mark is the correct
+  answer.
+
+- **A Store app has no binary to point at, and its artwork is not in its
+  `.exe`.** A packaged app declares PNG files in `AppxManifest.xml`, so
+  every rung of the extraction ladder succeeded and returned Windows'
+  generic application placeholder. Pulse now reads the manifest and takes
+  the largest **plated** variant of `Square44x44Logo` — the artwork Windows
+  itself shows in Start, typically at 256px.
+
+  The package folder is found through the registry
+  (`…\AppModel\Repository\Packages`), which is readable **without
+  elevation**; `%ProgramFiles%\WindowsApps` refuses a directory listing to
+  everything but TrustedInstaller, so globbing for a package folder fails
+  on exactly the machines this is for. Traversing *into* a known package is
+  allowed, so once the registry names one its manifest and assets read
+  normally.
+
+- **`shell:AppsFolder\<family>!<app>`** — how Windows addresses a packaged
+  app that has no path — now resolves to that package's logo.
+
+- **The generic executable mark is now reached only when the target is
+  genuinely missing from disk**, which is what it always meant and what it
+  did not previously say.
+
+### Added — PATH Doctor can fix the conflict it finds
+
+- **The scan reported shadowed toolchains and stopped there.**
+  `[SHADOWED]` lines have said "you have two Pythons and this is the one
+  that answers" since v10.11, and the only fix on offer was for the user to
+  go and reorder an environment variable by hand — which is where they were
+  before they opened the tool. A new **Fix Shadowed Tools** card in the
+  PATH Doctor hub lists every contested command with each copy, its scope
+  and the version stamped in the binary, and promotes the one the user
+  picks.
+
+- **It reorders and removes nothing**, which is the whole safety argument
+  and why the card is neither red nor confirmed beside the prune. Every
+  copy that answered a command before still answers it; one of them answers
+  first. The written value is checked against the live PATH as a sorted
+  **multiset** before anything is stored, so a plan that has dropped an
+  entry is refused rather than applied — "removes nothing" is asserted, not
+  intended. Restore point, then a readable per-scope backup, then the
+  write, in that order.
+
+- **The case it refuses is the interesting one.** Windows composes the
+  search path as machine-then-user, so a user-scope folder can never
+  overtake a machine-scope one however the user list is sorted. Rather than
+  offering a button that would write a change, report success and leave
+  `python --version` answering exactly as before, that option is marked
+  blocked and the reason is printed on the card. The two ways to actually
+  do it are both out of bounds: removing the system entry is the
+  destructive act the card promises not to perform, and copying a per-user
+  folder into the machine PATH publishes one account's tools to every
+  account on the box.
+
+- **The conflict scan learned the modern toolchains** — `pwsh`, `docker`,
+  `docker-compose`, `bun`, `bunx`, `uv`, `uvx`, `deno`, `rustup`, `gofmt`,
+  `poetry`, `kubectl`. Adding a name here is cheap in a way that adding one
+  to the dev-tool *catalogue* is not: the catalogue prints a `[MISSING]`
+  line for every tool it does not find, which is why Ollama was removed
+  from it, while this list prints nothing unless a name is found **twice**.
+
+- **Versions are read, never run.** The obvious way to tell two Pythons
+  apart is `--version`, and that is the one thing a PATH diagnostic must
+  not do: the binaries it is looking at are, by definition, ones the user
+  did not choose and may not know about. The label comes from the file's
+  own version resource.
+
+### Fixed
+
+- **`Movies & TV` drew as "Movies TV".** Qt reads `&` in a control's label
+  as a mnemonic marker, and the purge row's checkbox was handed the catalog
+  name raw — so one row in a list of fifty carried a name that did not match
+  the app it names, on the surface where the name *is* the decision. Found
+  by looking at the rendered dialog, which is the only way this class of bug
+  is ever found; pinned against the catalog rather than against a literal,
+  so a second entry with an ampersand cannot arrive unnoticed.
+
+- **Three chips on the `pip` card all read "Scripts".** The promotion
+  buttons were labelled with the leaf folder, and three Python
+  installations put `pip` in three directories of that name — the same
+  sameness the purge icons were fixed for, in a new place. A card now
+  labels by **version** when every option has a distinct one (`java` reads
+  21.0.12.1 against 26.0.2.0, which is the fact being chosen between) and
+  otherwise by the shortest trailing path fragment that is unique within
+  that card.
+
+### Changed
+
+- `nativeicons` is now two halves — resolve, then extract — and its module
+  docstring says which is which.
+- `appicons`' module docstring had drifted twice before this release
+  ("nine marks" after DRAWN_MAP grew to twelve; "two catalog apps still
+  have no bundled mark" after both were drawn). Both are corrected against
+  the tree: all 46 catalog apps and all 49 purge rows have a mark.
+
+---
+
 ## [10.11.0] — 2026-09-06
 
 ### Fixed — the focus ring belonged to whoever touched the app first

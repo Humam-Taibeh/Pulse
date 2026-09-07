@@ -78,7 +78,8 @@ from frontend.widgets import (  # noqa: E402
     ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
     HubDialog,
     NavButton,
-    NavPill, NoticeDialog, OfficeWizardDialog, PlaybookDialog,
+    NavPill, NoticeDialog, OfficeWizardDialog, PathConflictDialog,
+    PlaybookDialog,
     PowerHealthDialog,
     PulseDialog, RestorePointDialog, RevertChoiceDialog,
     ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
@@ -2931,6 +2932,16 @@ class PulseApp(QMainWindow):
             # live list, re-scanned after every change so the rows show
             # the registry rather than the request.
             self._exec_dialog(ContextMenuDialog(
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+            return
+        if item.get("path_conflicts"):
+            # Self-contained like the DNS switcher: it scans, promotes one
+            # folder at a time and re-scans through its own workers, so
+            # there is no selection for the task pipeline to carry.
+            # `is_admin` is passed in so the dialog can SHOW what is
+            # shadowed without elevation and disable only the buttons that
+            # would write.
+            self._exec_dialog(PathConflictDialog(
                 self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
             return
         if item.get("dns_switcher"):

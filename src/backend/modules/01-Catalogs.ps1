@@ -906,5 +906,11 @@ $Script:AdminRequiredTasks = @(
     # deliberately absent for the same reason ContextMenuScan and the two
     # network reports are: reading a PATH needs nothing, and gating the
     # scan would raise a UAC prompt just to look at it.
-    "PathSanitize"
+    "PathSanitize",
+    # The PATH priority fix writes a PATH and opens with a restore point
+    # too, so it is gated identically - even though it REMOVES nothing.
+    # "Reversible" is not the test here; "writes machine state" is. Its
+    # read-only twin, PathConflictReport, is deliberately absent: listing
+    # which tools have two copies needs no rights.
+    "PathPrioritize"
 )

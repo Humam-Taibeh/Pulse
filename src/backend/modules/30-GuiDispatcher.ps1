@@ -478,6 +478,42 @@ function Invoke-GuiTask {
                 }
                 break
             }
+            # THE THIRD HALF OF THE DOCTOR, and read-only like the first.
+            # Listing which tools have two copies needs no rights at all,
+            # so gating it would raise a UAC prompt to LOOK at a problem.
+            "PathConflictReport" {
+                Write-Log "GUI-TASK: scanning the PATH for shadowed toolchains."
+                $Report = Get-PathConflictReport
+                Write-GuiData -Data $Report
+                $Count = @($Report.conflicts).Count
+                if ($Count -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|No shadowed tools - every command on your PATH is answered by exactly one folder."
+                } else {
+                    $Noun = if ($Count -eq 1) { "tool has" } else { "tools have" }
+                    Write-Output "##PULSE##SUCCESS|$Count $Noun more than one copy on your PATH."
+                }
+                break
+            }
+            # REORDERS, NEVER REMOVES. Its own task rather than a mode of
+            # PathSanitize because the two answer different questions and
+            # carry different risk: the prune deletes what it can prove is
+            # dead, this one changes which of several live copies answers
+            # first and leaves every one of them on the PATH.
+            "PathPrioritize" {
+                if ([string]::IsNullOrWhiteSpace($PathCommand) -or
+                    [string]::IsNullOrWhiteSpace($PathDirectory)) {
+                    Write-Output "##PULSE##ERROR|Pulse was not told which tool and folder to promote."
+                    break
+                }
+                $Result = Set-PathToolPriority -Command $PathCommand -Directory $PathDirectory
+                $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
+                if ($Result.Changed) {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}'$PathCommand' now runs the copy in $PathDirectory. Nothing was removed - the other copies are still on your PATH, just searched later. Open a new terminal to see the change."
+                } else {
+                    Write-Output "##PULSE##ERROR|$($Result.Reason)"
+                }
+                break
+            }
 
             # ============ 2. SYSTEM OPTIMIZATION ============
             "DarkMode" {

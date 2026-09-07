@@ -407,12 +407,25 @@ class TestRowIdentity:
     label — in the one dialog whose whole job is deciding about apps ONE AT
     A TIME.
 
-    THREE TIERS, THE SAME ORDER THE REST OF THE APP USES: the vendor's own
-    mark where one exists and survives 20px, this app's Fluent pictogram
-    where it does not, and the catalog group's glyph as the floor. Disney+
-    and Prime Video are deliberately on tier two — every published mark for
-    either is a WORDMARK, which is four illegible letterforms in a 20px
-    square — and nothing is invented for them.
+    ONE TIER SINCE v10.12, and the floor is now unreachable from the
+    catalog. Every catalogued row carries a bundled FULL-COLOUR mark:
+    twenty-one are the vendors' own artwork, twenty-eight are Pulse-drawn
+    in each product's real palette and labelled as ours in the manifest
+    (`drawn: true`), and one — the Office launcher tile — was genuine
+    vendor artwork that had simply been missed.
+
+    THE TIER THIS REPLACED WAS NOT THE GROUP GLYPH, and the distinction is
+    the reason these tests changed rather than being deleted. It was a
+    per-app Fluent PICTOGRAM in one colour, which was a real improvement
+    on twenty-five trash cans and still lost on a clean Windows install:
+    a single-tone outline is a shape the reader decodes, twenty-eight of
+    them in a column is a list to be read one label at a time, and the
+    twenty-one rows that already had real artwork made the seam visible
+    rather than hiding it.
+
+    `_GLYPHS` survives as the floor for a catalog entry added before its
+    artwork lands, and test_no_catalogued_row_falls_back_to_a_glyph is
+    what stops that window becoming a resting state.
     """
 
     def test_the_mark_ids_are_namespaced_away_from_winget(self):
@@ -439,58 +452,152 @@ class TestRowIdentity:
         finally:
             row.deleteLater(); qapp.processEvents()
 
-    def test_an_unbranded_row_gets_its_own_pictogram_not_the_group_one(
+    def test_every_catalogued_row_has_a_full_colour_mark(self):
+        """THE v10.12 CONTRACT, and the assertion the previous pass could
+        not make.
+
+        Not "has a mark or a pictogram" — has a BUNDLED, FULL-COLOUR one.
+        Both halves are load-bearing. `manifest_ids()` alone would pass
+        for a mark flagged monochrome, which is the silhouette path: a
+        single brand hex walked through the contrast guard, which is
+        precisely the one-colour rendering this pass exists to remove. So
+        the flag is checked too, against the manifest the app actually
+        reads.
+        """
+        import json
+        import os
+
+        from conftest import bloat_catalog_ids
+        from utils import appicons
+
+        manifest = json.load(open(
+            os.path.join(_ROOT, "assets/appicons/manifest.json"),
+            encoding="utf-8"))
+        ids = bloat_catalog_ids()
+        missing = sorted(i for i in ids
+                         if f"Bloat.{i}" not in appicons.manifest_ids())
+        assert not missing, f"catalogued rows with no bundled mark: {missing}"
+        flat = sorted(i for i in ids
+                      if not manifest[f"Bloat.{i}"].get("color"))
+        assert not flat, (
+            "catalogued rows whose mark is a single-colour silhouette, "
+            f"which is the tier this pass removed: {flat}")
+
+    def test_no_catalogued_row_falls_back_to_a_glyph(self, window, qapp):
+        """The floor must stay a floor. Every catalogued entry builds the
+        MARK widget; none builds the plaque.
+
+        Asserted by constructing a real row per catalog id rather than by
+        re-reading the manifest, because the manifest being right and the
+        row still taking the wrong branch is a live failure mode — the row
+        decides which of two widgets to build BEFORE it asks for pixels
+        (see BloatRow.__init__ and appicons.manifest_ids).
+        """
+        from conftest import bloat_catalog_ids
+
+        fell_back = []
+        rows = []
+        try:
+            for entry_id in sorted(bloat_catalog_ids()):
+                entry = {"Id": entry_id, "Name": entry_id, "Group": "promo",
+                         "Note": "n", "Detected": False, "Presence": "absent",
+                         "Optional": False, "Installed": [],
+                         "Provisioned": [], "Desktop": [], "Startup": []}
+                row = BloatRow(entry, window.theme.t)
+                rows.append(row)
+                if row._mark is None or row.plaque is not None:
+                    fell_back.append(entry_id)
+        finally:
+            for row in rows:
+                row.deleteLater()
+            qapp.processEvents()
+        assert not fell_back, (
+            f"rows still drawing the group glyph: {fell_back}")
+
+    def test_two_unrelated_rows_do_not_wear_the_same_artwork(
             self, window, qapp):
-        """Groove Music has no mark in any open set and must still not
-        look like Candy Crush."""
+        """Groove Music must not look like Candy Crush.
+
+        The ORIGINAL defect, re-asserted against the tier that answers it
+        now. It is checked by rendering both marks and comparing the
+        PIXELS, not by comparing ids: two catalog entries can legitimately
+        share one asset (the six Xbox rows all wear the Xbox sphere, which
+        is what the vendor's own branding looks like), so the thing worth
+        pinning is that two UNRELATED products do not.
+        """
         made = {}
         for entry_id, name in (("ZuneMusic", "Groove Music"),
-                               ("KingGames", "Candy Crush")):
+                               ("KingGames", "Candy Crush"),
+                               ("BingWeather", "Weather"),
+                               ("Maps", "Windows Maps")):
             entry = {"Id": entry_id, "Name": name, "Group": "promo",
                      "Note": "n", "Detected": True, "Presence": "installed",
                      "Optional": False, "Installed": [name],
                      "Provisioned": [], "Desktop": [], "Startup": []}
-            row = BloatRow(entry, window.theme.t)
-            made[entry_id] = row
+            made[entry_id] = BloatRow(entry, window.theme.t)
         try:
-            for row in made.values():
-                assert row.plaque is not None and row.plaque.text()
-            assert made["ZuneMusic"].plaque.text() != made["KingGames"].plaque.text(), (
-                "two unrelated promo apps still wear the same mark")
+            digests = {}
+            for entry_id, row in made.items():
+                assert row._mark is not None, f"{entry_id} fell back to a glyph"
+                pixmap = row._mark.pixmap()
+                assert not pixmap.isNull(), f"{entry_id} rendered nothing"
+                image = pixmap.toImage()
+                digests[entry_id] = bytes(image.constBits())
+            collisions = [(a, b) for a in digests for b in digests
+                          if a < b and digests[a] == digests[b]]
+            assert not collisions, (
+                f"unrelated rows rendering identical artwork: {collisions}")
         finally:
             for row in made.values():
                 row.deleteLater()
             qapp.processEvents()
 
-    def test_every_declared_pictogram_is_a_real_glyph(self):
-        """A key with no GLYPHS entry renders as an empty string, which is
-        an invisible icon rather than an error."""
-        keys = ({glyph for glyph, _hex in BloatRow._APP_MARKS.values()}
-                | set(BloatRow._GLYPHS.values()))
-        missing = sorted(k for k in keys if k not in TH.GLYPHS)
-        assert not missing, f"pictogram keys absent from theme.GLYPHS: {missing}"
+    def test_an_ampersand_in_a_name_is_not_eaten_as_a_mnemonic(
+            self, window, qapp):
+        """FOUND BY LOOKING AT THE RENDERED DIALOG, which is the only way
+        this class of bug is ever found.
 
-    def test_every_pictogram_names_a_real_catalog_entry(self):
-        """A typo'd Id is a pictogram nothing will ever render."""
+        Qt reads "&" in a control's label as a MNEMONIC marker, so the
+        catalog's `Movies & TV` drew as "Movies TV" with the T underlined
+        — one row in a list of fifty whose name did not match the app it
+        names, on the surface where the name IS the decision.
+
+        Asserted against the CATALOG rather than a literal, so a second
+        entry with an ampersand cannot arrive unnoticed.
+        """
         from conftest import bloat_catalog_ids
-        stray = sorted(set(BloatRow._APP_MARKS) - bloat_catalog_ids())
-        assert not stray, f"pictograms for entries the catalog lacks: {stray}"
 
-    def test_every_mark_colour_clears_the_readability_floor(self, qapp):
-        """THE DEFECT THIS PASS WAS OPENED FOR, measured rather than
-        eyeballed.
+        assert "ZuneVideo" in bloat_catalog_ids()
+        entry = {"Id": "ZuneVideo", "Name": "Movies & TV", "Group": "promo",
+                 "Note": "n", "Detected": True, "Presence": "installed",
+                 "Optional": False, "Installed": [], "Provisioned": [],
+                 "Desktop": [], "Startup": []}
+        row = BloatRow(entry, window.theme.t)
+        try:
+            # The escaped form is what Qt needs; what it DRAWS is the
+            # single ampersand the catalog wrote.
+            assert row.checkbox.text() == "Movies && TV"
+            assert row._name == "Movies & TV", (
+                "the raw name must survive — appicons.app_icon keys on it")
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
 
-        Every pictogram was painted in one colour — the accent when the
-        package was present, `text_faint` when it was not — so a purge
-        list on a clean machine was a column of grey outlines that "blend
-        into the dark background". Per-product colour fixes the sameness;
-        it also introduces a new way to be unreadable, because a colour
-        chosen for a vendor's white page can be invisible on obsidian.
+    def test_the_group_glyphs_are_real_glyphs(self):
+        """The floor still has to render. A key with no GLYPHS entry
+        renders as an empty string, which is an invisible icon rather than
+        an error."""
+        missing = sorted(k for k in BloatRow._GLYPHS.values()
+                         if k not in TH.GLYPHS)
+        assert not missing, f"group glyph keys absent from theme.GLYPHS: {missing}"
 
-        So the floor is asserted on the surface the glyph ACTUALLY sits
-        on — the card tier with `plaque_well` composited over it, which is
-        lighter than the card on dark and darker on light — in both
-        themes, for every entry including the group fallbacks.
+    def test_the_group_glyph_colour_clears_the_readability_floor(self, qapp):
+        """The floor is reached only by a catalog entry whose artwork has
+        not landed, and on that day it still has to be visible.
+
+        Measured on the surface the glyph ACTUALLY sits on — the card tier
+        with `plaque_well` composited over it, which is lighter than the
+        card on dark and darker on light — in both themes.
         """
         from utils import appicons
 
@@ -512,19 +619,15 @@ class TestRowIdentity:
         for mode in ("dark", "light"):
             t = TH.tokens(mode)
             surface = TH.blend(t["card"], t["plaque_well"])
-            candidates = [(entry_id, hexv)
-                          for entry_id, (_g, hexv) in BloatRow._APP_MARKS.items()]
-            candidates.append(("<group fallback>", t["accent"]))
-            for entry_id, hexv in candidates:
-                tone = appicons.readable_glyph_color(hexv or t["accent"],
-                                                     surface, t)
-                ratio = contrast(TH.to_qcolor(tone), TH.to_qcolor(surface))
-                if ratio < floor:
-                    failures.append(f"{mode}/{entry_id}: {tone} at {ratio:.2f}:1")
+            tone = appicons.readable_glyph_color(t["accent"], surface, t)
+            ratio = contrast(TH.to_qcolor(tone), TH.to_qcolor(surface))
+            if ratio < floor:
+                failures.append(f"{mode}: {tone} at {ratio:.2f}:1")
         assert not failures, (
-            "marks that vanish into their own well: " + "; ".join(failures))
+            "the group fallback vanishes into its own well: "
+            + "; ".join(failures))
 
-    def test_absence_does_not_drain_the_mark(self, qapp):
+    def test_absence_does_not_drain_the_mark(self, window, qapp):
         """A row for a package that is NOT here must render its icon at
         the SAME colour as one that is.
 
@@ -532,34 +635,32 @@ class TestRowIdentity:
         surface dims via `disabled_item`, the checkbox is disabled, and
         the badge reads NOT PRESENT. Draining the icon on top of that was
         the fourth telling, and it cost the only part of the row that is
-        recognisable without reading. It was also inconsistent: the
-        fourteen rows carrying a bundled SVG have always rendered in full
-        colour whether present or not.
+        recognisable without reading.
+
+        NOW ASSERTED ON THE MARK TIER, which is where Maps lives since
+        v10.12. It used to be asserted on the plaque's stylesheet; the
+        equivalent claim for artwork is that the two rows rasterise to
+        the same pixels.
         """
-        t = TH.tokens("dark")
         base = {"Id": "Maps", "Name": "Windows Maps", "Group": "core",
                 "Note": "n", "Optional": False, "Installed": [],
                 "Provisioned": [], "Desktop": [], "Startup": []}
-        here = BloatRow({**base, "Detected": True, "Presence": "installed"}, t)
-        gone = BloatRow({**base, "Detected": False, "Presence": "absent"}, t)
-        assert here.plaque is not None and gone.plaque is not None, (
-            "Maps is expected to be on the pictogram tier")
-        assert gone.plaque.styleSheet() == here.plaque.styleSheet(), (
-            "an absent package's mark is still being drained to a faint "
-            "tone, which is what made this list unreadable")
-
-    def test_no_catalogued_row_is_left_on_the_group_fallback(self):
-        """The floor must stay a floor. Every entry should be answered by
-        a brand mark or by its own pictogram; a row still falling through
-        to "one glyph per layer" is one this pass missed."""
-        from conftest import bloat_catalog_ids
-        from utils import appicons
-        branded = {a[len("Bloat."):] for a in appicons.manifest_ids()
-                   if a.startswith("Bloat.")}
-        covered = branded | set(BloatRow._APP_MARKS)
-        uncovered = sorted(bloat_catalog_ids() - covered)
-        assert not uncovered, (
-            f"rows with neither a mark nor a pictogram: {uncovered}")
+        here = BloatRow({**base, "Detected": True, "Presence": "installed"},
+                        window.theme.t)
+        gone = BloatRow({**base, "Detected": False, "Presence": "absent"},
+                        window.theme.t)
+        try:
+            assert here._mark is not None and gone._mark is not None, (
+                "Maps is expected to carry a bundled mark")
+            first = bytes(here._mark.pixmap().toImage().constBits())
+            second = bytes(gone._mark.pixmap().toImage().constBits())
+            assert first == second, (
+                "an absent package's mark is still being drained, which is "
+                "what made this list unreadable")
+        finally:
+            here.deleteLater()
+            gone.deleteLater()
+            qapp.processEvents()
 
 
 # ============================================================

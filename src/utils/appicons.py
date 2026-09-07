@@ -35,38 +35,58 @@ field and the tab pills above it. Three sources, tried in order:
      `logos` collection and the MIT `thesvg-color` / `devicon` sets, and
      falls back to a silhouette only where no colour artwork exists.
 
-       PULSE-DRAWN — nine marks that are NOT vendor logos and are
+       PULSE-DRAWN — forty marks that are NOT vendor logos and are
        recorded as such (`drawn: true`, `source: "pulse-drawn"`). They
-       cover BlueStacks, DirectX and the seven hardware-diagnostics
-       tools, none of which has authentic artwork in ANY open, licensed
-       set: measured against the full Simple Icons index (~3300 marks),
-       the whole `logos` collection (1880), and Iconify's federated
-       search across every collection it aggregates, which returns ZERO
-       results for all nine. Each is a pictogram of what the tool
-       measures, in that product's own colour — a CPU die, a
-       thermometer, a card and fan, a platter, a sensor trace, a flame,
-       a render cube. They are rendered exactly like a fetched colour
-       mark; the flag exists so nobody reading the manifest later
-       mistakes one for the vendor's own.
+       fall into two groups, declared in two registers because they key
+       off two different catalogs (see tools/fetch_app_icons.py):
 
-       THIS IS A DEPARTURE and it is a bounded one. The rule everywhere
-       else in this module still holds — a wrong logo is worse than no
-       logo — and the traps are still real and still close: the index
-       offers `campaignmonitor` for HWMonitor and `crystal` (the
-       programming language) for CrystalDiskInfo, and neither is used.
-       What changed is the honest cost of the alternative: nine grey
-       parcels in a nine-row group is not a graceful fallback, it is a
-       list with no icons in it. See DRAWN_MAP in
-       tools/fetch_app_icons.py for the full reasoning and for what to
-       do the day one of these brands publishes a real mark.
+         TWELVE FOR THE SOFTWARE CATALOG (DRAWN_MAP) — BlueStacks,
+         DirectX, the seven hardware-diagnostics tools, MSYS2, WinRAR
+         and OpenAL. Each is a pictogram of what the tool measures, in
+         that product's own colour: a CPU die, a thermometer, a card and
+         fan, a platter, a sensor trace, a flame, a render cube.
 
-     TWO CATALOG APPS STILL HAVE NO BUNDLED MARK, and each for its own
-     stated reason rather than for want of looking: WinRAR's real logo
-     exists only under a copyleft licence this MIT app will not take on
-     for one row, and OpenAL publishes nothing but WORDMARKS, which are
-     an illegible smear in the 20px square every mark here is drawn into.
-     Both fall to tier 2, where the vendor's own artwork is read out of
-     their own installed binary, and to tier 3 when the app is absent.
+         TWENTY-EIGHT FOR THE PURGE CATALOG (BLOAT_DRAWN_MAP) — the
+         Windows in-box apps and pre-installed stubs, each built from
+         several paths in that product's real palette rather than as a
+         one-colour glyph: Weather is a golden sun behind a two-tone
+         blue cloud, Maps a folded route card with green land, blue
+         water and a red pin, Solitaire a fanned deck with a red heart
+         and a black spade on green baize.
+
+       None of the forty has authentic artwork in any open, licensed
+       set, and that was measured rather than assumed: the full Simple
+       Icons index (~3300 marks), the whole `logos` collection (1880),
+       the whole `thesvg-color` collection (4855), and Iconify's
+       federated search across every collection it aggregates. They are
+       rendered exactly like a fetched colour mark; the flag exists so
+       nobody reading the manifest later mistakes one for the vendor's
+       own.
+
+       THIS IS A DEPARTURE and it is a bounded one — bounded by an
+       ARGUMENT rather than by a count, which is why the count has grown
+       twice. The rule everywhere else in this module still holds — a
+       wrong logo is worse than no logo — and the traps are still real
+       and still close: the index offers `campaignmonitor` for HWMonitor
+       and `crystal` (the programming language) for CrystalDiskInfo, and
+       neither is used. What justifies the exception each time is the
+       honest cost of the alternative: a group where every row falls
+       back is not a graceful fallback, it is a list with no icons in
+       it. That was true of the nine-row diagnostics group and it was
+       true of the purge dialog, where twenty-eight rows sat beside
+       twenty-one carrying real vendor artwork — which does not read as
+       two tiers, it reads as half the list having failed to load. See
+       DRAWN_MAP and BLOAT_DRAWN_MAP in tools/fetch_app_icons.py for the
+       full reasoning and for what to do the day one of these brands
+       publishes a real mark.
+
+     EVERY CATALOG APP NOW HAS A BUNDLED MARK — all 46 of them, and all
+     49 purge rows besides. The two that used to be listed here as
+     stated gaps, WinRAR and OpenAL, are the two DRAWN_MAP took on in
+     v16 for the reason recorded there: a copyleft licence this MIT app
+     will not carry for one row, and a wordmark that is an illegible
+     smear at 20px. Neither gap closed; both were answered a different
+     way.
 
      THIS OUTRANKS THE INSTALLED APP'S OWN ICON, which is not the obvious
      ordering and was arrived at by looking at the result. Windows' icon
@@ -86,14 +106,18 @@ field and the tab pills above it. Three sources, tried in order:
      THIS TIER IS LOAD-BEARING, and an earlier draft of this docstring
      said the opposite ("every catalog app now has a bundled mark, so this
      tier no longer fires for them") four paragraphs after correctly
-     listing the apps that do not. Two catalog rows still depend on it —
-     WinRAR and OpenAL — so reading that sentence as licence to delete it
-     would downgrade them to grey parcels.
+     listing the apps that did not.
 
-     It also covers the Update Center, which lists whatever winget reports
-     as upgradable and is therefore not limited to the catalog at all.
+     NO CATALOG ROW DEPENDS ON IT ANY MORE — WinRAR and OpenAL, the two
+     that did, are drawn as of v16 — and that is still not licence to
+     delete it, which is the same mistake in a new spot. What it carries
+     now is the whole of the UPDATE CENTER, which lists whatever winget
+     reports as upgradable and is therefore not limited to the catalog at
+     all, plus the STARTUP MANAGER by way of binary_icon. Both are lists
+     of arbitrary software on the user's machine, so the set of ids they
+     can produce is unbounded and no manifest can ever cover it.
 
-     The count is pinned by
+     The catalog's own coverage is pinned by
      TestBrandMarks.test_every_catalog_app_has_a_mark_or_is_a_known_exception,
      so this paragraph cannot drift from the tree again.
 
@@ -1053,13 +1077,21 @@ def binary_icon(command: str, px: int, t: dict) -> QPixmap:
     hives, and a startup entry's name is a registry value like
     "MicrosoftEdgeAutoLaunch_1C40B5E8" that matches nothing.
 
-    The ladder is deliberately short, because there is no curated mark to
-    prefer here: resolve the executable out of the command line, ask
-    Windows for its icon, and draw the generic executable mark when
-    either step fails. Every rung ends up on the SAME well as every other
-    icon in the app (see _in_well), so a list where two rows fell back is
-    still one column of consistently-sized marks rather than a ragged
-    one.
+    There is no curated mark to prefer here, so the whole answer comes
+    from the machine: nativeicons.resolve_command turns the command line
+    into either a BINARY (environment variables expanded, arguments
+    stripped, a Startup-folder shortcut followed to its target) or a
+    packaged app's own ASSET (the PNG its AppxManifest names, which is
+    the artwork Windows itself shows in Start). This function's job is to
+    render whichever came back onto the standard well, and to draw the
+    generic executable mark when neither did.
+
+    THE ASSET IS TRIED FIRST AND SKIPS THE PLACEHOLDER GUARD, because
+    the guard is about a DIFFERENT failure. _shell_pixmap rejects
+    Windows' blank-page icon, which the shell returns instead of failing
+    when it cannot extract anything; a manifest asset is a file the
+    vendor shipped and named, so there is no placeholder for it to be
+    confused with.
 
     ALWAYS RETURNS A PIXMAP. A row that asks for an icon and gets None
     has to grow a branch and a second widget; every such branch is a
@@ -1069,16 +1101,27 @@ def binary_icon(command: str, px: int, t: dict) -> QPixmap:
     dark = t.get("name", "dark") == "dark"
     surface = _parse_color(t.get("dialog_bg", ""),
                            "#16181d" if dark else "#ffffff")
-    path = nativeicons.executable_from_command(command or "")
-    key = ("\x00binary", path or (command or ""), px,
+    target = nativeicons.resolve_command(command or "")
+    key = ("\x00binary", target.asset or target.binary or (command or ""), px,
            "d" if dark else "l", _screen_dpr())
     cached = _PIXMAP_CACHE.get(key)
     if cached is not None:
         return cached
 
     pm = None
-    if path:
-        shell = _shell_pixmap(path, px)
+    if target.asset:
+        size, _dpr = _device_px(px)
+        image = nativeicons.asset_image(target.asset)
+        if image is not None and not image.isNull():
+            if image.width() != size or image.height() != size:
+                image = image.scaled(
+                    size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+            shell = QPixmap.fromImage(image)
+            if not shell.isNull():
+                pm = _in_well(shell, px, _well_color(surface, dark))
+    if pm is None and target.binary:
+        shell = _shell_pixmap(target.binary, px)
         if shell is not None:
             pm = _in_well(shell, px, _well_color(surface, dark))
     if pm is None:

@@ -1,9 +1,37 @@
 """
 src/utils/nativeicons.py
 
-THE APPLICATION'S OWN ICON, READ OUT OF ITS OWN BINARY.
+THE APPLICATION'S OWN ICON — AND, FIRST, WHICH APPLICATION THAT IS.
 
-WHY THIS EXISTS RATHER THAN QFileIconProvider
+TWO HALVES, AND THE SECOND ONE CAME LATER (v10.12). This module began as
+an icon EXTRACTOR: hand it the path of a binary and it returns the best
+pixels Windows will give up for it. That is still the bottom half of the
+file and it is unchanged.
+
+What it could not do was answer the question the callers actually have,
+which is not "what is this .exe's icon" but "what does this STARTUP ENTRY
+look like". Those are the same question only for a Run key naming a
+binary, and that is not most of the list:
+
+    A STARTUP-FOLDER ENTRY IS A SHORTCUT. Its `Command` is the path of a
+    `.lnk`, which is a file, so the old resolver returned it happily and
+    the extractor obliged — with the shell's rendering of a SHORTCUT,
+    which is the target's artwork carrying the little arrow overlay. A
+    column of those says "these are links" in a list where that is never
+    the interesting fact, and for a link to something uninstalled it says
+    it over a blank page.
+
+    A STORE APP HAS NO BINARY TO POINT AT. It is addressed as
+    `shell:AppsFolder\\<family>!<app>`, and even when a Run key does name
+    the .exe inside %ProgramFiles%\\WindowsApps, that binary usually
+    carries no icon resource at all — a packaged app declares its artwork
+    as PNG files in AppxManifest.xml. So every rung of the ladder below
+    succeeded and returned Windows' generic application placeholder.
+
+So the top half of this file resolves, and the bottom half extracts. See
+resolve_command for the order and CommandTarget for what comes back.
+
+THE EXTRACTOR: WHY IT EXISTS RATHER THAN QFileIconProvider
     appicons.py's tier 2 has always been able to read an installed app's
     icon, through QFileIconProvider. That is the right idea and the wrong
     resolution: on Windows it asks the shell for the SHGFI_LARGEICON
@@ -56,7 +84,9 @@ per-process GDI ceiling.
 from __future__ import annotations
 
 import os
+import re
 import sys
+from typing import NamedTuple
 
 from PySide6.QtGui import QImage, QPixmap
 
@@ -89,9 +119,90 @@ _IID_IImageList = "{46EB5926-582E-4017-9FDF-E8998DAA0950}"
 _BI_RGB = 0
 _DIB_RGB_COLORS = 0
 
+# --- shell link (.lnk) -----------------------------------------------
+#: CLSID_ShellLink and the two interfaces needed to read one. Written out
+#: for the same reason _IID_IImageList is: they are not derivable, and
+#: the wrapper that used to supply them does not ship any more.
+_CLSID_ShellLink = "{00021401-0000-0000-C000-000000000046}"
+_IID_IShellLinkW = "{000214F9-0000-0000-C000-000000000046}"
+_IID_IPersistFile = "{0000010B-0000-0000-C000-000000000046}"
+
+_CLSCTX_INPROC_SERVER = 0x1
+_COINIT_APARTMENTTHREADED = 0x2
+#: CoInitializeEx when COM is already up in the OTHER threading model.
+#: Not a failure for an in-proc server, and NOT balanced by a
+#: CoUninitialize — see _com_scope.
+_RPC_E_CHANGED_MODE = -2147417850          # 0x80010106
+_STGM_READ = 0x0
+
+#: IShellLinkW::GetPath flags. 0 is the resolved long path, which is what
+#: an icon extractor wants; SLGP_RAWPATH is the string as stored, still
+#: carrying %ENVIRONMENT% variables, and is the fallback for a link whose
+#: target the shell declines to resolve.
+_SLGP_RAWPATH = 0x4
+
+#: Vtable slots. IUnknown owns 0-2 in every interface.
+_VT_IShellLinkW_GetPath = 3
+_VT_IPersistFile_Load = 5
+
+#: Where Windows records every installed package and, crucially, its
+#: PackageRootFolder. READABLE WITHOUT ELEVATION, which is the whole
+#: reason the lookup goes through the registry rather than through the
+#: file system: %ProgramFiles%\WindowsApps refuses a directory listing to
+#: everything but TrustedInstaller, so globbing for a package folder
+#: fails on exactly the machines this feature is for. Traversing INTO a
+#: known package folder is allowed, so once the registry has named one,
+#: its manifest and its assets read normally.
+_APPX_REPOSITORY = (r"Software\Classes\Local Settings\Software\Microsoft"
+                    r"\Windows\CurrentVersion\AppModel\Repository\Packages")
+
+#: The logo attributes an AppxManifest can declare, best first.
+#:
+#: Square44x44Logo IS THE APP LIST ICON — the artwork Windows itself puts
+#: beside the app in Start and on the taskbar — so it is the right answer
+#: for a row that is trying to look like the Start menu. The others are
+#: the tile and Store artwork, taken only when the first is absent.
+_APPX_LOGO_ATTRS = ("Square44x44Logo", "Logo", "Square150x150Logo",
+                    "Square71x71Logo", "StoreLogo")
+
+_APPX_LOGO_RE = re.compile(
+    r'\b(' + "|".join(_APPX_LOGO_ATTRS) + r')\s*=\s*"([^"]+)"')
+
+#: `Square44x44Logo.targetsize-256_altform-unplated.png` -> 256.
+#: `Square44x44Logo.scale-400.png` -> 44 * 4.
+_APPX_TARGETSIZE_RE = re.compile(r"\.targetsize-(\d+)")
+_APPX_SCALE_RE = re.compile(r"\.scale-(\d+)")
+
+#: `shell:AppsFolder\<PackageFamilyName>!<AppId>` — how Windows addresses
+#: a Store app that has no path on disk to point at.
+_AUMID_RE = re.compile(
+    r"(?:shell:AppsFolder\\)?([A-Za-z0-9][\w.\-]*_[a-z0-9]{13})!(\S+)")
+
+
+class CommandTarget(NamedTuple):
+    """What a startup entry's command line actually names.
+
+    THREE FIELDS BECAUSE THERE ARE THREE ANSWERS, and collapsing them
+    into one path was what limited this to Win32 desktop apps. A Run key
+    can name a binary, a Startup-folder shortcut points at one
+    indirectly, and a Store app is addressed by an identifier that is not
+    a file at all — the last of which has no icon anywhere on the path a
+    binary extractor walks.
+
+      binary  the .exe that runs, when there is one on disk
+      asset   a ready-made image file (an Appx logo), when the package
+              declares one — already the vendor's own colour artwork, so
+              it needs no extraction
+      kind    which of the above answered, for diagnostics and tests
+    """
+    binary: str | None
+    asset: str | None
+    kind: str
+
 
 #: Guards _declare_signatures, which is idempotent but not free.
 _SIGNATURES_DECLARED = False
+_COM_SIGNATURES_DECLARED = False
 
 
 def _declare_signatures(ctypes, wintypes) -> None:
@@ -176,15 +287,15 @@ def _available() -> bool:
     return True
 
 
-def executable_from_command(command: str) -> str | None:
-    """The binary out of a Windows command line, or None.
+def _file_from_command(command: str) -> str | None:
+    """The FILE a command line names, before any shortcut is followed.
 
     A startup entry's `Command` is not a path — it is whatever an
     installer wrote into a Run key, and the shapes are all different:
 
         "C:\\Program Files\\App\\app.exe" --minimized
         C:\\Windows\\System32\\rundll32.exe C:\\path\\thing.dll,Entry
-        C:\\Program Files\\App\\app.exe /background
+        %LOCALAPPDATA%\\App\\app.exe /background
 
     THE UNQUOTED FORM WITH SPACES IS THE HARD ONE, and it is also the
     common one: splitting on the first space turns "C:\\Program
@@ -194,9 +305,10 @@ def executable_from_command(command: str) -> str | None:
     how Windows itself resolves these, and the reason a malicious
     C:\\Program.exe is a classic privilege-escalation trick.
 
-    Returns None rather than guessing when nothing resolves; the caller
-    then draws its fallback glyph, which is a better outcome than
-    extracting the icon of the wrong file.
+    EVERY BRANCH EXPANDS ENVIRONMENT VARIABLES FIRST, including the
+    quoted one. `"%LOCALAPPDATA%\\Discord\\Update.exe" --processStart` is
+    an ordinary Run value, and testing the unexpanded string against the
+    file system answers no on every machine.
     """
     if not command:
         return None
@@ -208,7 +320,7 @@ def executable_from_command(command: str) -> str | None:
     if text.startswith('"'):
         end = text.find('"', 1)
         if end > 1:
-            candidate = os.path.expandvars(text[1:end])
+            candidate = os.path.expandvars(text[1:end]).strip()
             return candidate if os.path.isfile(candidate) else None
         return None
 
@@ -229,6 +341,582 @@ def executable_from_command(command: str) -> str | None:
         if not os.path.splitext(candidate)[1] and os.path.isfile(candidate + ".exe"):
             return candidate + ".exe"
     return None
+
+
+def executable_from_command(command: str) -> str | None:
+    """The binary a Windows command line launches, or None.
+
+    _file_from_command finds the file; this follows a SHORTCUT to the
+    thing it points at. Both halves are needed and neither is enough:
+    every entry in the Startup FOLDER is a `.lnk`, so without the second
+    half half the Startup Manager's rows were extracting the icon of a
+    shortcut rather than of an application — which Windows answers by
+    stamping its little arrow overlay onto the target's artwork, so the
+    column carried a badge that means "this is a shortcut" beside rows
+    where that is not the interesting fact.
+
+    Returns None rather than guessing when nothing resolves; the caller
+    then draws its fallback glyph, which is a better outcome than
+    extracting the icon of the wrong file. A shortcut that resolves to
+    NOTHING — a Store app addressed by identifier, a target that has been
+    uninstalled — also returns None here; resolve_command is the entry
+    point that can still answer for the first of those.
+    """
+    path = _file_from_command(command)
+    if path is None:
+        return None
+    if path.lower().endswith(".lnk"):
+        return resolve_shortcut(path)
+    return path
+
+
+# ============================================================
+#  SHORTCUTS
+# ============================================================
+def _declare_com_signatures(ctypes, wintypes) -> None:
+    """argtypes/restypes for the COM entry points, for the reason
+    _declare_signatures exists: an undeclared HRESULT is read as a 32-bit
+    int and loses the high bit that distinguishes failure from success,
+    so a failed CoCreateInstance reads as S_OK and the next call is made
+    through a null pointer."""
+    global _COM_SIGNATURES_DECLARED
+    if _COM_SIGNATURES_DECLARED:
+        return
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    ole32.CoInitializeEx.restype = ctypes.HRESULT
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
+    ole32.CoCreateInstance.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.c_void_p, ctypes.c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.HRESULT
+    ole32.CLSIDFromString.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p]
+    ole32.CLSIDFromString.restype = ctypes.HRESULT
+    _COM_SIGNATURES_DECLARED = True
+
+
+def _guid(ctypes, text: str):
+    """A GUID string -> the 16-byte structure COM wants."""
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_ulong),
+                    ("Data2", ctypes.c_ushort),
+                    ("Data3", ctypes.c_ushort),
+                    ("Data4", ctypes.c_ubyte * 8)]
+
+    out = GUID()
+    if ctypes.windll.ole32.CLSIDFromString(text, ctypes.byref(out)) != 0:
+        raise OSError(f"CLSIDFromString refused {text}")
+    return out
+
+
+def _vcall(ctypes, pointer, slot: int, restype, argtypes, *args):
+    """One virtual call on a COM interface pointer.
+
+    ctypes has no COM client of its own, so the vtable is walked by hand:
+    the interface pointer points at the vtable pointer, and the vtable is
+    an array of function pointers in declaration order with IUnknown's
+    three at the front.
+    """
+    vtable = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_void_p))[0]
+    slot_ptr = ctypes.cast(vtable, ctypes.POINTER(ctypes.c_void_p))[slot]
+    proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
+    return proto(slot_ptr)(pointer, *args)
+
+
+def _release(ctypes, pointer) -> None:
+    if pointer:
+        try:
+            _vcall(ctypes, pointer, 2, ctypes.c_ulong, [])
+        except Exception:                   # pragma: no cover - defensive
+            pass
+
+
+def _shortcut_target_com(path: str) -> str | None:
+    """`path`'s target, asked of the shell itself.
+
+    IPersistFile::Load WITHOUT a following Resolve(), deliberately.
+    Resolve is the call that goes looking for a moved target — it walks
+    the volume, and for a link onto a share it waits on the network. In a
+    list that resolves thirty entries while the user watches, that is a
+    UI freeze bought to improve the icon on a broken shortcut.
+
+    EVERY INTERFACE IS RELEASED IN A finally, the same discipline the
+    GDI half of this module keeps and for a worse failure if it lapses:
+    a leaked in-proc COM object pins the DLL for the life of the process.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        _declare_com_signatures(ctypes, wintypes)
+    except Exception as exc:                # pragma: no cover - defensive
+        _fail(f"COM signature declaration failed: {exc}")
+        return None
+
+    ole32 = ctypes.windll.ole32
+    hr = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    # S_OK and S_FALSE both mean "this call must be balanced"; only
+    # RPC_E_CHANGED_MODE means COM is up in the other model and this call
+    # took no reference. Getting that wrong either leaks an
+    # initialisation or tears down the GUI thread's own apartment.
+    balanced = hr in (0, 1)
+    if hr < 0 and hr != _RPC_E_CHANGED_MODE:
+        return None
+
+    link = ctypes.c_void_p()
+    persist = ctypes.c_void_p()
+    try:
+        hr = ole32.CoCreateInstance(
+            ctypes.byref(_guid(ctypes, _CLSID_ShellLink)), None,
+            _CLSCTX_INPROC_SERVER,
+            ctypes.byref(_guid(ctypes, _IID_IShellLinkW)),
+            ctypes.byref(link))
+        if hr < 0 or not link:
+            return None
+        hr = _vcall(ctypes, link, 0, ctypes.HRESULT,
+                    [ctypes.c_void_p, ctypes.c_void_p],
+                    ctypes.byref(_guid(ctypes, _IID_IPersistFile)),
+                    ctypes.byref(persist))
+        if hr < 0 or not persist:
+            return None
+        hr = _vcall(ctypes, persist, _VT_IPersistFile_Load, ctypes.HRESULT,
+                    [wintypes.LPCWSTR, wintypes.DWORD], path, _STGM_READ)
+        if hr < 0:
+            return None
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        for flags in (0, _SLGP_RAWPATH):
+            hr = _vcall(ctypes, link, _VT_IShellLinkW_GetPath, ctypes.HRESULT,
+                        [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p,
+                         wintypes.DWORD],
+                        buffer, len(buffer), None, flags)
+            if hr < 0:
+                continue
+            target = os.path.expandvars(buffer.value or "").strip()
+            if target and os.path.isfile(target):
+                return target
+        return None
+    except Exception:
+        return None
+    finally:
+        _release(ctypes, persist)
+        _release(ctypes, link)
+        if balanced:
+            try:
+                ole32.CoUninitialize()
+            except Exception:               # pragma: no cover - defensive
+                pass
+
+
+def _shortcut_target_parsed(path: str) -> str | None:
+    """`path`'s target, read straight out of the .lnk file.
+
+    THE FALLBACK, AND IT IS NOT REDUNDANT. The COM path needs a working
+    apartment and an in-proc shell that will hand out CLSID_ShellLink,
+    and both of those are things a locked-down or mid-servicing machine
+    can refuse — on a surface whose entire job is to be readable when the
+    machine is unwell. This reads the two fields of MS-SHLLINK that carry
+    a path in plain text, which covers an ordinary Startup-folder
+    shortcut without asking the shell for anything.
+
+    Deliberately partial: no ID-list parsing, no network relative links.
+    Those are the shapes the COM path handles and this one honestly
+    cannot, and half a parser that guesses is how you point a row at the
+    wrong application.
+    """
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(0x10000)
+    except OSError:
+        return None
+    if len(data) < 0x4C or data[:4] != b"\x4c\x00\x00\x00":
+        return None
+
+    import struct
+
+    flags = struct.unpack_from("<I", data, 0x14)[0]
+    has_id_list = bool(flags & 0x1)
+    has_link_info = bool(flags & 0x2)
+    unicode_strings = bool(flags & 0x80)
+
+    offset = 0x4C
+    if has_id_list:
+        if offset + 2 > len(data):
+            return None
+        offset += 2 + struct.unpack_from("<H", data, offset)[0]
+
+    def _string_at(start: int, wide: bool) -> str:
+        if wide:
+            end = start
+            while end + 1 < len(data) and data[end:end + 2] != b"\x00\x00":
+                end += 2
+            return data[start:end].decode("utf-16-le", "ignore")
+        end = data.find(b"\x00", start)
+        return data[start:end if end != -1 else len(data)].decode(
+            "mbcs" if _WIN else "latin-1", "ignore")
+
+    if has_link_info and offset + 0x20 <= len(data):
+        base = offset
+        info_size, header_size, info_flags = struct.unpack_from(
+            "<III", data, base)
+        offset = base + info_size
+        # Bit 0: the link carries a VolumeID and a LocalBasePath, which
+        # together are an ordinary local path.
+        if info_flags & 0x1:
+            local, suffix = None, ""
+            # The UNICODE pair is optional and only present on a header of
+            # 0x24 bytes or more — LocalBasePathOffsetUnicode at 0x1C and
+            # CommonPathSuffixOffsetUnicode at 0x20. Preferred when there,
+            # because the ANSI pair beside it is lossy for any path the
+            # active code page cannot express.
+            if header_size >= 0x24 and base + 0x24 <= len(data):
+                wide_path, wide_suffix = struct.unpack_from(
+                    "<II", data, base + 0x1C)
+                if wide_path:
+                    local = _string_at(base + wide_path, True)
+                    suffix = (_string_at(base + wide_suffix, True)
+                              if wide_suffix else "")
+            if local is None:
+                path_offset = struct.unpack_from("<I", data, base + 0x10)[0]
+                suffix_offset = struct.unpack_from("<I", data, base + 0x18)[0]
+                if path_offset:
+                    local = _string_at(base + path_offset, False)
+                    suffix = (_string_at(base + suffix_offset, False)
+                              if suffix_offset else "")
+            if local:
+                target = os.path.expandvars(local + suffix)
+                if os.path.isfile(target):
+                    return target
+
+    # StringData, in the fixed order the format defines. Only
+    # RELATIVE_PATH is wanted, and it is relative to the .lnk's own
+    # directory — which is what makes a portable shortcut portable.
+    for index, present in enumerate((flags & 0x4, flags & 0x8, flags & 0x10,
+                                     flags & 0x20, flags & 0x40)):
+        if not present:
+            continue
+        if offset + 2 > len(data):
+            return None
+        count = struct.unpack_from("<H", data, offset)[0]
+        offset += 2
+        raw = data[offset:offset + (count * 2 if unicode_strings else count)]
+        offset += count * 2 if unicode_strings else count
+        if index != 1:                      # 1 == RELATIVE_PATH
+            continue
+        relative = (raw.decode("utf-16-le", "ignore") if unicode_strings
+                    else raw.decode("mbcs" if _WIN else "latin-1", "ignore"))
+        if not relative:
+            continue
+        target = os.path.normpath(
+            os.path.join(os.path.dirname(path), relative))
+        if os.path.isfile(target):
+            return target
+    return None
+
+
+def resolve_shortcut(path: str) -> str | None:
+    """The file a `.lnk` points at, or None.
+
+    The shell first, this module's own reader second. Order matters: the
+    shell resolves ID-list-only links, per-user redirections and the
+    KNOWNFOLDER indirections that a hand parser would have to reimplement
+    badly, so it is the answer wherever it is available.
+    """
+    if not _available():
+        return None
+    if not path or not os.path.isfile(path):
+        return None
+    target = _shortcut_target_com(path)
+    if target:
+        return target
+    return _shortcut_target_parsed(path)
+
+
+# ============================================================
+#  STORE (APPX / MSIX) PACKAGES
+# ============================================================
+#  A STORE APP'S ICON IS NOT IN ITS BINARY, and that single fact is why
+#  this section exists. A packaged app ships its artwork as PNG files
+#  beside the executable and NAMES them in AppxManifest.xml; the .exe
+#  itself frequently carries no RT_GROUP_ICON at all. Run the whole
+#  fallback ladder at the top of this module against one and every rung
+#  answers honestly and uselessly — the shell hands back its generic
+#  application placeholder, which appicons then rejects, which lands the
+#  row on the neutral glyph.
+#
+#  So the manifest is read instead, and what comes back is better than
+#  anything extraction could have produced: the vendor's own full-colour
+#  artwork at up to 256px, which is the exact asset Windows itself puts
+#  beside the app in the Start menu.
+def _package_root_from_registry(family: str) -> str | None:
+    """The install folder of the package whose FAMILY name is `family`.
+
+    A family name is `<Name>_<PublisherId>`; the repository is keyed by
+    FULL names, which additionally carry a version, an architecture and a
+    RESOURCE ID: `<Name>_<Version>_<Arch>_<ResourceId>_<PublisherId>`.
+
+    THE RESOURCE ID IS USUALLY EMPTY, which is what produces the doubled
+    underscore everybody recognises — and matching on that `__` was the
+    first thing tried here and is wrong. Windows' own in-box packages
+    carry a real resource id (`..._neutral_neutral_cw5n1h2txyewy`), so a
+    `__<publisher>` suffix test finds nothing for exactly the apps the
+    purge and startup lists are full of.
+
+    So the match is: the name is the leading segment, and the publisher
+    id is the trailing one — which holds whatever sits between them.
+
+    TWO TIE-BREAKS, in this order. An EMPTY resource id wins, because a
+    non-empty one names a resource package (a language or scale
+    satellite) whose manifest carries no application at all; then the
+    highest version, which is the copy Windows would launch.
+    """
+    if not _WIN or "_" not in family:
+        return None
+    name, _, publisher = family.rpartition("_")
+    if not name or not publisher:
+        return None
+
+    import winreg
+
+    prefix = name.lower() + "_"
+    publisher = publisher.lower()
+    best: tuple[tuple, str] | None = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            _APPX_REPOSITORY) as packages:
+            index = 0
+            while True:
+                try:
+                    full = winreg.EnumKey(packages, index)
+                except OSError:
+                    break
+                index += 1
+                low = full.lower()
+                if not low.startswith(prefix):
+                    continue
+                parts = low.split("_")
+                if len(parts) < 3 or parts[-1] != publisher:
+                    continue
+                try:
+                    with winreg.OpenKey(packages, full) as entry:
+                        root, _ = winreg.QueryValueEx(entry,
+                                                      "PackageRootFolder")
+                except OSError:
+                    continue
+                if not root or not os.path.isdir(root):
+                    continue
+                main = 1 if parts[-2] == "" else 0
+                version = tuple(int(part) if part.isdigit() else 0
+                                for part in parts[-4].split(".")) \
+                    if len(parts) >= 4 else ()
+                key = (main, version)
+                if best is None or key > best[0]:
+                    best = (key, root)
+    except OSError:
+        return None
+    return best[1] if best else None
+
+
+def _best_asset_variant(declared: str) -> str | None:
+    """The largest real file behind a manifest's logo declaration.
+
+    THE DECLARED PATH IS OFTEN NOT A FILE. A manifest says
+    `Assets\\Square44x44Logo.png` and what is on disk is
+    `Square44x44Logo.targetsize-256.png`,
+    `Square44x44Logo.scale-200.png` and half a dozen more: MSIX resolves
+    those through resources.pri at runtime, and an app built with only
+    the scaled variants has no file at the name it declares.
+
+    So the declaration is treated as a STEM and the directory is read.
+    Biggest wins, because this is scaled DOWN into a 20px box and a
+    256px source is the difference between artwork and mush —
+    `targetsize-N` is already the pixel size, `scale-N` is a percentage
+    of the nominal 44px.
+
+    PLATED BEATS UNPLATED. `altform-unplated` is the mark with its brand
+    background removed, which is what a taskbar wants because the
+    taskbar supplies its own. Every icon here is drawn into a neutral
+    well instead, so the plated artwork is the one carrying the
+    product's colour — an unplated Store logo on this surface is a white
+    glyph on a near-white plate.
+    """
+    folder = os.path.dirname(declared)
+    stem, ext = os.path.splitext(os.path.basename(declared))
+    if not stem:
+        return None
+    try:
+        names = os.listdir(folder) if os.path.isdir(folder) else []
+    except OSError:
+        names = []
+
+    best: tuple[int, int, str] | None = None
+    for name in names:
+        base, extension = os.path.splitext(name)
+        if extension.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        if not base.lower().startswith(stem.lower()):
+            continue
+        target = _APPX_TARGETSIZE_RE.search(base)
+        scale = _APPX_SCALE_RE.search(base)
+        if target:
+            size = int(target.group(1))
+        elif scale:
+            size = int(44 * int(scale.group(1)) / 100)
+        else:
+            size = 44
+        plated = 0 if "altform-unplated" in base.lower() else 1
+        candidate = (plated, size, os.path.join(folder, name))
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+    if best is not None:
+        return best[2]
+    return declared if os.path.isfile(declared) else None
+
+
+def appx_asset_for_root(root: str) -> str | None:
+    """The best logo file in an installed package folder, or None.
+
+    The manifest is parsed with a REGEX rather than an XML parser, and
+    that is a deliberate narrowing rather than laziness: an AppxManifest
+    carries a dozen namespaces and its logo attributes appear on
+    <Properties>, on every <Application>, and on visual-element
+    extensions, so a correct DOM walk needs the schema. All this needs is
+    "which files does this package call its logo", the attribute names
+    are fixed, and a miss costs a fallback rather than a wrong icon.
+    """
+    if not root:
+        return None
+    manifest = os.path.join(root, "AppxManifest.xml")
+    if not os.path.isfile(manifest):
+        return None
+    try:
+        with open(manifest, encoding="utf-8-sig", errors="ignore") as handle:
+            source = handle.read()
+    except OSError:
+        return None
+
+    declared: dict[str, str] = {}
+    for match in _APPX_LOGO_RE.finditer(source):
+        declared.setdefault(match.group(1), match.group(2))
+    for attribute in _APPX_LOGO_ATTRS:
+        value = declared.get(attribute)
+        if not value:
+            continue
+        asset = _best_asset_variant(
+            os.path.join(root, value.replace("/", os.sep)))
+        if asset and os.path.isfile(asset):
+            return asset
+    return None
+
+
+def appx_asset_for_path(path: str) -> str | None:
+    """The package logo for a binary that lives inside one, or None.
+
+    Walks UP from the executable looking for an AppxManifest.xml, which
+    covers both places Windows keeps packaged apps —
+    %ProgramFiles%\\WindowsApps for Store installs and
+    %SystemRoot%\\SystemApps for the in-box ones — without either being
+    named here, and without needing to list a directory whose ACL
+    forbids it.
+
+    Bounded at eight levels: a package root is one or two directories
+    above its binary, and an unbounded walk on a path that is not in a
+    package would climb to the drive root touching the file system at
+    every step, once per row.
+    """
+    if not path:
+        return None
+    folder = os.path.dirname(os.path.abspath(path))
+    for _ in range(8):
+        if os.path.isfile(os.path.join(folder, "AppxManifest.xml")):
+            return appx_asset_for_root(folder)
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
+    return None
+
+
+def appx_asset_for_family(family: str) -> str | None:
+    """The package logo for a package family name, or None."""
+    root = _package_root_from_registry(family)
+    return appx_asset_for_root(root) if root else None
+
+
+def aumid_from_command(command: str) -> str | None:
+    """The package family name out of an Application User Model ID.
+
+    `shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App` is
+    how Windows addresses a packaged app that has no path to point at,
+    and it is what a Start-menu shortcut to one resolves to. The family
+    name is the half before the `!`; the AppId after it selects which
+    entry point within the package, which is not something an icon
+    lookup needs.
+    """
+    if not command:
+        return None
+    match = _AUMID_RE.search(command)
+    return match.group(1) if match else None
+
+
+def resolve_command(command: str) -> CommandTarget:
+    """Everything a startup entry's command line can be resolved to.
+
+    THE ORDER IS THE POINT, and each step exists because the one before
+    it returns nothing for a whole class of entry:
+
+      1. THE FILE, with %ENVIRONMENT% expanded and arguments stripped.
+      2. THE SHORTCUT'S TARGET, when that file is a .lnk — which every
+         entry in the Startup folder is.
+      3. THE PACKAGE'S OWN LOGO, when the target lives inside an
+         installed Store or in-box package. Preferred OVER extracting
+         the binary, because a packaged app's artwork is in its manifest
+         and frequently not in its .exe at all.
+      4. THE PACKAGE, ADDRESSED BY IDENTITY, when there is no file
+         anywhere in the command — `shell:AppsFolder\\<family>!<app>`.
+
+    Always returns a CommandTarget; `kind` is "" when nothing resolved,
+    which is the caller's cue to draw the generic executable mark.
+    """
+    binary = _file_from_command(command)
+    kind = "path"
+    if binary and binary.lower().endswith(".lnk"):
+        resolved = resolve_shortcut(binary)
+        if resolved:
+            binary, kind = resolved, "shortcut"
+        else:
+            # A shortcut that points at no file is usually a Store app,
+            # and the identity is in the command line often enough to be
+            # worth the look before giving up on the row.
+            binary, kind = None, ""
+    if binary:
+        asset = appx_asset_for_path(binary)
+        if asset:
+            return CommandTarget(binary, asset, "appx")
+        return CommandTarget(binary, None, kind)
+
+    family = aumid_from_command(command)
+    if family:
+        asset = appx_asset_for_family(family)
+        if asset:
+            return CommandTarget(None, asset, "aumid")
+    return CommandTarget(None, None, "")
+
+
+def asset_image(path: str) -> QImage | None:
+    """A package's own logo file, loaded as an image.
+
+    Its own entry point rather than a branch inside icon_image, because
+    the two are different operations wearing the same shape: this reads a
+    PNG the vendor shipped, and icon_image asks Windows to extract a
+    resource out of a binary. Handing this path to the extractor gets the
+    shell's icon for the PNG FILE TYPE, which is a picture of a picture.
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    image = QImage(path)
+    return image if not image.isNull() else None
 
 
 def _hicon_to_image(hicon, ctypes, wintypes) -> QImage | None:
@@ -531,11 +1219,23 @@ def icon_image(path: str) -> QImage | None:
     EVERY FAILURE IS None. There is no error path a row can act on: a
     missing icon means "draw the glyph instead", and that is true whether
     the file is gone, the shell refused it, or the COM call failed.
+
+    A PACKAGED BINARY IS ANSWERED FROM ITS MANIFEST, before the ladder
+    runs at all. A Store or in-box app keeps its artwork in PNG files
+    named by AppxManifest.xml and often carries no icon resource in the
+    .exe whatsoever, so every rung below would succeed at returning
+    Windows' generic application placeholder. See appx_asset_for_path.
     """
     if not _available():
         return None
     if not path or not os.path.isfile(path):
         return None
+
+    asset = appx_asset_for_path(path)
+    if asset:
+        image = asset_image(asset)
+        if image is not None:
+            return image
 
     import ctypes
     from ctypes import wintypes
