@@ -1006,117 +1006,40 @@ function Invoke-PathSanitizer {
 #  directory into the machine PATH publishes one account's tools to every
 #  account on the box.
 # ============================================================
-function Get-PathPriorityPlan {
-    <#
-    .SYNOPSIS
-        Can `Directory` be made to win `Command`, and what would that
-        take? Read-only - it decides, it does not act.
-
-    .DESCRIPTION
-        Returns Action, Scope, Reason, Order and Providers.
-
-        Action is one of:
-          reorder  the scope's list can be rewritten to make this win
-          none     it already wins; there is nothing to do
-          blocked  reordering cannot achieve it - Reason says why
-
-        Order is the scope's NEW raw entry list, in full, with the chosen
-        directory moved to the front and everything else in its existing
-        order. Nothing is dropped: the list is a permutation of the one
-        that went in, which is the property that makes this safe and the
-        one Set-PathToolPriority re-checks before it writes.
-    #>
-    param(
-        [Parameter(Mandatory = $true)][string]$Command,
-        [Parameter(Mandatory = $true)][string]$Directory,
-        [object[]]$Entries
-    )
-
-    if (-not $Entries) { $Entries = @(Get-PathEntryReport) }
-    $Blocked = {
-        param($Reason)
-        [PSCustomObject]@{
-            Command = $Command; Directory = $Directory
-            Action = "blocked"; Scope = ""; Reason = $Reason
-            Order = @(); Providers = @()
-        }
-    }
-
-    $Conflict = @(Get-PathCommandConflicts -Entries $Entries |
-        Where-Object { $_.Command -eq $Command }) | Select-Object -First 1
-    if (-not $Conflict) {
-        return (& $Blocked "'$Command' is not answered by more than one PATH directory, so there is nothing to reorder.")
-    }
-
-    $Providers = @($Conflict.Providers)
-    $Chosen = @($Providers | Where-Object {
-        $_.Path.TrimEnd('\') -eq $Directory.TrimEnd('\') }) |
-        Select-Object -First 1
-    if (-not $Chosen) {
-        return (& $Blocked "$Directory does not contain '$Command', so promoting it would change nothing.")
-    }
-    if ($Providers[0].Path.TrimEnd('\') -eq $Chosen.Path.TrimEnd('\')) {
-        return [PSCustomObject]@{
-            Command = $Command; Directory = $Directory
-            Action = "none"; Scope = $Chosen.Scope
-            Reason = "'$Command' already runs the copy in $Directory."
-            Order = @(); Providers = $Providers
-        }
-    }
-
-    # THE ONE CASE REORDERING CANNOT REACH. See the header above.
-    if ($Chosen.Scope -eq "User") {
-        $MachineAhead = @($Providers | Where-Object { $_.Scope -eq "Machine" })
-        if ($MachineAhead.Count -gt 0) {
-            return (& $Blocked ("$Directory is in your USER PATH and '$Command' is also in the SYSTEM PATH ($($MachineAhead[0].Path)). Windows always searches the system PATH first, so no reordering of your user PATH can put this copy in front. Pulse will not remove the system entry or copy a per-user folder into the system PATH."))
-        }
-    }
-
-    $Current = @($Entries | Where-Object { $_.Scope -eq $Chosen.Scope } |
-        ForEach-Object { $_.Raw })
-    $Moved = @($Current | Where-Object { $_ -eq $Chosen.Raw })
-    if ($Moved.Count -eq 0) {
-        return (& $Blocked "$Directory is no longer in the $($Chosen.Scope) PATH - re-scan and try again.")
-    }
-    $Rest = @($Current | Where-Object { $_ -ne $Chosen.Raw })
-    return [PSCustomObject]@{
-        Command   = $Command
-        Directory = $Directory
-        Action    = "reorder"
-        Scope     = $Chosen.Scope
-        Reason    = "moves $Directory to the front of the $($Chosen.Scope) PATH; nothing is removed."
-        Order     = @(@($Chosen.Raw) + $Rest)
-        Providers = $Providers
-    }
-}
-
 function Set-PathToolPriority {
     <#
     .SYNOPSIS
-        Makes `Directory` the copy of `Command` that Windows runs, by
-        REORDERING the PATH. Removes nothing.
+        Makes one INSTALLATION the copy of a toolchain that Windows runs,
+        by REORDERING the PATH. Removes nothing.
 
     .DESCRIPTION
+        `Family` is a key from Get-PathInstallations - "python", "node",
+        or a bare command name for anything that is not part of a family
+        - and `Directory` is that installation's root. The cluster is
+        re-derived here rather than taken from the caller, so a GUI
+        holding a stale scan cannot ask for a directory set that no
+        longer describes the machine.
+
         Same order of operations as Invoke-PathSanitizer, and for the
         same reason: restore point, then the readable per-scope backup,
-        then the write. There is no window in which the PATH has changed
-        and nothing has recorded what it was.
+        then the write. There is no window in which the PATH has been
+        changed and nothing has recorded what it was.
 
         THE PERMUTATION CHECK IS THE SAFETY PROPERTY, and it is asserted
-        here rather than trusted from Get-PathPriorityPlan: the new value
-        must contain exactly the same entries as the old one, only in a
+        here rather than trusted from the plan: the new value must
+        contain exactly the same entries as the old one, only in a
         different order. A plan that has somehow dropped an entry is
         refused, because the one thing this operation promises is that no
         binary leaves the PATH.
     #>
     param(
-        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Family,
         [Parameter(Mandatory = $true)][string]$Directory
     )
 
     Write-SectionHeader "PATH Priority"
 
-    $Plan = Get-PathPriorityPlan -Command $Command -Directory $Directory
+    $Plan = Get-PathInstallPlan -Family $Family -Directory $Directory
     if ($Plan.Action -eq "none") {
         Write-TaggedLine -Tag "OK" -Text $Plan.Reason
         return [PSCustomObject]@{ Changed = $false; Scope = ""; Reason = $Plan.Reason }
@@ -1156,7 +1079,8 @@ function Set-PathToolPriority {
         return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
     }
 
-    Write-TaggedLine -Tag "PLAN" -Text "$Command -> $Directory moves to the front of the $Scope PATH ($($Plan.Providers.Count) copies stay on the PATH)"
+    $Noun = Get-PluralSuffix -Count @($Plan.Dirs).Count -Singular "folder" -Plural "folders"
+    Write-TaggedLine -Tag "PLAN" -Text "$Family -> $Directory and its $(@($Plan.Dirs).Count) $Noun move to the front of the $Scope PATH"
 
     if (Test-DryRun "Promote $Directory to the front of the $Scope PATH") {
         return [PSCustomObject]@{ Changed = $true; Scope = $Scope; Reason = $Plan.Reason }
@@ -1176,10 +1100,9 @@ function Set-PathToolPriority {
         return [PSCustomObject]@{ Changed = $false; Scope = $Scope; Reason = $Reason }
     }
 
-    Write-TaggedLine -Tag "PRIORITY" -Text "$Scope PATH -> $Directory is now first; '$Command' runs the copy there"
-    foreach ($Provider in @($Plan.Providers)) {
-        if ($Provider.Path.TrimEnd('\') -eq $Directory.TrimEnd('\')) { continue }
-        Write-TaggedLine -Tag "KEPT" -Text "$($Provider.Scope) PATH -> $($Provider.Path)  (still on the PATH, now searched later)"
+    Write-TaggedLine -Tag "PRIORITY" -Text "$Scope PATH -> $Directory is now first; '$Family' runs from there"
+    foreach ($Dir in @($Plan.Dirs)) {
+        Write-TaggedLine -Tag "MOVED" -Text "$Scope PATH -> $Dir  (moved together, so the toolchain stays consistent)"
     }
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
                 [Environment]::GetEnvironmentVariable("Path", "User")
@@ -1188,42 +1111,352 @@ function Set-PathToolPriority {
     return [PSCustomObject]@{ Changed = $true; Scope = $Scope; Reason = $Plan.Reason }
 }
 
+# ============================================================
+#  ONE CARD PER TOOLCHAIN, NOT PER COMMAND
+#
+#  THE SCAN IS COMMAND-SHAPED AND THE DECISION IS NOT.
+#  Get-PathCommandConflicts answers "which directories provide `pip`",
+#  which is the right question for a report and the wrong unit for a
+#  choice: a Python installation ships python.exe in its root and pip.exe
+#  in its Scripts subdirectory, so one installed Python produced THREE
+#  findings - python, pip, pip3 - and the GUI drew three cards asking the
+#  same question three times.
+#
+#  Worse, they were three INDEPENDENT questions. Nothing stopped a user
+#  promoting 3.14's python and 3.12's pip, which is a machine where
+#  `pip install` puts packages somewhere `python` cannot import them: the
+#  exact failure the whole feature exists to prevent, reachable in two
+#  clicks through the tool meant to fix it.
+#
+#  So the unit is an INSTALLATION - a cluster of PATH directories that
+#  belong to one product - and promoting it moves every directory in the
+#  cluster together.
+#
+#  HOW A CLUSTER IS FOUND: containment, and nothing cleverer. A directory
+#  belongs with another when one is inside the other, which is exactly
+#  the C:\Python314 / C:\Python314\Scripts relationship and needs no
+#  per-product knowledge. Measured against this machine's real PATH it
+#  turns nine findings into four honest options, and the fourth is
+#  genuinely separate: a `pip --user` install under Roaming\Python\
+#  Python314\Scripts whose parent is not on the PATH at all, so it
+#  provides pip and no python and is nobody's subdirectory. Grouping it
+#  with the C:\Python314 that shares its version NUMBER would be a guess,
+#  and it would be wrong - they are different installations.
+# ============================================================
+
+#: Commands that ship together, so a card can ask one question about them
+#: instead of several. Anything not named here becomes a family of one,
+#: which is why the list can stay short: it earns its keep only where a
+#: product genuinely spreads across more than one PATH directory.
+$Script:PathToolFamilies = @(
+    @{ Key = "python"; Name = "Python";  Commands = @("python", "python3", "pip", "pip3") }
+    @{ Key = "node";   Name = "Node.js"; Commands = @("node", "npm", "npx") }
+    @{ Key = "java";   Name = "Java";    Commands = @("java", "javac") }
+    @{ Key = "go";     Name = "Go";      Commands = @("go", "gofmt") }
+    @{ Key = "rust";   Name = "Rust";    Commands = @("cargo", "rustc", "rustup") }
+    @{ Key = "docker"; Name = "Docker";  Commands = @("docker", "docker-compose") }
+)
+
+function Get-PathToolFamily {
+    <# The family a command belongs to, or a family of one. #>
+    param([Parameter(Mandatory = $true)][string]$Command)
+
+    foreach ($Family in $Script:PathToolFamilies) {
+        if ($Family.Commands -contains $Command) { return $Family }
+    }
+    return @{ Key = $Command; Name = $Command; Commands = @($Command) }
+}
+
+function Test-PathIsInside {
+    <# Is $Child the same directory as $Parent, or inside it?
+
+       Compared as normalised, case-insensitive strings with a trailing
+       separator forced on the parent - without which "C:\Python31" would
+       claim "C:\Python314" as a child, which is not a hypothetical on a
+       machine that has both 3.1x and 3.1y installed. #>
+    param([string]$Parent, [string]$Child)
+
+    if ([string]::IsNullOrWhiteSpace($Parent) -or [string]::IsNullOrWhiteSpace($Child)) {
+        return $false
+    }
+    $P = $Parent.TrimEnd('\', '/')
+    $C = $Child.TrimEnd('\', '/')
+    if ($P -ieq $C) { return $true }
+    return $C.StartsWith($P + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-PathInstallations {
+    <#
+    .SYNOPSIS
+        Every contested toolchain on this PATH, as INSTALLATIONS rather
+        than as commands. Read-only.
+
+    .DESCRIPTION
+        Returns one object per family that has more than one installation:
+        Key, Name, Commands (the contested ones), and Options - each an
+        installation with its Root, every Dirs entry it owns, Scope,
+        Version, which Commands it answers, and whether it currently wins.
+
+        A FAMILY WITH ONE INSTALLATION IS NOT A FINDING, even when several
+        of its commands were "contested" in the command-shaped scan. That
+        is the noise this exists to remove: C:\Python314 and
+        C:\Python314\Scripts are not two Pythons competing, they are one
+        Python spread over two directories the way every Python is.
+    #>
+    param([object[]]$Entries)
+
+    if (-not $Entries) { $Entries = @(Get-PathEntryReport) }
+    $Conflicts = @(Get-PathCommandConflicts -Entries $Entries)
+    if ($Conflicts.Count -eq 0) { return @() }
+
+    # -- 1. fold the command-shaped findings into families --------------
+    $Families = [ordered]@{}
+    foreach ($Conflict in $Conflicts) {
+        $Family = Get-PathToolFamily -Command $Conflict.Command
+        if (-not $Families.Contains($Family.Key)) {
+            $Families[$Family.Key] = [PSCustomObject]@{
+                Key = $Family.Key; Name = $Family.Name
+                Commands = New-Object System.Collections.ArrayList
+                Providers = New-Object System.Collections.ArrayList
+            }
+        }
+        $Bucket = $Families[$Family.Key]
+        [void]$Bucket.Commands.Add($Conflict.Command)
+        foreach ($Provider in @($Conflict.Providers)) {
+            [void]$Bucket.Providers.Add([PSCustomObject]@{
+                Command = $Conflict.Command
+                Path    = $Provider.Path
+                Raw     = $Provider.Raw
+                Scope   = $Provider.Scope
+                Version = $Provider.Version
+                Rank    = [array]::IndexOf(@($Entries | ForEach-Object { $_.Raw }), $Provider.Raw)
+            })
+        }
+    }
+
+    # -- 2. cluster each family's directories by containment ------------
+    $Out = New-Object System.Collections.ArrayList
+    foreach ($Key in $Families.Keys) {
+        $Bucket = $Families[$Key]
+        $Dirs = @($Bucket.Providers | ForEach-Object { $_.Path } |
+            Select-Object -Unique)
+
+        #  SHALLOWEST FIRST, so a root is always seen before anything it
+        #  contains and each directory joins a cluster that already
+        #  exists rather than starting one the next iteration has to
+        #  merge.
+        $Ordered = @($Dirs | Sort-Object { ($_.TrimEnd('\') -split '\\').Count }, { $_ })
+        $Clusters = New-Object System.Collections.ArrayList
+        foreach ($Dir in $Ordered) {
+            $Joined = $false
+            foreach ($Cluster in $Clusters) {
+                if (Test-PathIsInside -Parent $Cluster.Root -Child $Dir) {
+                    [void]$Cluster.Dirs.Add($Dir)
+                    $Joined = $true
+                    break
+                }
+            }
+            if (-not $Joined) {
+                $New = [PSCustomObject]@{
+                    Root = $Dir
+                    Dirs = (New-Object System.Collections.ArrayList)
+                }
+                [void]$New.Dirs.Add($Dir)
+                [void]$Clusters.Add($New)
+            }
+        }
+
+        # ONE INSTALLATION IS NOT A CONFLICT. See the .DESCRIPTION.
+        if ($Clusters.Count -lt 2) { continue }
+
+        $Options = New-Object System.Collections.ArrayList
+        foreach ($Cluster in $Clusters) {
+            $Mine = @($Bucket.Providers | Where-Object { $Cluster.Dirs -contains $_.Path })
+            $Scopes = @($Mine | ForEach-Object { $_.Scope } | Select-Object -Unique)
+            #  THE VERSION OF THE ROOT'S OWN BINARY, not of whatever
+            #  happened to be enumerated first: a Scripts directory's
+            #  pip.exe carries no version resource, so reading the
+            #  cluster in arrival order labelled a Python installation
+            #  with an empty string half the time.
+            $RootProvider = @($Mine | Where-Object { $_.Path -ieq $Cluster.Root } |
+                Where-Object { $_.Version } | Select-Object -First 1)
+            $Version = if ($RootProvider) { $RootProvider[0].Version }
+                       else { (@($Mine | Where-Object { $_.Version } |
+                                 Select-Object -First 1).Version) }
+            #  SORTED INTO PATH ORDER, and the obvious spelling of this
+            #  is a bug: inside a Where-Object nested in a Sort-Object
+            #  key, `$_` is the INNER pipeline's item, so
+            #  `$_.Path -ieq $_` compares a provider to itself and the
+            #  key comes back null for every directory. The outer item is
+            #  captured by name instead.
+            $Ordered = @($Cluster.Dirs | Sort-Object {
+                $Dir = $_
+                (@($Mine | Where-Object { $_.Path -ieq $Dir } |
+                    Select-Object -First 1).Rank)
+            })
+            [void]$Options.Add([PSCustomObject]@{
+                Root     = $Cluster.Root
+                Dirs     = $Ordered
+                Scope    = if ($Scopes.Count -eq 1) { $Scopes[0] } else { "Mixed" }
+                Version  = [string]$Version
+                Commands = @($Mine | ForEach-Object { $_.Command } | Select-Object -Unique | Sort-Object)
+                Rank     = (@($Mine | ForEach-Object { $_.Rank } | Measure-Object -Minimum).Minimum)
+            })
+        }
+
+        $Ranked = @($Options | Sort-Object Rank)
+        [void]$Out.Add([PSCustomObject]@{
+            Key      = $Bucket.Key
+            Name     = $Bucket.Name
+            Commands = @($Bucket.Commands | Select-Object -Unique | Sort-Object)
+            Options  = $Ranked
+        })
+    }
+    return @($Out)
+}
+
+function Get-PathInstallPlan {
+    <#
+    .SYNOPSIS
+        Can this INSTALLATION be made to win its family, and how? The
+        cluster-shaped counterpart of Get-PathPriorityPlan. Read-only.
+
+    .DESCRIPTION
+        Same three verdicts and the same refusal - see the header above
+        Get-PathPriorityPlan for why a user-scope directory can never
+        overtake a machine-scope one, which is unchanged by grouping.
+
+        WHAT GROUPING ADDS is that EVERY directory in the cluster moves,
+        in one write, keeping their existing order relative to each
+        other. Promoting a Python without its Scripts is the failure this
+        exists to prevent: `python` from 3.14 and `pip` from 3.12 is a
+        machine where installed packages cannot be imported.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Family,
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [object[]]$Entries
+    )
+
+    if (-not $Entries) { $Entries = @(Get-PathEntryReport) }
+    $Blocked = {
+        param($Reason, $Short)
+        [PSCustomObject]@{
+            Family = $Family; Directory = $Directory; Action = "blocked"
+            Scope = ""; Reason = $Reason; Short = $Short
+            Order = @(); Dirs = @()
+        }
+    }
+
+    $Install = @(Get-PathInstallations -Entries $Entries |
+        Where-Object { $_.Key -eq $Family }) | Select-Object -First 1
+    if (-not $Install) {
+        return (& $Blocked "$Family is not answered by more than one installation on this PATH, so there is nothing to reorder." "Nothing to reorder")
+    }
+
+    $Chosen = @($Install.Options | Where-Object {
+        $_.Root.TrimEnd('\') -ieq $Directory.TrimEnd('\') }) |
+        Select-Object -First 1
+    if (-not $Chosen) {
+        return (& $Blocked "$Directory is not one of the $($Install.Name) installations on this PATH." "Not on this PATH")
+    }
+    if (@($Install.Options)[0].Root -ieq $Chosen.Root) {
+        return [PSCustomObject]@{
+            Family = $Family; Directory = $Directory; Action = "none"
+            Scope = $Chosen.Scope; Short = "In use"
+            Reason = "$($Install.Name) already runs from $Directory."
+            Order = @(); Dirs = @($Chosen.Dirs)
+        }
+    }
+
+    if ($Chosen.Scope -eq "Mixed") {
+        return (& $Blocked "This installation has directories in BOTH the system and your user PATH, so no single reorder can move all of them. Pulse will not split an installation across scopes." "Split across scopes")
+    }
+
+    #  THE ONE CASE REORDERING CANNOT REACH. Windows searches the machine
+    #  PATH before the user PATH, so a user-scope installation cannot
+    #  overtake a machine-scope one however the user list is sorted.
+    if ($Chosen.Scope -eq "User") {
+        $MachineAhead = @($Install.Options | Where-Object {
+            $_.Scope -eq "Machine" -and $_.Rank -lt $Chosen.Rank })
+        if ($MachineAhead.Count -gt 0) {
+            return (& $Blocked "Windows always searches the system PATH before your user PATH, so this copy cannot be moved in front of the system one in $($MachineAhead[0].Root). Run Pulse as administrator to promote the system installation instead." "Needs administrator")
+        }
+    }
+
+    $Current = @($Entries | Where-Object { $_.Scope -eq $Chosen.Scope } |
+        ForEach-Object { $_.Raw })
+    $Moving = New-Object System.Collections.ArrayList
+    foreach ($Raw in $Current) {
+        foreach ($Dir in @($Chosen.Dirs)) {
+            if ($Raw.TrimEnd('\') -ieq $Dir.TrimEnd('\')) {
+                [void]$Moving.Add($Raw); break
+            }
+        }
+    }
+    if ($Moving.Count -eq 0) {
+        return (& $Blocked "$Directory is no longer in the $($Chosen.Scope) PATH - re-scan and try again." "Re-scan needed")
+    }
+    $Rest = @($Current | Where-Object { -not ($Moving -contains $_) })
+    $Noun = Get-PluralSuffix -Count $Moving.Count -Singular "folder" -Plural "folders"
+    return [PSCustomObject]@{
+        Family    = $Family
+        Directory = $Directory
+        Action    = "reorder"
+        Scope     = $Chosen.Scope
+        Short     = "Use this one"
+        Reason    = "moves $($Moving.Count) $Noun to the front of the $($Chosen.Scope) PATH; nothing is removed."
+        Order     = @(@($Moving) + $Rest)
+        Dirs      = @($Chosen.Dirs)
+    }
+}
+
 function Get-PathConflictReport {
     <#
     .SYNOPSIS
         The shadowed-toolchain findings, shaped for the GUI. Read-only.
 
     .DESCRIPTION
-        Every contested command with each of its providers, the scope the
-        provider sits in, the version stamped in the binary, and whether
-        promoting that provider is something reordering can actually
-        achieve. `Fixable` is computed HERE rather than in the dialog so
-        the rule that decides it lives beside the rule that enforces it -
-        a GUI that offers a button the backend will refuse is worse than
-        one that offers nothing.
+        ONE ENTRY PER TOOLCHAIN since v10.12.1 - see the header above
+        Get-PathInstallations for why `python`, `pip` and `pip3` were
+        three cards asking one question, and for the two-click route to a
+        broken machine that gave the user.
+
+        `action` is computed HERE rather than in the dialog so the rule
+        that decides it lives beside the rule that enforces it: a GUI
+        that offers a button the backend will refuse is worse than one
+        that offers nothing. `short` is the same verdict in two or three
+        words, so the dialog has something to put ON the control instead
+        of a paragraph beside it.
     #>
     $Entries = @(Get-PathEntryReport)
-    $Conflicts = @(Get-PathCommandConflicts -Entries $Entries)
+    $Installs = @(Get-PathInstallations -Entries $Entries)
     $Out = New-Object System.Collections.ArrayList
-    foreach ($Conflict in $Conflicts) {
+    foreach ($Install in $Installs) {
         $Options = New-Object System.Collections.ArrayList
-        foreach ($Provider in @($Conflict.Providers)) {
-            $Plan = Get-PathPriorityPlan -Command $Conflict.Command `
-                -Directory $Provider.Path -Entries $Entries
+        $First = @($Install.Options)[0]
+        foreach ($Option in @($Install.Options)) {
+            $Plan = Get-PathInstallPlan -Family $Install.Key `
+                -Directory $Option.Root -Entries $Entries
             [void]$Options.Add([PSCustomObject]@{
-                path    = $Provider.Path
-                scope   = $Provider.Scope
-                version = $Provider.Version
-                winner  = ($Provider.Path -eq $Conflict.Winner)
-                action  = $Plan.Action
-                reason  = $Plan.Reason
+                path     = $Option.Root
+                dirs     = @($Option.Dirs)
+                scope    = $Option.Scope
+                version  = $Option.Version
+                commands = @($Option.Commands)
+                winner   = ($Option.Root -ieq $First.Root)
+                action   = $Plan.Action
+                short    = $Plan.Short
+                reason   = $Plan.Reason
             })
         }
         [void]$Out.Add([PSCustomObject]@{
-            command = $Conflict.Command
-            winner  = $Conflict.Winner
-            count   = $Conflict.Count
-            options = @($Options)
+            key      = $Install.Key
+            command  = $Install.Name
+            commands = @($Install.Commands)
+            winner   = $First.Root
+            count    = @($Install.Options).Count
+            options  = @($Options)
         })
     }
     return [PSCustomObject]@{

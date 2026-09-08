@@ -2941,8 +2941,14 @@ class PulseApp(QMainWindow):
             # `is_admin` is passed in so the dialog can SHOW what is
             # shadowed without elevation and disable only the buttons that
             # would write.
-            self._exec_dialog(PathConflictDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+            dialog = PathConflictDialog(
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin)
+            # THE SHIELD GOES THROUGH THE ONE RELAUNCH PATH, rather than
+            # the dialog re-implementing ShellExecute("runas") behind a
+            # card. It appears only when elevation is what is actually
+            # standing in the way of a promotion — see _sync_elevate_button.
+            dialog.elevate_requested.connect(self._relaunch_as_admin)
+            self._exec_dialog(dialog)
             return
         if item.get("dns_switcher"):
             # Self-contained like the Startup Manager: it scans, applies

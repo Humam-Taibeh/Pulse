@@ -6261,8 +6261,24 @@ class DnsSwitcherDialog(InspectorDialog):
         self._status.setText(f"Could not change DNS: {message}")
 
 
+#: Directory names every toolchain uses for the same purpose, so one of
+#: them alone never identifies an installation. "Scripts" is Python's,
+#: "bin" is everyone's.
+_GENERIC_PATH_SEGMENTS = frozenset({
+    "scripts", "bin", "sbin", "cmd", "tools", "exec", "shims",
+})
+
+
+def _is_generic_segment(label: str) -> bool:
+    """Is `label` a bare container name like "Scripts", carrying no
+    information about which product it belongs to?"""
+    bare = label.lstrip("…\\")
+    return ("\\" not in bare
+            and bare.lower() in _GENERIC_PATH_SEGMENTS)
+
+
 class PathConflictDialog(InspectorDialog):
-    """Which copy of a tool your terminal actually runs — and a safe way
+    r"""Which copy of a tool your terminal actually runs — and a safe way
     to change the answer.
 
     THE PROBLEM IS INVISIBLE BY CONSTRUCTION. A user installs Python 3.13,
@@ -6272,6 +6288,27 @@ class PathConflictDialog(InspectorDialog):
     scan already REPORTS this (Write-PathScanReport's [SHADOWED] lines);
     what it could not do was fix it, so the advice ended at "here is a
     problem, go and edit an environment variable".
+
+    ONE CARD PER TOOLCHAIN, NOT PER COMMAND (v10.12.1). The first cut of
+    this dialog was command-shaped, because the scan is: it drew a card
+    for `python`, another for `pip` and a third for `pip3`, which on a
+    machine with two Pythons is three cards asking one question three
+    times. It was also three INDEPENDENT questions, so a user could
+    promote 3.14's python and 3.12's pip and end up with a machine where
+    `pip install` puts packages somewhere `python` cannot import them —
+    the exact failure this feature exists to prevent, reachable through
+    the tool meant to fix it. The backend now groups directories into
+    INSTALLATIONS and moves every directory in one together; see
+    Get-PathInstallations.
+
+    THE ACTION IS ON THE BUTTON AND THE IDENTITY IS ON THE ROW, which is
+    the other thing that first cut got backwards. Its buttons carried
+    elided paths — "…\Python\Python312\Scripts" — so the control the
+    user clicks was a truncated string, and the reason a control was
+    disabled was a paragraph underneath it. Now each installation is a
+    row that says what it is (version, scope, which commands it answers)
+    and carries one button whose LABEL is the verdict: "Use this one",
+    "In use", "Needs administrator".
 
     SELF-CONTAINED, like the DNS switcher and for the same reason: this is
     a per-row action on a live list, re-scanned after every change so the
@@ -6283,13 +6320,6 @@ class PathConflictDialog(InspectorDialog):
     answers first. A wrong choice here costs a click to undo. The prune
     beside it deletes entries, which is why that one is red, confirmed,
     and refuses everything it cannot prove.
-
-    THE CHOICES IT DOES NOT OFFER ARE THE INTERESTING ONES. Windows
-    composes the search path as machine-then-user, so a user-scope folder
-    can never overtake a machine-scope one — no ordering of the user PATH
-    will do it. Rather than showing a button that would appear to work and
-    change nothing, the backend marks that option `blocked` and the reason
-    is printed under the card. See Get-PathPriorityPlan.
     """
 
     TASK = "PathConflictReport"
@@ -6298,18 +6328,43 @@ class PathConflictDialog(InspectorDialog):
     ACCENT_KEY = "optimization"
     TIMEOUT = 180
 
+    #: Asked for when an installation can only be promoted by an elevated
+    #: Pulse. main.py owns the relaunch (PulseApp._relaunch_as_admin); the
+    #: dialog only says that it is wanted, so the UAC path stays in one
+    #: place rather than being re-implemented behind a card.
+    elevate_requested = Signal()
+
     def __init__(self, parent: QWidget, ps1_path: str, t: dict,
                  is_admin: bool = True):
         self._is_admin = is_admin
         self._busy = False
+        self._elevate_btn: QPushButton | None = None
         super().__init__(parent, ps1_path, t)
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        # BUILT HIDDEN AND SHOWN BY _render, because whether elevation
+        # would actually help is a property of the SCAN, not of the
+        # session: an unelevated Pulse looking at a machine whose only
+        # conflict is in the user PATH needs no shield at all, and
+        # offering one there teaches the user that the button is decoration.
+        self._elevate_btn = self._button(
+            "Restart as administrator", TH.dialog_secondary_go_qss(t, accent),
+            self._request_elevation)
+        self._elevate_btn.setToolTip(
+            "Reordering the system PATH needs an elevated Pulse. This closes "
+            "Pulse and reopens it with administrator rights; Windows will ask "
+            "you to confirm.")
+        self._elevate_btn.hide()
         return [
             self._button("Close", TH.dialog_cancel_qss(t), self.reject),
+            self._elevate_btn,
             self._button("Re-scan", TH.dialog_secondary_go_qss(t, accent),
                          self._start),
         ]
+
+    def _request_elevation(self):
+        self.accept()
+        self.elevate_requested.emit()
 
     # -- rendering ------------------------------------------------
     def _render(self, report: dict):
@@ -6328,7 +6383,7 @@ class PathConflictDialog(InspectorDialog):
         if not conflicts:
             self._status.setText(
                 f"Nothing is shadowed. Across {entries} PATH entries, every "
-                "tool Pulse checks is answered by exactly one folder.")
+                "tool Pulse checks is answered by exactly one installation.")
             card = self._card("Nothing to fix")
             card.note(
                 "Pulse looks for a second copy of the tools where "
@@ -6336,110 +6391,147 @@ class PathConflictDialog(InspectorDialog):
                 "debug — interpreters, package managers, compilers and "
                 "build drivers. A machine with one of each has nothing to "
                 "show here, which is the healthy result.")
+            self._sync_elevate_button([])
             return
 
-        noun = "tool" if len(conflicts) == 1 else "tools"
+        noun = "toolchain" if len(conflicts) == 1 else "toolchains"
         self._status.setText(
-            f"{len(conflicts)} {noun} on this machine have more than one "
-            f"copy on the PATH, across {entries} entries. Choosing a folder "
-            "REORDERS your PATH so that copy is found first — nothing is "
-            "removed, and every other copy stays exactly where it is.")
-
-        if not self._is_admin:
-            warn = self._card("Administrator required", ("NOT ELEVATED", "warn"))
-            warn.note(
-                "Reordering the PATH takes a restore point and a backup "
-                "first, and both need an elevated Pulse. You can still see "
-                "which tools are shadowed and where each copy lives.")
+            f"{len(conflicts)} {noun} have more than one installation on "
+            f"this PATH, across {entries} entries. Choosing one REORDERS "
+            "your PATH so it is found first — nothing is removed, and an "
+            "installation's folders always move together.")
 
         for conflict in conflicts:
             self._conflict_card(conflict)
+        self._sync_elevate_button(conflicts)
+
+    def _sync_elevate_button(self, conflicts: list):
+        """Show the shield only when elevation is the thing standing in
+        the way — never merely because the session is unelevated."""
+        if self._elevate_btn is None:
+            return
+        blocked_by_rights = any(
+            option.get("short") == "Needs administrator"
+            for conflict in conflicts
+            for option in (conflict.get("options") or []))
+        self._elevate_btn.setVisible(blocked_by_rights and not self._is_admin)
 
     def _conflict_card(self, conflict: dict):
-        command = str(conflict.get("command") or "")
+        name = str(conflict.get("command") or "")
+        key = str(conflict.get("key") or name)
         options = conflict.get("options") or []
         count = int(conflict.get("count") or len(options))
+        commands = [str(c) for c in (conflict.get("commands") or [])]
 
-        card = self._card(command, (f"{count} COPIES", "warn"))
-        winner = next((o for o in options if o.get("winner")), None)
-        if winner:
-            card.row("Runs now", str(winner.get("path") or ""),
+        plural = "INSTALLATION" if count == 1 else "INSTALLATIONS"
+        card = self._card(name, (f"{count} {plural}", "warn"))
+        if commands:
+            card.row("Commands", ", ".join(commands),
                      label_width=self._LABEL_W)
 
-        for option in options:
-            path = str(option.get("path") or "")
-            scope = str(option.get("scope") or "")
-            version = str(option.get("version") or "")
-            where = "System PATH" if scope == "Machine" else "Your PATH"
-            label = f"{where}  ·  {version}" if version else where
-            card.row(label, path, label_width=self._LABEL_W)
+        labels = self._option_labels(options)
+        for option, label in zip(options, labels):
+            card.add(self._option_row(key, option, label))
 
-        strip, row = _chip_strip(self._t)
-        for option, label in zip(options, self._option_labels(options)):
-            row.addWidget(self._option_button(command, option, label))
-        row.addStretch()
-        card.add(strip)
+    def _option_row(self, key: str, option: dict, label: str) -> QWidget:
+        """One installation: what it is on the left, what you can do
+        about it on the right."""
+        path = str(option.get("path") or "")
+        scope = str(option.get("scope") or "")
+        commands = [str(c) for c in (option.get("commands") or [])]
+        dirs = [str(d) for d in (option.get("dirs") or [])]
+        current = bool(option.get("winner"))
 
-        # Only the options that CANNOT be taken need explaining. A button
-        # that works needs no caption; one that is greyed out and silent
-        # is the thing that makes an interface feel broken.
-        for option in options:
-            if option.get("action") == "blocked" and not option.get("winner"):
-                card.note(str(option.get("reason") or ""))
-                break
+        host = QWidget()
+        host.setStyleSheet("background: transparent; border: none;")
+        lay = QHBoxLayout(host)
+        lay.setContentsMargins(0, TH.SPACE["xxs"], 0, TH.SPACE["xxs"])
+        lay.setSpacing(TH.SPACE["md"])
+
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        where = "System PATH" if scope == "Machine" else "Your PATH"
+        head = QLabel(f"{label}  ·  {where}")
+        head.setStyleSheet(TH.label_qss(self._t, "card"))
+        col.addWidget(head)
+
+        detail = path
+        if len(dirs) > 1:
+            detail += f"   (+{len(dirs) - 1} more folder"
+            detail += "s)" if len(dirs) > 2 else ")"
+        if commands:
+            detail += f"   ·   {', '.join(commands)}"
+        body = QLabel(detail)
+        body.setWordWrap(True)
+        body.setStyleSheet(TH.label_qss(self._t, "caption"))
+        col.addWidget(body)
+        lay.addLayout(col, 1)
+
+        lay.addWidget(self._option_button(key, option, current),
+                      0, Qt.AlignmentFlag.AlignVCenter)
+        return host
 
     @staticmethod
     def _option_labels(options: list[dict]) -> list[str]:
-        """One SHORT, DISTINCT label per option in a card.
+        """One SHORT, DISTINCT identity per installation in a card.
 
-        THE OBVIOUS ANSWER IS WRONG FOR THE COMMONEST CASE. A chip cannot
-        carry the full path — "C:\\Users\\me\\AppData\\Local\\Programs\\
-        Python\\Python312\\Scripts\\" is a paragraph pretending to be a
-        button, and the row above it already prints it. But the leaf
-        folder alone, measured against this machine's real PATH, produced
-        THREE CHIPS READING "Scripts" on the `pip` card: the three Python
-        installations differ several segments up. Three identical buttons
-        is the same defect the purge dialog's icons were fixed for, in a
-        new place.
-
-        SO: THE VERSION WHEN IT DISTINGUISHES EVERY OPTION, because that
-        is the fact the user is actually choosing between — `java` reads
-        "21.0.12.1" against "26.0.2.0", which answers the question
-        without anybody parsing a path. It is used only when EVERY option
-        has one and they are all different, so a card never mixes two
-        kinds of label.
+        THE VERSION WHEN IT DISTINGUISHES EVERY OPTION, because that is
+        the fact the user is actually choosing between — the Java card
+        reads "21.0.12.1" against "26.0.2.0", which answers the question
+        without anybody parsing a path. Used only when EVERY option has
+        one and they are all different, so a card never mixes two kinds
+        of label.
 
         OTHERWISE the shortest trailing run of path segments that is
-        unique within this card, up to three, with a leading ellipsis
-        when it is not the whole path. `python` needs one segment
-        (Python314 / Python312 / WindowsApps); `pip` needs three.
+        unique within this card, up to three. Measured against a real
+        machine, the leaf folder alone is not enough: three Python
+        installations put pip in three directories all called "Scripts".
         """
         versions = [str(o.get("version") or "").strip() for o in options]
         if all(versions) and len(set(versions)) == len(versions):
             return versions
 
         paths = [str(o.get("path") or "").rstrip("\\") for o in options]
+        fallback = None
         for depth in (1, 2, 3):
             labels = []
             for path in paths:
                 parts = [p for p in path.split("\\") if p]
                 tail = "\\".join(parts[-depth:]) if parts else path
                 labels.append(tail if len(parts) <= depth else "…\\" + tail)
-            if len(set(labels)) == len(labels):
-                return labels
-        # Nothing short is unique — the paths differ only beyond three
-        # segments. The full path is ugly on a chip and it is still the
-        # only honest label left.
-        return paths
+            if len(set(labels)) != len(labels):
+                continue
+            if fallback is None:
+                fallback = labels
+            # UNIQUE IS NOT THE SAME AS INFORMATIVE. A `pip --user`
+            # install under Roaming\Python\Python314\Scripts is the only
+            # option ending in "Scripts", so depth 1 is unique and labels
+            # it "…\Scripts" — which is technically distinct and tells
+            # the reader nothing about WHICH Python it belongs to. A
+            # container name that every toolchain uses has to be
+            # qualified by the directory above it.
+            if any(_is_generic_segment(label) for label in labels):
+                continue
+            return labels
+        # Nothing better was available: the deepest unique set if there
+        # was one, and otherwise the full paths — ugly on a row, and
+        # still the only honest label left.
+        return fallback if fallback is not None else paths
 
-    def _option_button(self, command: str, option: dict,
-                       label: str) -> QPushButton:
+    def _option_button(self, key: str, option: dict,
+                       current: bool) -> QPushButton:
         path = str(option.get("path") or "")
         scope = str(option.get("scope") or "")
-        current = bool(option.get("winner"))
         action = str(option.get("action") or "")
-        btn = QPushButton(label.replace("&", "&&"))
+        # THE BACKEND'S OWN VERDICT, in two or three words. It is computed
+        # beside the rule that enforces it (Get-PathInstallPlan), so the
+        # button cannot promise something the task will refuse — and the
+        # reason no longer has to be a paragraph on the card, because the
+        # control itself now says it.
+        short = str(option.get("short") or "").strip()
+        btn = QPushButton((short or "Use this one").replace("&", "&&"))
         btn.setFixedHeight(_CHIP_H)
+        btn.setMinimumWidth(150)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(TH.catalog_tab_qss(self._t, self._accent, current))
 
@@ -6447,34 +6539,26 @@ class PathConflictDialog(InspectorDialog):
         enabled = (action == "reorder" and not self._busy
                    and (self._is_admin or not needs_admin))
         btn.setEnabled(enabled)
-        if current:
-            btn.setToolTip(f"'{command}' already runs the copy in {path}.")
-        elif action == "blocked":
-            btn.setToolTip(str(option.get("reason") or "").strip())
-        elif needs_admin and not self._is_admin:
-            btn.setToolTip("Changing the system PATH needs an elevated Pulse.")
-        else:
-            btn.setToolTip(
-                f"Move {path} to the front of the {scope} PATH so "
-                f"'{command}' runs that copy. Nothing is removed.")
+        # The long form stays reachable, in the place a long form belongs.
+        btn.setToolTip(str(option.get("reason") or "").strip())
         btn.clicked.connect(
-            lambda _c=False, c=command, p=path: self._apply(c, p))
+            lambda _c=False, k=key, p=path: self._apply(k, p))
         return btn
 
     # -- mutation -------------------------------------------------
-    def _apply(self, command: str, directory: str):
-        """Promote one folder for one command, then re-scan so the cards
-        reflect what the registry actually holds rather than what was
-        asked for."""
+    def _apply(self, key: str, directory: str):
+        """Promote one installation, then re-scan so the cards reflect
+        what the registry actually holds rather than what was asked
+        for."""
         if self._busy or self._worker is not None:
             return
         self._busy = True
-        self._status.setText(f"Making {directory} the copy '{command}' runs…")
+        self._status.setText(f"Making {directory} the installation in use…")
 
         thread = QThread(self)
         worker = PowerShellTask(
             self._ps1, "PathPrioritize", timeout=self.TIMEOUT,
-            path_command=command, path_directory=directory)
+            path_command=key, path_directory=directory)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_applied)
@@ -12038,6 +12122,15 @@ class StartupRow(QFrame):
         # still toggles, but the user should know this one is load-bearing
         # before they flip it.
         self._protected = bool(item.get("Protected"))
+        #: The RAW registry value name, kept for the tooltip. The row
+        #: shows DisplayName (see Get-StartupDisplayName), but the
+        #: identifier is what a user would search a forum thread for, so
+        #: it stays reachable rather than being thrown away.
+        self._raw_name = str(item.get("Name") or "")
+        #: Does the program this entry launches still exist? Defaulted to
+        #: True so a payload from an older backend renders an ordinary
+        #: row rather than captioning every entry as broken.
+        self._target_present = bool(item.get("TargetPresent", True))
 
         outer = QHBoxLayout(self)
         row_padding(outer)
@@ -12083,10 +12176,22 @@ class StartupRow(QFrame):
         # both ends of the identifier, which is where two entries from the
         # same publisher actually differ; ElideRight would render every
         # Edge auto-launch key as the same string.
+        #
+        # THE LABEL, NOT THE IDENTIFIER (v10.12.1). The backend now sends
+        # a cleaned DisplayName beside the raw registry value name — see
+        # Get-StartupDisplayName — so the row reads "Notion" rather than
+        # "electron.app.Notion" and "Microsoft Edge AutoLaunch" rather
+        # than that name plus a 32-character machine hash. The raw name
+        # is still the tooltip: it is what somebody would paste into a
+        # search, and it is the only thing that identifies two entries
+        # from the same publisher.
         self._name = ElidedCaption(max_width=self.NAME_MAX_W,
                                    elide=Qt.TextElideMode.ElideMiddle)
-        self._name.setFullText(str(item.get("Name", "")))
-        self._name.setToolTip(str(item.get("Name", "")))
+        display = str(item.get("DisplayName") or item.get("Name", ""))
+        self._name.setFullText(display)
+        self._name.setToolTip(
+            self._raw_name if self._raw_name != display
+            else display)
         name_row.addWidget(self._name)
         self._impact_badge = QLabel(f"{self._impact.upper()} IMPACT")
         name_row.addWidget(self._impact_badge)
@@ -12094,6 +12199,22 @@ class StartupRow(QFrame):
             "System Critical" if self._protected
             else self._REC_LABELS.get(self._recommendation, self._recommendation))
         name_row.addWidget(self._rec_badge)
+        # THE BADGE THAT EXPLAINS THE GREY BOX. Six of fifteen entries on
+        # the machine this was measured on point at binaries that are no
+        # longer installed, and the row had no way to say so: it asked
+        # Windows for an icon, got nothing, and drew the neutral parcel —
+        # which is the correct picture and reads as a BROKEN ICON. Six
+        # unexplained grey squares look like a defect in Pulse; six rows
+        # captioned MISSING are six entries worth turning off.
+        self._missing_badge: QLabel | None = None
+        if not self._target_present:
+            self._missing_badge = QLabel("MISSING")
+            self._missing_badge.setToolTip(
+                "This entry points at a program that is not on this PC any "
+                "more — usually software that was uninstalled without its "
+                "startup entry being removed. Windows still tries to launch "
+                "it at every boot. Turning it off is safe.")
+            name_row.addWidget(self._missing_badge)
         name_row.addStretch()
         if self._protected:
             self.setToolTip(
@@ -12103,6 +12224,14 @@ class StartupRow(QFrame):
 
         type_label = "Registry (Run key)" if item.get("Type") == "Registry" else "Startup folder shortcut"
         reason = str(item.get("Reason") or "")
+        if not self._target_present:
+            # REPLACES the recommendation rather than joining it. The
+            # engine's reason is advice about the PROGRAM ("a launcher
+            # you rarely need at boot"), and there is no program — saying
+            # both would be two answers to one question.
+            reason = ("The program this points at is not installed any "
+                      "more. Windows tries to start it at every boot and "
+                      "fails; turning it off is safe.")
         self._meta = QLabel(f"{type_label}  ·  {reason}")
         self._meta.setWordWrap(True)
         col.addWidget(self._meta)
@@ -12154,6 +12283,12 @@ class StartupRow(QFrame):
         # the row showing a string elided for the previous theme's.
         self._name.setFullText(self._name.fullText())
         self._impact_badge.setStyleSheet(TH.impact_badge_qss(t, self._impact))
+        if self._missing_badge is not None:
+            # "warn", not "danger": an orphaned Run key is a tidy-up, not
+            # a hazard. The same tone the purge dialog gives INSTALLED,
+            # which is the other "this is a fact about the machine you
+            # probably want to act on" chip in the app.
+            self._missing_badge.setStyleSheet(TH.micro_chip_qss(t, "warn"))
         self._rec_badge.setStyleSheet(
             TH.recommendation_badge_qss(t, self._recommendation, self._protected))
         self._meta.setStyleSheet(TH.label_qss(t, "caption"))

@@ -579,103 +579,263 @@ Describe "Get-BinaryVersionLabel" {
     }
 }
 
-Describe "Get-PathPriorityPlan" {
+Describe "Get-PathToolFamily" {
+
+    It "folds a runtime's commands into one family" {
+        # THE WHOLE POINT: python, pip and pip3 are one installed Python,
+        # not three findings.
+        foreach ($command in @('python', 'python3', 'pip', 'pip3')) {
+            (Get-PathToolFamily -Command $command).Key | Should -Be 'python'
+        }
+        (Get-PathToolFamily -Command 'npm').Key   | Should -Be 'node'
+        (Get-PathToolFamily -Command 'javac').Key | Should -Be 'java'
+    }
+
+    It "gives anything unlisted a family of its own" {
+        # So the list can stay short: a command earns an entry only where
+        # its product spreads across more than one PATH directory.
+        $family = Get-PathToolFamily -Command 'ffmpeg'
+        $family.Key      | Should -Be 'ffmpeg'
+        @($family.Commands).Count | Should -Be 1
+    }
+}
+
+Describe "Test-PathIsInside" {
+
+    It "recognises a directory inside another" {
+        Test-PathIsInside -Parent 'C:\Python314' -Child 'C:\Python314\Scripts' | Should -BeTrue
+        Test-PathIsInside -Parent 'C:\Python314\' -Child 'C:\Python314\Scripts\' | Should -BeTrue
+        Test-PathIsInside -Parent 'C:\Python314' -Child 'C:\Python314' | Should -BeTrue
+    }
+
+    It "does NOT let a prefix claim a sibling" {
+        # THE BUG THE SEPARATOR PREVENTS, and it is not hypothetical on a
+        # machine with two Pythons: without forcing a trailing "\" onto
+        # the parent, "C:\Python31" claims "C:\Python314" as its child and
+        # two unrelated installations are merged into one option.
+        Test-PathIsInside -Parent 'C:\Python31' -Child 'C:\Python314' | Should -BeFalse
+        Test-PathIsInside -Parent 'C:\Py' -Child 'C:\Python314' | Should -BeFalse
+    }
+
+    It "survives empty input" {
+        Test-PathIsInside -Parent '' -Child 'C:\A' | Should -BeFalse
+        Test-PathIsInside -Parent 'C:\A' -Child '' | Should -BeFalse
+    }
+}
+
+Describe "Get-PathInstallations" {
 
     BeforeAll {
-        function script:TwoUserPythons {
+        # TWO PYTHONS, each a root plus a Scripts directory, in the order
+        # a real installer writes them (Scripts first - measured on the
+        # maintainer's machine, where the machine PATH reads
+        # "C:\Python314\Scripts\" then "C:\Python314\").
+        function script:TwoPythons {
             @(
-                [PSCustomObject]@{ Scope='User'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
-                [PSCustomObject]@{ Scope='User'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
-                [PSCustomObject]@{ Scope='User'; Raw='C:\Other'; Path='C:\Other'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314\Scripts'; Path='C:\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314';         Path='C:\Py314';         Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User';    Raw='C:\Py312\Scripts'; Path='C:\Py312\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User';    Raw='C:\Py312';         Path='C:\Py312';         Exists=$true; Valid=$true; Duplicate=$false }
             )
+        }
+        #: python.exe in a root, pip.exe in a Scripts - the real layout.
+        function script:MockPythonLayout {
+            Mock Test-Path {
+                param($LiteralPath)
+                if ($LiteralPath -like '*\Scripts\pip.exe')  { return $true }
+                if ($LiteralPath -like '*\Scripts\pip3.exe') { return $true }
+                if ($LiteralPath -like '*\Scripts\*')        { return $false }
+                return ($LiteralPath -like '*python.exe')
+            }
         }
     }
 
-    It "moves the chosen folder to the front of its scope" {
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries (TwoUserPythons)
+    It "reports ONE installation per product, not one per command" {
+        MockPythonLayout
+        $installs = @(Get-PathInstallations -Entries (TwoPythons))
+        @($installs).Count | Should -Be 1 -Because "python, pip and pip3 are one family"
+        $python = $installs[0]
+        $python.Key | Should -Be 'python'
+        @($python.Options).Count | Should -Be 2 -Because "there are two Pythons, not four directories"
+    }
+
+    It "clusters a root with its Scripts directory" {
+        MockPythonLayout
+        $python = @(Get-PathInstallations -Entries (TwoPythons))[0]
+        $first = @($python.Options)[0]
+        @($first.Dirs).Count | Should -Be 2
+        @($first.Dirs) | Should -Contain 'C:\Py314'
+        @($first.Dirs) | Should -Contain 'C:\Py314\Scripts'
+    }
+
+    It "keeps the cluster in PATH order, so a promotion preserves it" {
+        MockPythonLayout
+        $python = @(Get-PathInstallations -Entries (TwoPythons))[0]
+        # Scripts is FIRST in the fixture's PATH, and must stay first.
+        @(@($python.Options)[0].Dirs)[0] | Should -Be 'C:\Py314\Scripts'
+    }
+
+    It "records every command an installation answers" {
+        MockPythonLayout
+        $python = @(Get-PathInstallations -Entries (TwoPythons))[0]
+        $commands = @(@($python.Options)[0].Commands)
+        $commands | Should -Contain 'python'
+        $commands | Should -Contain 'pip'
+    }
+
+    It "says nothing when a family has only ONE installation" {
+        <#
+            THE NOISE THIS EXISTS TO REMOVE. C:\Python314 and
+            C:\Python314\Scripts are not two Pythons competing - they are
+            one Python spread over two directories the way every Python
+            is - so a machine with a single install must produce no
+            finding at all, even though the command-shaped scan sees
+            python in one directory and pip in another.
+        #>
+        MockPythonLayout
+        $single = @(
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314\Scripts'; Path='C:\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314';         Path='C:\Py314';         Exists=$true; Valid=$true; Duplicate=$false }
+        )
+        @(Get-PathInstallations -Entries $single).Count | Should -Be 0
+    }
+
+    It "keeps a Scripts directory whose parent is NOT on the PATH separate" {
+        <#
+            A `pip --user` install lands in Roaming\Python\PythonXY\Scripts
+            and its parent is not a PATH entry at all, so it provides pip
+            and no python and is nobody's subdirectory. Folding it into
+            the installation that happens to share its version NUMBER
+            would be a guess, and it would be wrong - they are different
+            installations.
+        #>
+        MockPythonLayout
+        $entries = @(
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314';           Path='C:\Py314';           Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314\Scripts';   Path='C:\Py314\Scripts';   Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='User';    Raw='C:\Roam\Py314\Scripts'; Path='C:\Roam\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+        )
+        $python = @(Get-PathInstallations -Entries $entries)[0]
+        @($python.Options).Count | Should -Be 2
+        $orphan = @($python.Options | Where-Object { $_.Root -eq 'C:\Roam\Py314\Scripts' })
+        $orphan.Count | Should -Be 1
+        @($orphan[0].Dirs).Count | Should -Be 1 -Because "it owns no other directory"
+    }
+}
+
+Describe "Get-PathInstallPlan" {
+
+    BeforeAll {
+        function script:FourDirs {
+            @(
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py314\Scripts'; Path='C:\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py314';         Path='C:\Py314';         Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py312\Scripts'; Path='C:\Py312\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py312';         Path='C:\Py312';         Exists=$true; Valid=$true; Duplicate=$false }
+            )
+        }
+        function script:MockLayout {
+            Mock Test-Path {
+                param($LiteralPath)
+                if ($LiteralPath -like '*\Scripts\pip.exe')  { return $true }
+                if ($LiteralPath -like '*\Scripts\pip3.exe') { return $true }
+                if ($LiteralPath -like '*\Scripts\*')        { return $false }
+                return ($LiteralPath -like '*python.exe')
+            }
+        }
+    }
+
+    It "moves the WHOLE installation, not just the directory named" {
+        <#
+            THE FAILURE THIS PREVENTS, and the reason the unit is an
+            installation: promoting 3.12's python without its Scripts
+            leaves `pip` answering from 3.14, which is a machine where
+            `pip install` puts packages somewhere `python` cannot import
+            them.
+        #>
+        MockLayout
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Py312' -Entries (FourDirs)
         $plan.Action | Should -Be 'reorder'
-        $plan.Scope  | Should -Be 'User'
-        @($plan.Order)[0] | Should -Be 'C:\Py313'
+        @($plan.Dirs).Count | Should -Be 2
+        # Both of 3.12's directories are now ahead of both of 3.14's.
+        $order = @($plan.Order)
+        $order[0] | Should -Be 'C:\Py312\Scripts'
+        $order[1] | Should -Be 'C:\Py312'
     }
 
     It "produces a PERMUTATION - every entry survives, none is added" {
-        # THE SAFETY PROPERTY, asserted directly. A reorder that drops an
-        # entry is a removal wearing a reorder's name, and it would take a
-        # working toolchain off the PATH without ever saying so.
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
-        $entries = TwoUserPythons
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
-        $before = @($entries | Where-Object { $_.Scope -eq 'User' } | ForEach-Object { $_.Raw } | Sort-Object)
+        MockLayout
+        $entries = FourDirs
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Py312' -Entries $entries
+        $before = @($entries | ForEach-Object { $_.Raw } | Sort-Object)
         $after  = @(@($plan.Order) | Sort-Object)
         $after.Count | Should -Be $before.Count
         (Compare-Object -ReferenceObject $before -DifferenceObject $after -SyncWindow 0) | Should -BeNullOrEmpty
     }
 
-    It "says there is nothing to do when the folder already wins" {
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py311' -Entries (TwoUserPythons)
+    It "carries a SHORT verdict the GUI can put on the button" {
+        # The long reason belongs in a tooltip; the control itself has to
+        # say what it will do in two or three words.
+        MockLayout
+        (Get-PathInstallPlan -Family 'python' -Directory 'C:\Py312' -Entries (FourDirs)).Short |
+            Should -Be 'Use this one'
+        (Get-PathInstallPlan -Family 'python' -Directory 'C:\Py314' -Entries (FourDirs)).Short |
+            Should -Be 'In use'
+    }
+
+    It "says there is nothing to do when the installation already wins" {
+        MockLayout
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Py314' -Entries (FourDirs)
         $plan.Action | Should -Be 'none'
         @($plan.Order).Count | Should -Be 0
     }
 
-    It "refuses a folder that does not contain the command" {
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Other' -Entries (TwoUserPythons)
+    It "refuses a directory that is not one of the installations" {
+        MockLayout
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Nowhere' -Entries (FourDirs)
         $plan.Action | Should -Be 'blocked'
-        $plan.Reason | Should -BeLike '*does not contain*'
     }
 
-    It "refuses a command that is not contested at all" {
-        Mock Test-Path { return $false }
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries (TwoUserPythons)
-        $plan.Action | Should -Be 'blocked'
-        $plan.Reason | Should -BeLike '*not answered by more than one*'
-    }
-
-    It "REFUSES to promote a user folder over a system one, and says why" {
+    It "REFUSES to promote a user installation over a system one, and says why" {
         <#
-            THE CASE REORDERING CANNOT REACH, and the one this whole
-            function exists to be honest about.
-
-            Windows searches the machine PATH before the user PATH, so no
-            ordering of the user list will ever put a user-scope folder in
-            front of a machine-scope one. A tool that offered the button
-            anyway would write a change, report success, and leave
-            `python --version` answering exactly as it did before - which
-            is a worse outcome than not offering it, because the user now
-            believes the problem is fixed.
-
-            The two ways to actually do it are both out of bounds:
-            removing the system entry is the destructive act the card
-            promises not to perform, and copying a per-user folder into
-            the machine PATH publishes one account's tools to every
-            account on the box.
+            THE CASE REORDERING CANNOT REACH. Windows searches the machine
+            PATH before the user PATH, so no ordering of the user list
+            will put a user-scope installation in front of a machine-scope
+            one. A tool that offered the button anyway would write a
+            change, report success, and leave `python --version`
+            answering exactly as before.
         #>
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        MockLayout
         $entries = @(
-            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
-            [PSCustomObject]@{ Scope='User';    Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314'; Path='C:\Py314'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='User';    Raw='C:\Py312'; Path='C:\Py312'; Exists=$true; Valid=$true; Duplicate=$false }
         )
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Py312' -Entries $entries
         $plan.Action | Should -Be 'blocked'
-        $plan.Reason | Should -BeLike '*system PATH first*'
-        $plan.Reason | Should -BeLike '*will not remove*'
+        $plan.Short  | Should -Be 'Needs administrator'
+        $plan.Reason | Should -BeLike '*system PATH before your user PATH*'
     }
 
-    It "CAN promote a system folder, because the machine list is searched first" {
-        # The mirror of the case above: a machine entry moved to the front
-        # of the machine list beats every other machine entry AND the
-        # whole user list, so this one is achievable.
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+    It "refuses an installation split across BOTH scopes" {
+        # No single reorder can move directories that live in two
+        # different variables, and splitting an installation between them
+        # is not something Pulse will do on the user's behalf.
+        #
+        # THE SPLIT ONE IS THE CHALLENGER, not the winner, and that
+        # detail is the test: an installation that already wins returns
+        # "none" before any feasibility question is asked, so pointing
+        # this at the leading cluster would pass without ever reaching
+        # the branch under test.
+        MockLayout
         $entries = @(
-            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
-            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314';         Path='C:\Py314';         Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314\Scripts'; Path='C:\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py312';         Path='C:\Py312';         Exists=$true; Valid=$true; Duplicate=$false }
+            [PSCustomObject]@{ Scope='User';    Raw='C:\Py312\Scripts'; Path='C:\Py312\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
         )
-        $plan = Get-PathPriorityPlan -Command 'python' -Directory 'C:\Py313' -Entries $entries
-        $plan.Action | Should -Be 'reorder'
-        $plan.Scope  | Should -Be 'Machine'
-        @($plan.Order)[0] | Should -Be 'C:\Py313'
+        $plan = Get-PathInstallPlan -Family 'python' -Directory 'C:\Py312' -Entries $entries
+        $plan.Action | Should -Be 'blocked'
+        $plan.Short  | Should -Be 'Split across scopes'
     }
 }
 
@@ -683,11 +843,11 @@ Describe "Set-PathToolPriority" {
 
     It "changes nothing under -WhatIf" {
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        Mock Get-PathPriorityPlan {
-            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
-                               Action='reorder'; Scope='User'; Reason='r'
+        Mock Get-PathInstallPlan {
+            [PSCustomObject]@{ Family='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='User'; Reason='r'; Short='Use this one'
                                Order=@(@($userPath -split ";" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() }))
-                               Providers=@() }
+                               Dirs=@('C:\Py313') }
         }
         Mock New-SystemRestorePoint { }
         Mock Save-PathBackup { return $true }
@@ -695,7 +855,7 @@ Describe "Set-PathToolPriority" {
 
         $Script:DryRun = $true
         try {
-            $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+            $result = Set-PathToolPriority -Family 'python' -Directory 'C:\Py313'
             $result.Changed | Should -Be $true -Because "the simulation still reports what it would have done"
             Should -Invoke Save-PathBackup -Times 0 -Because "a dry run must not even write the backup"
         } finally {
@@ -707,23 +867,23 @@ Describe "Set-PathToolPriority" {
     It "refuses a plan that is not a permutation of the live PATH" {
         <#
             THE CHECK THAT MAKES "removes nothing" TRUE RATHER THAN
-            INTENDED. Set-PathToolPriority re-reads the live value and
-            compares it against the plan as SORTED MULTISETS before it
-            writes, so a plan that has dropped an entry - because the PATH
-            changed under it, or because a future edit to the planner
-            introduced a bug - is refused instead of applied.
+            INTENDED. The live value is re-read and compared against the
+            plan as SORTED MULTISETS before anything is written, so a plan
+            that has dropped an entry - because the PATH changed under it,
+            or because a future edit to the planner introduced a bug - is
+            refused instead of applied.
         #>
-        Mock Get-PathPriorityPlan {
-            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
-                               Action='reorder'; Scope='User'; Reason='r'
-                               Order=@('C:\OnlyThis'); Providers=@() }
+        Mock Get-PathInstallPlan {
+            [PSCustomObject]@{ Family='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='User'; Reason='r'; Short='Use this one'
+                               Order=@('C:\OnlyThis'); Dirs=@('C:\Py313') }
         }
         Mock New-SystemRestorePoint { }
         Mock Save-PathBackup { return $true }
         Mock Test-IsElevatedSession { return $true }
 
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+        $result = Set-PathToolPriority -Family 'python' -Directory 'C:\Py313'
         $result.Changed | Should -Be $false
         $result.Reason  | Should -BeLike '*nothing was written*'
         Should -Invoke Save-PathBackup -Times 0
@@ -731,32 +891,32 @@ Describe "Set-PathToolPriority" {
     }
 
     It "leaves the machine PATH alone when the session is not elevated" {
-        Mock Get-PathPriorityPlan {
-            [PSCustomObject]@{ Command='python'; Directory='C:\Py313'
-                               Action='reorder'; Scope='Machine'; Reason='r'
-                               Order=@('C:\Py313'); Providers=@() }
+        Mock Get-PathInstallPlan {
+            [PSCustomObject]@{ Family='python'; Directory='C:\Py313'
+                               Action='reorder'; Scope='Machine'; Reason='r'; Short='Use this one'
+                               Order=@('C:\Py313'); Dirs=@('C:\Py313') }
         }
         Mock New-SystemRestorePoint { }
         Mock Save-PathBackup { return $true }
         Mock Test-IsElevatedSession { return $false }
 
-        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py313'
+        $result = Set-PathToolPriority -Family 'python' -Directory 'C:\Py313'
         $result.Changed | Should -Be $false
         $result.Reason  | Should -BeLike '*needs Administrator*'
         Should -Invoke Save-PathBackup -Times 0
     }
 
-    It "does nothing at all when the folder already wins" {
-        Mock Get-PathPriorityPlan {
-            [PSCustomObject]@{ Command='python'; Directory='C:\Py311'
-                               Action='none'; Scope='User'
-                               Reason="'python' already runs the copy in C:\Py311."
-                               Order=@(); Providers=@() }
+    It "does nothing at all when the installation already wins" {
+        Mock Get-PathInstallPlan {
+            [PSCustomObject]@{ Family='python'; Directory='C:\Py314'
+                               Action='none'; Scope='User'; Short='In use'
+                               Reason="Python already runs from C:\Py314."
+                               Order=@(); Dirs=@() }
         }
         Mock New-SystemRestorePoint { }
         Mock Save-PathBackup { return $true }
 
-        $result = Set-PathToolPriority -Command 'python' -Directory 'C:\Py311'
+        $result = Set-PathToolPriority -Family 'python' -Directory 'C:\Py314'
         $result.Changed | Should -Be $false
         Should -Invoke New-SystemRestorePoint -Times 0 -Because "a checkpoint for a no-op is noise in the list a user reaches when something has gone wrong"
     }
@@ -764,7 +924,7 @@ Describe "Set-PathToolPriority" {
     It "takes the restore point BEFORE it writes, and backs up before that" {
         $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "03-Environment.ps1") -Raw
         $body = $source.Substring($source.IndexOf("function Set-PathToolPriority"))
-        $body = $body.Substring(0, $body.IndexOf("`nfunction "))
+        $body = $body.Substring(0, $body.IndexOf("`n# ============"))
         $restore = $body.IndexOf("New-SystemRestorePoint")
         $backup  = $body.IndexOf("Save-PathBackup")
         $write   = $body.IndexOf("SetEnvironmentVariable")
@@ -774,13 +934,9 @@ Describe "Set-PathToolPriority" {
     }
 
     It "never removes an entry" {
-        # Asserted against the source, the way the scan's read-only
-        # guarantee is: the promise is the ABSENCE of a removal, and the
-        # value written is built from the plan's Order rather than by
-        # filtering anything out of the live list.
         $source = Get-Content -LiteralPath (Join-Path $script:ModuleDir "03-Environment.ps1") -Raw
         $body = $source.Substring($source.IndexOf("function Set-PathToolPriority"))
-        $body = $body.Substring(0, $body.IndexOf("`nfunction "))
+        $body = $body.Substring(0, $body.IndexOf("`n# ============"))
         $body | Should -Not -BeLike '*Remove-ItemProperty*'
         $body | Should -BeLike '*Compare-Object*' -Because "the permutation check is what makes this safe"
     }
@@ -788,38 +944,58 @@ Describe "Set-PathToolPriority" {
 
 Describe "Get-PathConflictReport" {
 
-    It "shapes each conflict with one option per copy, and marks the winner" {
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+    It "sends ONE entry per toolchain, carrying every command it covers" {
+        Mock Test-Path {
+            param($LiteralPath)
+            if ($LiteralPath -like '*\Scripts\pip.exe')  { return $true }
+            if ($LiteralPath -like '*\Scripts\pip3.exe') { return $true }
+            if ($LiteralPath -like '*\Scripts\*')        { return $false }
+            return ($LiteralPath -like '*python.exe')
+        }
         Mock Get-PathEntryReport {
             @(
-                [PSCustomObject]@{ Scope='User'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
-                [PSCustomObject]@{ Scope='User'; Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py314\Scripts'; Path='C:\Py314\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py314';         Path='C:\Py314';         Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py312\Scripts'; Path='C:\Py312\Scripts'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py312';         Path='C:\Py312';         Exists=$true; Valid=$true; Duplicate=$false }
             )
         }
         $report = Get-PathConflictReport
-        $python = @($report.conflicts | Where-Object { $_.command -eq 'python' })[0]
-        $python | Should -Not -BeNullOrEmpty
+        @($report.conflicts).Count | Should -Be 1 -Because "python/pip/pip3 are one toolchain"
+        $python = @($report.conflicts)[0]
+        $python.key | Should -Be 'python'
+        @($python.commands) | Should -Contain 'pip'
         @($python.options).Count | Should -Be 2
         @($python.options | Where-Object { $_.winner }).Count | Should -Be 1
-        @($python.options | Where-Object { $_.path -eq 'C:\Py313' })[0].action | Should -Be 'reorder'
+    }
+
+    It "carries the short verdict and the folder list for every option" {
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*python.exe') }
+        Mock Get-PathEntryReport {
+            @(
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py314'; Path='C:\Py314'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User'; Raw='C:\Py312'; Path='C:\Py312'; Exists=$true; Valid=$true; Duplicate=$false }
+            )
+        }
+        $python = @((Get-PathConflictReport).conflicts)[0]
+        $second = @($python.options | Where-Object { -not $_.winner })[0]
+        $second.short  | Should -Be 'Use this one'
+        $second.action | Should -Be 'reorder'
+        @($second.dirs).Count | Should -BeGreaterThan 0
     }
 
     It "computes fixability in the BACKEND, so the GUI cannot offer a refused button" {
-        # A dialog that draws a button the backend will decline is worse
-        # than one that draws nothing: the user clicks it, sees a success
-        # toast, and the problem is still there.
-        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*Py3*python.exe') }
+        Mock Test-Path { param($LiteralPath) return ($LiteralPath -like '*python.exe') }
         Mock Get-PathEntryReport {
             @(
-                [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py311'; Path='C:\Py311'; Exists=$true; Valid=$true; Duplicate=$false }
-                [PSCustomObject]@{ Scope='User';    Raw='C:\Py313'; Path='C:\Py313'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='Machine'; Raw='C:\Py314'; Path='C:\Py314'; Exists=$true; Valid=$true; Duplicate=$false }
+                [PSCustomObject]@{ Scope='User';    Raw='C:\Py312'; Path='C:\Py312'; Exists=$true; Valid=$true; Duplicate=$false }
             )
         }
-        $report = Get-PathConflictReport
-        $python = @($report.conflicts | Where-Object { $_.command -eq 'python' })[0]
-        $user = @($python.options | Where-Object { $_.path -eq 'C:\Py313' })[0]
+        $python = @((Get-PathConflictReport).conflicts)[0]
+        $user = @($python.options | Where-Object { $_.path -eq 'C:\Py312' })[0]
         $user.action | Should -Be 'blocked'
-        $user.reason | Should -BeLike '*system PATH first*'
+        $user.short  | Should -Be 'Needs administrator'
     }
 
     It "reports an empty conflict list without throwing on a clean PATH" {

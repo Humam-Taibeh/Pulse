@@ -368,6 +368,14 @@ function Get-StartupReportData {
         $Result += [PSCustomObject]@{
             Id              = "$($It.Type)|||$($It.RegPath)|||$($It.Name)"
             Name            = $It.Name
+            # The label, beside the identifier rather than instead of it -
+            # see Get-StartupDisplayName. `Id` is built from `Name`, so
+            # rewriting that field would break every toggle.
+            DisplayName     = (Get-StartupDisplayName -Name $It.Name)
+            # Whether the program this entry launches is still installed.
+            # Six of fifteen were not, on the machine this was measured
+            # on; see Test-StartupTargetPresent.
+            TargetPresent   = (Test-StartupTargetPresent -Command $It.Command)
             Type            = $It.Type
             Command         = $It.Command
             Enabled         = [bool]$It.Enabled
@@ -400,6 +408,183 @@ function Resolve-StartupItemByEncodedId {
     } | Select-Object -First 1)
 }
 
+# ============================================================
+#  WHAT THE ROW IS CALLED, AS OPPOSED TO WHAT IT IS KEYED BY
+#
+#  A STARTUP ENTRY'S NAME IS AN IDENTIFIER, NOT A LABEL. It is whatever
+#  string an installer wrote into a Run key, and installers write what is
+#  convenient for them: Electron's builder writes "electron.app.Notion",
+#  Edge writes "MicrosoftEdgeAutoLaunch_" plus a 32-character machine
+#  hash, and a Startup-folder entry is named by its file, ".lnk" and all.
+#  Measured on one ordinary machine, three of fifteen rows read as
+#  internal plumbing.
+#
+#  That matters more here than it would in most lists, because the name is
+#  the ONLY part of a startup row a person can match against something
+#  they recognise - the command is a path and the type is a category. A
+#  row reading "electron.app.Notion" is asking the user to decide about
+#  software it has declined to name.
+#
+#  THE NAME ITSELF IS NEVER TOUCHED. `Id` is "Type|||RegPath|||Name" and
+#  Resolve-StartupItemByEncodedId re-locates the item by that exact
+#  triple, so rewriting Name would break every toggle. This produces a
+#  SEPARATE DisplayName; the raw one still travels, and the GUI shows it
+#  in the row's tooltip so nothing is hidden.
+#
+#  THREE GENERIC RULES AND ONE SMALL MAP, and the split is deliberate.
+#  The generic rules are mechanical and safe - drop a shortcut extension,
+#  drop a launcher-framework prefix, drop a trailing hash. What they
+#  cannot do is separate words in a CamelCase identifier, and a blanket
+#  case-split is actively harmful on this evidence: it turns
+#  "RtkAudUService" into "Rtk Aud U Service", "SignalRgb" into "Signal
+#  Rgb" and "iTunesHelper" into "i Tunes Helper". So the handful of
+#  well-known machine-generated names get a curated entry instead, which
+#  is the same reasoning tools/fetch_app_icons.py records for preferring a
+#  hand-written map over fuzzy matching.
+# ============================================================
+
+#: Prefixes packaging frameworks put in front of an app's own name.
+$Script:StartupNamePrefixes = @("electron.app.", "com.squirrel.")
+
+#: Machine-generated Run key names -> what the product is actually called.
+#: Keyed on the stem AFTER the generic rules have run, so the Edge entry
+#: is matched once its hash has been dropped rather than per machine.
+$Script:StartupNameMap = @{
+    "MicrosoftEdgeAutoLaunch" = "Microsoft Edge AutoLaunch"
+    "MicrosoftEdgeUpdateTaskMachineCore" = "Microsoft Edge Update"
+    "OneDriveSetup"           = "OneDrive Setup"
+    "GoogleDriveFS"           = "Google Drive"
+    "com.mysql.installer"     = "MySQL Installer"
+}
+
+function Get-StartupDisplayName {
+    <#
+    .SYNOPSIS
+        A startup entry's raw Name, cleaned up for a human to read.
+
+    .DESCRIPTION
+        Returns the original string unchanged when none of the rules
+        apply, which is the common case: most installers do write a
+        product name. Never returns empty - a row with no label at all is
+        worse than one with an ugly label.
+    #>
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $Name }
+    $Clean = $Name.Trim()
+
+    # 1. A Startup FOLDER entry is named by its file. The extension is
+    #    file-system detail, not part of what the program is called.
+    foreach ($Extension in @(".lnk", ".url", ".bat", ".cmd", ".exe")) {
+        if ($Clean.EndsWith($Extension, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Clean = $Clean.Substring(0, $Clean.Length - $Extension.Length)
+            break
+        }
+    }
+
+    # 2. A packaging framework's namespace prefix.
+    foreach ($Prefix in $Script:StartupNamePrefixes) {
+        if ($Clean.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Clean = $Clean.Substring($Prefix.Length)
+            break
+        }
+    }
+
+    # 3. A TRAILING MACHINE HASH. Twelve hex characters is the floor, and
+    #    it is chosen to be safely above real words: "DEADBEEF" is eight,
+    #    and no product name this has to survive is twelve hex characters
+    #    long. Anchored to the end after an underscore or a dash, so a
+    #    name that merely CONTAINS hex ("Direct3D") is untouched.
+    $Clean = [System.Text.RegularExpressions.Regex]::Replace(
+        $Clean, '[_\-][0-9A-Fa-f]{12,}$', '')
+
+    if ([string]::IsNullOrWhiteSpace($Clean)) { return $Name }
+
+    # 4. The curated map, for the identifiers no mechanical rule can space
+    #    out correctly. Case-insensitive so a build that changes the
+    #    capitalisation still matches.
+    foreach ($Key in $Script:StartupNameMap.Keys) {
+        if ($Clean -eq $Key -or $Clean -ieq $Key) {
+            return $Script:StartupNameMap[$Key]
+        }
+    }
+    return $Clean
+}
+
+function Test-StartupTargetPresent {
+    <#
+    .SYNOPSIS
+        Does this entry's command still name a program that exists?
+
+    .DESCRIPTION
+        THE ANSWER IS "NO" MORE OFTEN THAN ANYONE EXPECTS, and that is the
+        finding rather than an edge case. Uninstalling software on Windows
+        does not reliably remove its Run key: measured on one ordinary
+        machine, SIX of fifteen startup entries pointed at binaries that
+        are no longer on the disk - Adobe, iTunes, BlueStacks, Riot,
+        Sideloadly and a Squirrel package carrying its own ".dead"
+        uninstall marker. Windows tries to launch all six at every boot.
+
+        The GUI could not say so. Its icon column asked Windows for the
+        artwork, got nothing, and drew the neutral executable mark - which
+        is the correct picture and reads as a BROKEN ICON rather than as
+        "this points at software you have removed". Six unexplained grey
+        boxes look like a defect in the tool; six rows captioned
+        "target missing" are six entries worth turning off.
+
+        Resolution is deliberately SHALLOW here and does not follow
+        shortcuts or Squirrel stubs - that ladder lives in
+        utils/nativeicons.py, where the icon comes from, and duplicating
+        it in PowerShell would give the badge and the artwork two
+        different opinions about the same row. This answers the cheap
+        question the badge needs: is there a file at the path this command
+        names? A `.lnk` is a file, so a Startup-folder row is present
+        whenever its shortcut is.
+    #>
+    param([string]$Command)
+
+    if ([string]::IsNullOrWhiteSpace($Command)) { return $false }
+    $Text = $Command.Trim()
+
+    $Candidates = New-Object System.Collections.ArrayList
+    if ($Text.StartsWith('"')) {
+        $End = $Text.IndexOf('"', 1)
+        if ($End -gt 1) { [void]$Candidates.Add($Text.Substring(1, $End - 1)) }
+    } else {
+        # The longest LEADING run that names a real file wins - the same
+        # walk nativeicons does, and for the same reason: splitting on the
+        # first space turns "C:\Program Files\App\app.exe /q" into
+        # "C:\Program", which exists on no machine.
+        [void]$Candidates.Add($Text)
+        $Parts = $Text -split " "
+        for ($i = $Parts.Count; $i -ge 1; $i--) {
+            [void]$Candidates.Add(($Parts[0..($i - 1)] -join " "))
+        }
+    }
+
+    foreach ($Candidate in $Candidates) {
+        $Path = $Candidate.Trim()
+        if ([string]::IsNullOrWhiteSpace($Path)) { continue }
+        try {
+            $Expanded = [System.Environment]::ExpandEnvironmentVariables($Path)
+            # -ErrorAction Stop, EXPLICITLY. Test-Path does not return
+            # $false for a string containing '|', '<' or '>' - it THROWS
+            # ArgumentException("Illegal characters in path") - and
+            # whether that reaches this catch depends on the ambient
+            # $ErrorActionPreference. It is "Stop" inside core.ps1 and
+            # "Continue" under Pester, so without this the guard is
+            # correct in production and silently inert in the tests,
+            # which is the worst arrangement available.
+            if (Test-Path -LiteralPath $Expanded -PathType Leaf -ErrorAction Stop) {
+                return $true
+            }
+        } catch {
+            continue        # a malformed path is not a present one
+        }
+    }
+    return $false
+}
+
 function Show-StartupItemsList {
     param([array]$Items)
     if ($Items.Count -eq 0) {
@@ -410,7 +595,13 @@ function Show-StartupItemsList {
         $it = $Items[$i]
         $StatusTag = if ($it.Enabled) { "ENABLED " } else { "DISABLED" }
         $Color = if ($it.Enabled) { "Green" } else { "DarkGray" }
-        Write-Host ("   [{0,2}] [{1}] {2}  ({3})" -f ($i + 1), $StatusTag, $it.Name, $it.Type) -ForegroundColor $Color
+        # The CLEANED name here too, so the console and the GUI call the
+        # same row the same thing. The list is a picker - the number is
+        # what the user types - so the identifier it was keyed by is not
+        # information this line has to carry.
+        $Label = Get-StartupDisplayName -Name $it.Name
+        $Missing = if (Test-StartupTargetPresent -Command $it.Command) { "" } else { "  [target missing]" }
+        Write-Host ("   [{0,2}] [{1}] {2}  ({3}){4}" -f ($i + 1), $StatusTag, $Label, $it.Type, $Missing) -ForegroundColor $Color
     }
 }
 

@@ -695,3 +695,219 @@ class TestEnvironmentVariablesAndArguments:
         assert nativeicons.resolve_command(_present()[0]).kind == "path"
         assert nativeicons.resolve_command("nonsense at all").kind == ""
         assert nativeicons.resolve_command("").kind == ""
+
+
+# ============================================================
+#  SQUIRREL / ELECTRON STUBS  (v10.12.1)
+# ============================================================
+#  AN ELECTRON APP'S RUN KEY OFTEN NAMES ITS UPDATER, NOT THE APP.
+#  Squirrel.Windows installs into %LOCALAPPDATA%\<Product>\ as Update.exe
+#  beside app-<version>\App.exe, and registers
+#  `Update.exe --processStart App.exe`. Discord ships exactly that on the
+#  machine this was measured on.
+#
+#  WHAT RESOLVING BUYS IS CORRECTNESS RATHER THAN PIXELS, and saying so
+#  matters because it is easy to read this as the fix for a blank row:
+#  Squirrel STAMPS the app's icon onto Update.exe, so extracting the stub
+#  already produced the right artwork. What changes is that the row now
+#  names the application instead of its updater.
+class TestSquirrelStubs:
+
+    @staticmethod
+    def _package(tmp_path, versions=("1.0.9", "1.0.10"), app="App.exe",
+                 dead=False):
+        """A Squirrel layout: Update.exe beside app-<version> folders."""
+        root = tmp_path / "Product"
+        root.mkdir()
+        (root / "Update.exe").write_bytes(b"MZ")
+        for version in versions:
+            folder = root / f"app-{version}"
+            folder.mkdir()
+            if app:
+                (folder / app).write_bytes(b"MZ")
+        if dead:
+            (root / ".dead").write_text("", encoding="utf-8")
+        return root
+
+    def test_the_named_target_wins(self, tmp_path):
+        """Squirrel puts the answer in its own argument. Guessing when
+        the command line has already said is how a row ends up pointing
+        at an installer that happens to sit in the same folder."""
+        from utils import nativeicons
+
+        root = self._package(tmp_path, app="Discord.exe")
+        stub = str(root / "Update.exe")
+        found = nativeicons.resolve_squirrel(
+            stub, f'"{stub}" --processStart Discord.exe')
+        assert found is not None
+        assert os.path.basename(found) == "Discord.exe"
+
+    def test_the_newest_version_wins_NUMERICALLY(self, tmp_path):
+        """app-1.0.10 is NEWER than app-1.0.9 and sorts BEFORE it as a
+        string. A resolver that sorts textually pins itself to whichever
+        old build an update happened to leave on disk."""
+        from utils import nativeicons
+
+        root = self._package(tmp_path, versions=("1.0.9", "1.0.10"))
+        found = nativeicons.resolve_squirrel(str(root / "Update.exe"), "")
+        assert found is not None
+        assert "app-1.0.10" in found, f"picked {found}"
+
+    def test_a_dead_package_resolves_to_nothing(self, tmp_path):
+        """MEASURED, NOT IMAGINED. Squirrel drops a `.dead` marker when
+        the product is uninstalled and leaves Update.exe behind; on the
+        machine this was written against, SignalRgb's folder held exactly
+        that plus an app-2.5.19 with no executable in it. Inventing an
+        answer there would put some other program's icon on the row."""
+        from utils import nativeicons
+
+        root = self._package(tmp_path, dead=True)
+        assert nativeicons.resolve_squirrel(str(root / "Update.exe"), "") is None
+
+    def test_a_version_directory_with_no_executable_resolves_to_nothing(
+            self, tmp_path):
+        from utils import nativeicons
+
+        root = self._package(tmp_path, app="")
+        assert nativeicons.resolve_squirrel(str(root / "Update.exe"), "") is None
+
+    def test_a_lone_update_exe_is_not_treated_as_squirrel(self, tmp_path):
+        """BOTH HALVES ARE REQUIRED. "Update.exe" is a common enough
+        filename that the name alone would claim every hand-rolled
+        updater on the machine; the app-<version> sibling is what makes
+        it Squirrel."""
+        from utils import nativeicons
+
+        plain = tmp_path / "Other"
+        plain.mkdir()
+        (plain / "Update.exe").write_bytes(b"MZ")
+        assert not nativeicons._is_squirrel_stub(str(plain / "Update.exe"))
+
+        root = self._package(tmp_path)
+        assert nativeicons._is_squirrel_stub(str(root / "Update.exe"))
+
+    def test_resolve_command_follows_the_stub_and_says_so(self, tmp_path):
+        from utils import nativeicons
+
+        root = self._package(tmp_path, app="Discord.exe")
+        stub = str(root / "Update.exe")
+        target = nativeicons.resolve_command(
+            f'"{stub}" --processStart Discord.exe --process-start-args "--x"')
+        assert target.kind == "squirrel"
+        assert os.path.basename(target.binary) == "Discord.exe"
+
+    def test_a_dead_stub_keeps_the_stub_rather_than_giving_up(self, tmp_path):
+        """PREFERRED, NOT REQUIRED. Squirrel stamps the app's icon onto
+        the stub, so a package whose inner executable is gone still has
+        artwork worth showing — dropping the whole row to the generic
+        parcel would be a downgrade."""
+        from utils import nativeicons
+
+        root = self._package(tmp_path, dead=True)
+        stub = str(root / "Update.exe")
+        target = nativeicons.resolve_command(f'"{stub}" --processStart X.exe')
+        assert target.binary == stub
+        assert target.kind == "path"
+
+
+class TestTheStartupRowSaysWhatItIs:
+    """The row's two v10.12.1 additions, both of which exist because a
+    real machine's list was unreadable without them."""
+
+    @staticmethod
+    def _item(**over):
+        item = {"Id": "Registry|||HKCU|||electron.app.Notion",
+                "Name": "electron.app.Notion", "DisplayName": "Notion",
+                "Type": "Registry", "Command": r"C:\gone\Notion.exe",
+                "Enabled": True, "Recommendation": "Review",
+                "Impact": "Medium", "Reason": "A launcher.",
+                "Protected": False, "TargetPresent": True}
+        item.update(over)
+        return item
+
+    def test_the_row_shows_the_clean_name(self, qapp):
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        row = StartupRow(self._item(), TH.tokens("dark"))
+        try:
+            assert row._name.fullText() == "Notion"
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
+
+    def test_the_raw_identifier_stays_reachable(self, qapp):
+        """It is what somebody would paste into a search, and the only
+        thing that tells two entries from the same publisher apart."""
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        row = StartupRow(self._item(), TH.tokens("dark"))
+        try:
+            assert row._name.toolTip() == "electron.app.Notion"
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
+
+    def test_a_row_with_no_DisplayName_falls_back_to_the_raw_name(self, qapp):
+        """A payload from an older backend still renders a coherent row."""
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        item = self._item()
+        del item["DisplayName"]
+        row = StartupRow(item, TH.tokens("dark"))
+        try:
+            assert row._name.fullText() == "electron.app.Notion"
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
+
+    def test_a_missing_target_is_captioned_rather_than_left_grey(self, qapp):
+        """THE DEFECT THIS PAIR WAS OPENED FOR. Six of fifteen entries on
+        the machine measured pointed at binaries that are no longer
+        installed. The row asked Windows for an icon, got nothing, and
+        drew the neutral parcel — the correct picture, which reads as a
+        BROKEN ICON. Six unexplained grey squares look like a defect in
+        Pulse; six rows captioned MISSING are six entries worth turning
+        off."""
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        row = StartupRow(self._item(TargetPresent=False), TH.tokens("dark"))
+        try:
+            assert row._missing_badge is not None
+            assert row._missing_badge.text() == "MISSING"
+            assert "not on this PC" in row._missing_badge.toolTip()
+            assert "not installed any more" in row._meta.text()
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
+
+    def test_a_present_target_gets_no_badge(self, qapp):
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        row = StartupRow(self._item(TargetPresent=True), TH.tokens("dark"))
+        try:
+            assert row._missing_badge is None
+            assert "not installed any more" not in row._meta.text()
+        finally:
+            row.deleteLater()
+            qapp.processEvents()
+
+    def test_the_badge_defaults_to_ABSENT_on_an_older_payload(self, qapp):
+        """Defaulted to present, so a backend that does not send the
+        field renders ordinary rows rather than captioning every entry on
+        the machine as broken."""
+        from frontend import theme as TH
+        from frontend.widgets import StartupRow
+
+        item = self._item()
+        del item["TargetPresent"]
+        row = StartupRow(item, TH.tokens("dark"))
+        try:
+            assert row._missing_badge is None
+        finally:
+            row.deleteLater()
+            qapp.processEvents()

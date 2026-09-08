@@ -35,29 +35,47 @@ _CORE = os.path.join(_ROOT, "src", "backend", "core.ps1")
 
 
 def _report(**overrides) -> dict:
-    """One conflict with three copies: the machine-scope winner, a
-    user-scope copy that CANNOT be promoted past it, and a second
-    machine-scope copy that can."""
+    """One TOOLCHAIN with three installations — the shape the backend
+    sends since v10.12.1.
+
+    Deliberately covers all three verdicts at once: the machine-scope
+    installation that currently wins, a second machine-scope one that CAN
+    be promoted, and a user-scope one that cannot be promoted past either
+    of them however the user PATH is sorted.
+    """
     report = {
         "entries": 24,
         "elevated": True,
         "conflicts": [{
-            "command": "python",
+            "key": "python",
+            "command": "Python",
+            "commands": ["pip", "pip3", "python"],
             "winner": r"C:\Python311",
             "count": 3,
             "options": [
-                {"path": r"C:\Python311", "scope": "Machine",
-                 "version": "3.11.9", "winner": True,
-                 "action": "none", "reason": "already runs this one"},
-                {"path": r"C:\Python313", "scope": "Machine",
-                 "version": "3.13.1", "winner": False,
-                 "action": "reorder", "reason": "moves to the front"},
+                {"path": r"C:\Python311",
+                 "dirs": [r"C:\Python311\Scripts", r"C:\Python311"],
+                 "scope": "Machine", "version": "3.11.9",
+                 "commands": ["pip", "pip3", "python"], "winner": True,
+                 "action": "none", "short": "In use",
+                 "reason": "Python already runs from C:\\Python311."},
+                {"path": r"C:\Python313",
+                 "dirs": [r"C:\Python313\Scripts", r"C:\Python313"],
+                 "scope": "Machine", "version": "3.13.1",
+                 "commands": ["pip", "pip3", "python"], "winner": False,
+                 "action": "reorder", "short": "Use this one",
+                 "reason": "moves 2 folders to the front of the Machine "
+                           "PATH; nothing is removed."},
                 {"path": r"C:\Users\me\AppData\Local\Programs\Python\Python312",
-                 "scope": "User", "version": "3.12.4", "winner": False,
-                 "action": "blocked",
-                 "reason": "Windows always searches the system PATH first, "
-                           "so no reordering of your user PATH can put this "
-                           "copy in front."},
+                 "dirs": [r"C:\Users\me\AppData\Local\Programs\Python\Python312"],
+                 "scope": "User", "version": "3.12.4",
+                 "commands": ["python"], "winner": False,
+                 "action": "blocked", "short": "Needs administrator",
+                 "reason": "Windows always searches the system PATH before "
+                           "your user PATH, so this copy cannot be moved in "
+                           "front of the system one in C:\\Python311. Run "
+                           "Pulse as administrator to promote the system "
+                           "installation instead."},
             ],
         }],
     }
@@ -66,11 +84,19 @@ def _report(**overrides) -> dict:
 
 
 def _buttons(dialog):
+    """Every button the REPORT drew — the dialog's own footer controls
+    are excluded by name so a new one cannot silently join the set."""
     from PySide6.QtWidgets import QPushButton
 
-    footer = {"Close", "Re-scan"}
+    footer = {"Close", "Re-scan", "Restart as administrator"}
     return [b for b in dialog.findChildren(QPushButton)
             if b.text() not in footer]
+
+
+def _labels(dialog) -> str:
+    from PySide6.QtWidgets import QLabel
+
+    return " ".join(label.text() for label in dialog.findChildren(QLabel))
 
 
 # ============================================================
@@ -166,15 +192,79 @@ class TestTheCard:
 # ============================================================
 class TestTheDialog:
 
-    def test_it_renders_one_card_per_conflict(self, window, qapp):
+    def test_one_card_per_toolchain_not_per_command(self, window, qapp):
+        """THE CONSOLIDATION, stated as what it removes.
+
+        The scan is command-shaped, so the first cut of this dialog drew
+        a card for `python`, another for `pip` and a third for `pip3` —
+        three cards asking one question three times about the same two
+        installed Pythons. Worse, they were three INDEPENDENT questions:
+        nothing stopped a user promoting 3.14's python and 3.12's pip,
+        which is a machine where `pip install` puts packages somewhere
+        `python` cannot import them.
+        """
         dialog = PathConflictDialog(window, "", window.theme.t)
         try:
             dialog._render(_report())
-            labels = [b.text() for b in _buttons(dialog)]
-            # Labelled by VERSION here: all three options carry one
-            # and they are distinct, which is the fact the user is
-            # choosing between. See _option_labels.
-            assert labels == ["3.11.9", "3.13.1", "3.12.4"]
+            text = _labels(dialog)
+            # One card, and it names the toolchain rather than a command.
+            assert "Python" in text
+            assert "3 INSTALLATIONS" in text
+            # The commands it covers are stated once, on that one card.
+            assert "pip, pip3, python" in text
+            # Three installations, so three action buttons — not nine.
+            assert len(_buttons(dialog)) == 3
+        finally:
+            dialog.deleteLater()
+            qapp.processEvents()
+
+    def test_a_button_says_the_verdict_never_a_path(self, window, qapp):
+        """THE TRUNCATION FIX, and it is a change of ROLE rather than of
+        formatting.
+
+        The buttons used to carry the option's identity as an elided path
+        — "…\\Python\\Python312\\Scripts" — so the control the user
+        clicks was a cut-off string and the reason it was disabled was a
+        paragraph underneath it. The identity moved to the row; the
+        button now carries the backend's own short verdict.
+        """
+        dialog = PathConflictDialog(window, "", window.theme.t)
+        try:
+            dialog._render(_report())
+            texts = [b.text() for b in _buttons(dialog)]
+            assert texts == ["In use", "Use this one", "Needs administrator"]
+            for text in texts:
+                assert "\\" not in text, f"a path leaked onto a button: {text}"
+                assert "…" not in text, f"a truncated string on a button: {text}"
+        finally:
+            dialog.deleteLater()
+            qapp.processEvents()
+
+    def test_the_row_carries_the_identity_the_button_no_longer_does(
+            self, window, qapp):
+        """Version, scope and path all have to be somewhere, and that
+        somewhere is the row."""
+        dialog = PathConflictDialog(window, "", window.theme.t)
+        try:
+            dialog._render(_report())
+            text = _labels(dialog)
+            for version in ("3.11.9", "3.13.1", "3.12.4"):
+                assert version in text, f"{version} is not on any row"
+            assert "System PATH" in text and "Your PATH" in text
+            assert r"C:\Python313" in text
+        finally:
+            dialog.deleteLater()
+            qapp.processEvents()
+
+    def test_an_installation_says_how_many_folders_move_with_it(
+            self, window, qapp):
+        """A Python is a root AND a Scripts directory, and promoting one
+        without the other is the failure this feature exists to prevent.
+        The row says so before the user clicks."""
+        dialog = PathConflictDialog(window, "", window.theme.t)
+        try:
+            dialog._render(_report())
+            assert "+1 more folder" in _labels(dialog)
         finally:
             dialog.deleteLater()
             qapp.processEvents()
@@ -186,10 +276,8 @@ class TestTheDialog:
         dialog = PathConflictDialog(window, "", window.theme.t)
         try:
             dialog._render(_report())
-            winner = next(b for b in _buttons(dialog)
-                          if b.text() == "3.11.9")
+            winner = next(b for b in _buttons(dialog) if b.text() == "In use")
             assert not winner.isEnabled()
-            assert "already runs" in winner.toolTip()
         finally:
             dialog.deleteLater()
             qapp.processEvents()
@@ -199,54 +287,89 @@ class TestTheDialog:
         """THE ASSERTION THIS FILE EXISTS FOR.
 
         Windows composes the search path as machine-then-user, so a
-        user-scope folder can never overtake a machine-scope one. The
-        backend marks that option `blocked`; a dialog that drew a live
-        button anyway would let the user click it, see a toast, and still
-        have the same problem — which is strictly worse than offering
+        user-scope installation can never overtake a machine-scope one.
+        The backend marks that option `blocked`; a dialog that drew a
+        live button anyway would let the user click it, see a toast, and
+        still have the same problem — strictly worse than offering
         nothing, because now they believe it is fixed.
         """
         dialog = PathConflictDialog(window, "", window.theme.t)
         try:
             dialog._render(_report())
             blocked = next(b for b in _buttons(dialog)
-                           if b.text() == "3.12.4")
+                           if b.text() == "Needs administrator")
             assert not blocked.isEnabled()
-            assert "system PATH first" in blocked.toolTip()
+            # The long form is still reachable — in the place a long form
+            # belongs, rather than as a paragraph on the card.
+            assert "system PATH" in blocked.toolTip()
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_the_reason_a_fix_is_impossible_is_printed(self, window, qapp):
-        """A greyed-out button with no explanation is what makes an
-        interface feel broken. The reason rides on the card, not only in
-        a tooltip nobody hovers."""
-        from PySide6.QtWidgets import QLabel
-
+    def test_no_paragraph_of_excuses_is_printed_on_the_card(
+            self, window, qapp):
+        """The reason a control is unavailable belongs ON the control.
+        Printing it as body text put three sentences of PATH-composition
+        theory in the middle of a list the user is trying to scan."""
+        text = None
         dialog = PathConflictDialog(window, "", window.theme.t)
         try:
             dialog._render(_report())
-            text = " ".join(label.text()
-                            for label in dialog.findChildren(QLabel))
-            assert "system PATH first" in text
+            text = _labels(dialog)
         finally:
             dialog.deleteLater()
             qapp.processEvents()
+        assert "Run Pulse as administrator to promote" not in text, (
+            "the blocked reason is being dumped onto the card again")
 
-    def test_an_unelevated_session_still_sees_the_findings(
+    def test_the_shield_appears_only_when_rights_are_the_blocker(
             self, window, qapp):
-        """A user who cannot fix it can still find out what is wrong —
-        the same shape the DNS switcher takes. Only the buttons that would
-        WRITE are disabled."""
+        """SEAMLESS, BUT NOT DECORATIVE. An unelevated Pulse looking at a
+        machine whose only conflict is inside the user PATH needs no
+        shield, and offering one there teaches the user that the button
+        means nothing."""
+        blocked = PathConflictDialog(window, "", window.theme.t,
+                                     is_admin=False)
+        try:
+            blocked._render(_report(elevated=False))
+            # isHidden(), not isVisible(): a child of a dialog that
+            # has not been shown is never "visible" whatever its own
+            # state, so isVisible() here would be False for both
+            # halves of this test and prove nothing. isHidden()
+            # reports the explicit show/hide the dialog performed.
+            assert not blocked._elevate_btn.isHidden()
+        finally:
+            blocked.deleteLater()
+            qapp.processEvents()
+
+        # Same session, a report where nothing needs rights.
+        easy = _report(elevated=False)
+        for option in easy["conflicts"][0]["options"]:
+            if option["short"] == "Needs administrator":
+                option["short"] = "Nothing to reorder"
+                option["action"] = "blocked"
+        quiet = PathConflictDialog(window, "", window.theme.t, is_admin=False)
+        try:
+            quiet._render(easy)
+            assert quiet._elevate_btn.isHidden()
+        finally:
+            quiet.deleteLater()
+            qapp.processEvents()
+
+    def test_the_shield_goes_through_the_one_relaunch_path(
+            self, window, qapp):
+        """The dialog asks; main.py elevates. Re-implementing
+        ShellExecute("runas") behind a card would be a second UAC path to
+        keep correct."""
+        seen = []
         dialog = PathConflictDialog(window, "", window.theme.t,
                                     is_admin=False)
+        dialog.elevate_requested.connect(lambda: seen.append(True))
         try:
-            dialog._render(_report())
-            labels = [b.text() for b in _buttons(dialog)]
-            assert "3.13.1" in labels, "the findings were hidden entirely"
-            promote = next(b for b in _buttons(dialog)
-                           if b.text() == "3.13.1")
-            assert not promote.isEnabled()
-            assert "elevated" in promote.toolTip()
+            dialog._render(_report(elevated=False))
+            dialog._elevate_btn.click()
+            qapp.processEvents()
+            assert seen == [True]
         finally:
             dialog.deleteLater()
             qapp.processEvents()
@@ -262,79 +385,38 @@ class TestTheDialog:
         try:
             dialog._render(_report(elevated=False))
             promote = next(b for b in _buttons(dialog)
-                           if b.text() == "3.13.1")
+                           if b.text() == "Use this one")
             assert not promote.isEnabled()
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_chips_for_one_command_are_never_identical(self, window, qapp):
-        """MEASURED ON A REAL MACHINE, and it is why the leaf folder name
-        is not the label. Three Python installations put `pip` in three
-        directories all called "Scripts", so the card drew three
-        indistinguishable buttons — the same defect the purge dialog's
-        icons were fixed for, in a new place."""
-        dialog = PathConflictDialog(window, "", window.theme.t)
+    def test_an_unelevated_session_still_sees_the_findings(
+            self, window, qapp):
+        """A user who cannot fix it can still find out what is wrong."""
+        dialog = PathConflictDialog(window, "", window.theme.t,
+                                    is_admin=False)
         try:
-            dialog._render({
-                "entries": 9, "elevated": True,
-                "conflicts": [{
-                    "command": "pip", "winner": r"C:\Python314\Scripts",
-                    "count": 3,
-                    "options": [
-                        {"path": r"C:\Python314\Scripts", "scope": "Machine",
-                         "version": "", "winner": True, "action": "none",
-                         "reason": ""},
-                        {"path": r"C:\Users\me\AppData\Local\Programs\Python\Python312\Scripts",
-                         "scope": "User", "version": "", "winner": False,
-                         "action": "reorder", "reason": ""},
-                        {"path": r"C:\Users\me\AppData\Roaming\Python\Python314\Scripts",
-                         "scope": "User", "version": "", "winner": False,
-                         "action": "reorder", "reason": ""},
-                    ],
-                }],
-            })
-            labels = [b.text() for b in _buttons(dialog)]
-            assert len(labels) == 3
-            assert len(set(labels)) == 3, f"identical chips: {labels}"
-            assert all("Scripts" in label for label in labels), (
-                "the label stopped naming the directory at all")
+            dialog._render(_report())
+            assert len(_buttons(dialog)) == 3, "the findings were hidden"
+            assert "3.13.1" in _labels(dialog)
+            promote = next(b for b in _buttons(dialog)
+                           if b.text() == "Use this one")
+            assert not promote.isEnabled()
         finally:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_the_version_labels_the_chips_when_it_tells_them_apart(self):
-        """Two JDKs differ in the fact the user is choosing between, and
-        "21.0.12.1" against "26.0.2.0" answers the question without
-        anybody parsing a path. Used ONLY when every option has a version
-        and they are all distinct, so a card never mixes two kinds of
-        label."""
-        both = [{"path": r"C:\Program Files\Eclipse Adoptium\jdk-21\bin",
-                 "version": "21.0.12.1"},
-                {"path": r"C:\Program Files\Common Files\Oracle\Java\javapath",
-                 "version": "26.0.2.0"}]
-        assert PathConflictDialog._option_labels(both) == ["21.0.12.1",
-                                                           "26.0.2.0"]
-
-        # One option with no version drops the whole card back to paths,
-        # rather than rendering one version chip beside two path chips.
-        mixed = [dict(both[0]), dict(both[1], version="")]
-        labels = PathConflictDialog._option_labels(mixed)
-        assert "21.0.12.1" not in labels
-        assert len(set(labels)) == 2
-
     def test_a_clean_path_says_so_rather_than_showing_an_empty_panel(
             self, window, qapp):
-        from PySide6.QtWidgets import QLabel
-
         dialog = PathConflictDialog(window, "", window.theme.t)
         try:
             dialog._render({"conflicts": [], "entries": 31, "elevated": True})
-            text = " ".join(label.text()
-                            for label in dialog.findChildren(QLabel))
+            text = _labels(dialog)
             assert "Nothing is shadowed" in text
             assert "31" in text
             assert not _buttons(dialog)
+            assert dialog._elevate_btn.isHidden()
         finally:
             dialog.deleteLater()
             qapp.processEvents()
@@ -350,11 +432,12 @@ class TestTheDialog:
             dialog.deleteLater()
             qapp.processEvents()
 
-    def test_a_promotion_sends_the_command_and_the_folder(
+    def test_a_promotion_sends_the_FAMILY_key_and_the_root(
             self, window, qapp, monkeypatch):
-        """The click has to reach the backend carrying BOTH halves — a
-        directory with no command promotes nothing, and a command with no
-        directory has nothing to promote."""
+        """The family key, not a command name: `python` covers pip and
+        pip3, and the backend re-derives the whole installation from the
+        root so a stale scan cannot ask for a directory set that no
+        longer describes the machine."""
         sent = {}
 
         class _Signal:
@@ -392,7 +475,7 @@ class TestTheDialog:
         try:
             dialog._render(_report())
             promote = next(b for b in _buttons(dialog)
-                           if b.text() == "3.13.1")
+                           if b.text() == "Use this one")
             promote.click()
             qapp.processEvents()
             assert sent.get("task") == "PathPrioritize"
@@ -402,9 +485,7 @@ class TestTheDialog:
             # THE THREAD IS REAL even though the worker is not, and a
             # QThread destroyed while running is a qFatal abort rather
             # than a test failure — the crash lands after the run has
-            # already reported green, which is the worst place for it. So
-            # it is settled here the way the app settles it, rather than
-            # detached by nulling the attributes.
+            # already reported green, which is the worst place for it.
             thread = dialog._thread
             if thread is not None:
                 thread.quit()
@@ -412,3 +493,62 @@ class TestTheDialog:
             qapp.processEvents()
             dialog.deleteLater()
             qapp.processEvents()
+
+
+class TestTheOptionLabels:
+    """One short, distinct identity per installation."""
+
+    def test_the_version_labels_them_when_it_tells_them_apart(self):
+        """Two JDKs differ in the fact the user is choosing between, and
+        "21.0.12.1" against "26.0.2.0" answers the question without
+        anybody parsing a path."""
+        both = [{"path": r"C:\Program Files\Eclipse Adoptium\jdk-21\bin",
+                 "version": "21.0.12.1"},
+                {"path": r"C:\Program Files\Common Files\Oracle\Java\javapath",
+                 "version": "26.0.2.0"}]
+        assert PathConflictDialog._option_labels(both) == ["21.0.12.1",
+                                                           "26.0.2.0"]
+
+    def test_a_missing_version_drops_the_whole_card_back_to_paths(self):
+        """A card never mixes two kinds of label — one version chip beside
+        two path chips reads as three unrelated things."""
+        options = [{"path": r"C:\Python314", "version": "3.14.7"},
+                   {"path": r"C:\Users\me\AppData\Local\Microsoft\WindowsApps",
+                    "version": ""}]
+        labels = PathConflictDialog._option_labels(options)
+        assert "3.14.7" not in labels
+        assert len(set(labels)) == 2
+
+    def test_a_bare_container_name_is_qualified_even_when_unique(self):
+        """UNIQUE IS NOT THE SAME AS INFORMATIVE, and this was visible on
+        a real machine: a `pip --user` install under
+        Roaming\\Python\\Python314\\Scripts was the only option ending in
+        "Scripts", so the shortest unique label was "…\\Scripts" — which
+        tells the reader nothing about WHICH Python it belongs to."""
+        options = [
+            {"path": r"C:\Python314", "version": ""},
+            {"path": r"C:\Users\me\AppData\Local\Microsoft\WindowsApps",
+             "version": ""},
+            {"path": r"C:\Users\me\AppData\Roaming\Python\Python314\Scripts",
+             "version": ""},
+        ]
+        labels = PathConflictDialog._option_labels(options)
+        assert len(set(labels)) == 3
+        scripts = [label for label in labels if "Scripts" in label][0]
+        assert scripts.endswith(r"Python314\Scripts"), (
+            f"a bare container name was left unqualified: {scripts}")
+
+    def test_identical_leaf_folders_are_disambiguated(self):
+        """MEASURED ON A REAL MACHINE. Three Python installations put pip
+        in three directories all called "Scripts", so the leaf folder
+        alone drew three indistinguishable labels."""
+        options = [
+            {"path": r"C:\Python314\Scripts", "version": ""},
+            {"path": r"C:\Users\me\AppData\Local\Programs\Python\Python312\Scripts",
+             "version": ""},
+            {"path": r"C:\Users\me\AppData\Roaming\Python\Python314\Scripts",
+             "version": ""},
+        ]
+        labels = PathConflictDialog._option_labels(options)
+        assert len(set(labels)) == 3, f"identical labels: {labels}"
+        assert all("Scripts" in label for label in labels)

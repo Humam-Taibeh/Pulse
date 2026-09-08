@@ -353,3 +353,146 @@ Describe "Health report startup roll-up (12-HealthReport.ps1)" {
         $report.recommendedDisable | Should -BeLessOrEqual $report.total
     }
 }
+
+
+# ============================================================
+#  WHAT THE ROW IS CALLED  (v10.12.1)
+#
+#  A STARTUP ENTRY'S NAME IS AN IDENTIFIER, NOT A LABEL - it is whatever
+#  an installer wrote into a Run key. Measured on one ordinary machine,
+#  three of fifteen rows read as internal plumbing: "electron.app.Notion",
+#  "electron.app.BlueStacks Services", and "MicrosoftEdgeAutoLaunch_"
+#  followed by a 32-character hash.
+#
+#  Every case below is a string taken from that machine rather than
+#  invented, which is why the "leaves it alone" test matters as much as
+#  the others: the same list contains RtkAudUService, SignalRgb and
+#  iTunesHelper, and a blanket CamelCase split would turn those into
+#  "Rtk Aud U Service", "Signal Rgb" and "i Tunes Helper".
+# ============================================================
+Describe "Get-StartupDisplayName" {
+
+    It "strips a packaging framework's namespace" {
+        Get-StartupDisplayName -Name 'electron.app.Notion' | Should -Be 'Notion'
+        Get-StartupDisplayName -Name 'electron.app.BlueStacks Services' |
+            Should -Be 'BlueStacks Services'
+    }
+
+    It "strips a trailing machine hash and names the product" {
+        Get-StartupDisplayName -Name 'MicrosoftEdgeAutoLaunch_2B610651ED2659F79480D73FD06733E7' |
+            Should -Be 'Microsoft Edge AutoLaunch'
+    }
+
+    It "drops a shortcut's file extension" {
+        Get-StartupDisplayName -Name 'AnyDesk.lnk' | Should -Be 'AnyDesk'
+    }
+
+    It "LEAVES AN ORDINARY NAME ALONE" {
+        <#
+            The half that stops this being a net loss. A blanket
+            CamelCase split would "fix" three names and mangle the other
+            twelve, so the mechanical rules only remove things that are
+            demonstrably not part of a product name, and the identifiers
+            no rule can space out correctly get a curated entry instead.
+        #>
+        foreach ($name in @('RtkAudUService', 'SecurityHealth', 'Steam',
+                            'iTunesHelper', 'SignalRgb', 'RiotClient',
+                            'Adobe Acrobat Synchronizer', 'CNAP3 Launcher',
+                            'Sideloadly Daemon')) {
+            Get-StartupDisplayName -Name $name | Should -Be $name
+        }
+    }
+
+    It "does not mistake a short hex run inside a name for a hash" {
+        # Twelve hex characters is the floor, and it is chosen to be
+        # safely above real words - "DEADBEEF" is eight.
+        Get-StartupDisplayName -Name 'Thing_DEADBEEF' | Should -Be 'Thing_DEADBEEF'
+        Get-StartupDisplayName -Name 'Direct3D' | Should -Be 'Direct3D'
+    }
+
+    It "never returns nothing" {
+        # A row with no label at all is worse than one with an ugly label.
+        Get-StartupDisplayName -Name 'electron.app.' | Should -Be 'electron.app.'
+        Get-StartupDisplayName -Name '' | Should -Be ''
+    }
+}
+
+# ============================================================
+#  WHETHER THE PROGRAM IS STILL THERE  (v10.12.1)
+#
+#  UNINSTALLING SOFTWARE ON WINDOWS DOES NOT RELIABLY REMOVE ITS RUN KEY.
+#  Measured on one ordinary machine, SIX of fifteen startup entries
+#  pointed at binaries that are no longer on disk - Adobe, iTunes,
+#  BlueStacks, Riot, Sideloadly, and a Squirrel package carrying its own
+#  ".dead" uninstall marker. Windows tries to launch all six every boot.
+#
+#  The GUI could not say so: it asked Windows for an icon, got nothing,
+#  and drew the neutral executable mark - which is the correct picture
+#  and reads as a BROKEN ICON. Six unexplained grey boxes look like a
+#  defect in the tool; six rows captioned MISSING are six entries worth
+#  turning off.
+# ============================================================
+Describe "Test-StartupTargetPresent" {
+
+    It "finds a bare path" {
+        $exe = Join-Path $env:SystemRoot "System32\notepad.exe"
+        Test-StartupTargetPresent -Command $exe | Should -BeTrue
+    }
+
+    It "finds a QUOTED path with arguments" {
+        $exe = Join-Path $env:SystemRoot "System32\notepad.exe"
+        Test-StartupTargetPresent -Command "`"$exe`" -background" | Should -BeTrue
+    }
+
+    It "finds an UNQUOTED path with spaces and arguments" {
+        # THE HARD ONE, and the common one: splitting on the first space
+        # turns "C:\Program Files\App\app.exe /q" into "C:\Program".
+        $exe = Join-Path $env:SystemRoot "System32\notepad.exe"
+        Test-StartupTargetPresent -Command "$exe --minimized /background" | Should -BeTrue
+    }
+
+    It "expands environment variables" {
+        Test-StartupTargetPresent -Command '%SystemRoot%\System32\notepad.exe' | Should -BeTrue
+        Test-StartupTargetPresent -Command '"%SystemRoot%\System32\notepad.exe" --x' | Should -BeTrue
+    }
+
+    It "reports an uninstalled program as ABSENT" {
+        # Every one of these shapes was a real orphaned Run key.
+        Test-StartupTargetPresent -Command '"C:\Program Files\iTunes\iTunesHelper.exe"' | Should -BeFalse
+        Test-StartupTargetPresent -Command 'C:\Riot Games\Riot Client\RiotClientServices.exe --launch-background-mode' | Should -BeFalse
+        Test-StartupTargetPresent -Command 'C:\Users\Nobody\AppData\Local\Gone\gone.exe' | Should -BeFalse
+    }
+
+    It "survives a command that is not a path at all" {
+        Test-StartupTargetPresent -Command '' | Should -BeFalse
+        Test-StartupTargetPresent -Command 'nonsense value here' | Should -BeFalse
+        Test-StartupTargetPresent -Command 'C:\bad|entry\x.exe' | Should -BeFalse
+    }
+}
+
+Describe "Get-StartupReportData carries the label and the presence" {
+
+    It "sends DisplayName BESIDE Name, never instead of it" {
+        <#
+            `Id` is "Type|||RegPath|||Name" and
+            Resolve-StartupItemByEncodedId re-locates the item by that
+            exact triple, so rewriting Name in place would break every
+            toggle. The raw identifier has to survive.
+        #>
+        Set-ItemProperty -Path $script:UserRunKey -Name "electron.app.Notion" `
+            -Value "C:\Users\Nobody\AppData\Local\Programs\Notion\Notion.exe --open-at-login" -Force
+        $row = @(Get-StartupReportData | Where-Object { $_.Name -eq 'electron.app.Notion' })[0]
+        $row | Should -Not -BeNullOrEmpty
+        $row.Name        | Should -Be 'electron.app.Notion'
+        $row.DisplayName | Should -Be 'Notion'
+        $row.Id          | Should -BeLike '*|||electron.app.Notion'
+        $row.TargetPresent | Should -BeFalse -Because "that path is not on this machine"
+    }
+
+    It "reports a present target as present" {
+        $exe = Join-Path $env:SystemRoot "System32\notepad.exe"
+        Set-ItemProperty -Path $script:UserRunKey -Name "PulseProbe" -Value "`"$exe`" -x" -Force
+        $row = @(Get-StartupReportData | Where-Object { $_.Name -eq 'PulseProbe' })[0]
+        $row.TargetPresent | Should -BeTrue
+    }
+}

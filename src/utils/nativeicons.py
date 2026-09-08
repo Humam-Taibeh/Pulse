@@ -873,7 +873,9 @@ def resolve_command(command: str) -> CommandTarget:
          installed Store or in-box package. Preferred OVER extracting
          the binary, because a packaged app's artwork is in its manifest
          and frequently not in its .exe at all.
-      4. THE PACKAGE, ADDRESSED BY IDENTITY, when there is no file
+      4. THE SQUIRREL STUB'S APPLICATION, when the resolved binary is an
+         Electron updater sitting beside an app-<version> directory.
+      5. THE PACKAGE, ADDRESSED BY IDENTITY, when there is no file
          anywhere in the command — `shell:AppsFolder\\<family>!<app>`.
 
     Always returns a CommandTarget; `kind` is "" when nothing resolved,
@@ -890,6 +892,14 @@ def resolve_command(command: str) -> CommandTarget:
             # and the identity is in the command line often enough to be
             # worth the look before giving up on the row.
             binary, kind = None, ""
+    if binary and _is_squirrel_stub(binary):
+        # PREFERRED, NOT REQUIRED. Squirrel stamps the app's icon onto
+        # the stub, so failing to resolve costs correctness rather than
+        # artwork — which is why the stub is kept when the package turns
+        # out to be dead rather than the whole row being given up on.
+        inner = resolve_squirrel(binary, command)
+        if inner:
+            binary, kind = inner, "squirrel"
     if binary:
         asset = appx_asset_for_path(binary)
         if asset:
@@ -902,6 +912,111 @@ def resolve_command(command: str) -> CommandTarget:
         if asset:
             return CommandTarget(None, asset, "aumid")
     return CommandTarget(None, None, "")
+
+
+# ============================================================
+#  SQUIRREL / ELECTRON STUBS
+# ============================================================
+#  AN ELECTRON APP'S RUN KEY OFTEN NAMES ITS UPDATER, NOT THE APP.
+#  Squirrel.Windows installs into %LOCALAPPDATA%\<Product>\ as
+#
+#      Update.exe            the stub, and what the Run key points at
+#      app-1.2.3\App.exe     the actual application, versioned
+#      packages\             the update cache
+#
+#  and registers `Update.exe --processStart App.exe`. Discord, and
+#  historically Slack, Teams, WhatsApp and Notion, all ship this way.
+#
+#  RESOLVING IT MATTERS LESS THAN IT LOOKS, AND THAT IS WORTH SAYING
+#  before this is read as the fix for a blank row: Squirrel STAMPS the
+#  app's own icon onto Update.exe, so extracting the stub already
+#  produces the right artwork most of the time. What resolving buys is
+#  correctness rather than pixels — the row's tooltip and any future
+#  "open file location" name the application instead of its updater, and
+#  a stub whose icon resource is missing or stale stops mattering.
+#
+#  THE VERSION DIRECTORIES ARE SORTED NUMERICALLY, not as strings. A
+#  string sort puts app-1.0.10 before app-1.0.9, which is how a resolver
+#  ends up pinned to an old build that a later update left on disk.
+_SQUIRREL_STUBS = ("update.exe", "squirrel.exe")
+_SQUIRREL_APP_DIR = re.compile(r"^app-(\d+(?:\.\d+)*)", re.I)
+
+#: Squirrel drops this marker into the package root when the product is
+#: uninstalled, leaving Update.exe and an emptied app- directory behind.
+#: Measured on one machine: SignalRgb's folder still held Update.exe and
+#: an app-2.5.19 containing no executable at all, beside a `.dead` file.
+_SQUIRREL_DEAD = ".dead"
+
+
+def _squirrel_versions(root: str) -> list[str]:
+    """`root`'s app-<version> directories, newest first."""
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return []
+    found: list[tuple[tuple[int, ...], str]] = []
+    for name in names:
+        match = _SQUIRREL_APP_DIR.match(name)
+        if not match or not os.path.isdir(os.path.join(root, name)):
+            continue
+        version = tuple(int(part) for part in match.group(1).split("."))
+        found.append((version, os.path.join(root, name)))
+    return [path for _version, path in sorted(found, reverse=True)]
+
+
+def resolve_squirrel(path: str, command: str = "") -> str | None:
+    """The real application behind a Squirrel stub, or None.
+
+    Takes the COMMAND as well as the path because Squirrel names the
+    target in its own argument — `--processStart Discord.exe` — and that
+    is a better answer than guessing which executable in the versioned
+    directory is the interesting one.
+
+    Returns None when the package is dead (a `.dead` marker, or a
+    version directory with no executable in it), which is the honest
+    answer: there is no application there any more, and inventing one
+    would put another program's icon on the row.
+    """
+    if not path:
+        return None
+    root = os.path.dirname(path)
+    if not root or os.path.isfile(os.path.join(root, _SQUIRREL_DEAD)):
+        return None
+
+    wanted = ""
+    match = re.search(r"--process-?start(?:-and-wait)?[=\s]+\"?([^\"\s]+)",
+                      command or "", re.I)
+    if match:
+        wanted = os.path.basename(match.group(1)).lower()
+
+    for version_dir in _squirrel_versions(root):
+        try:
+            names = [n for n in os.listdir(version_dir)
+                     if n.lower().endswith(".exe")]
+        except OSError:
+            continue
+        if wanted:
+            for name in names:
+                if name.lower() == wanted:
+                    return os.path.join(version_dir, name)
+        # No --processStart, or it named something this version does not
+        # have: fall back to the executable that is not another stub.
+        for name in names:
+            if name.lower() not in _SQUIRREL_STUBS:
+                return os.path.join(version_dir, name)
+    return None
+
+
+def _is_squirrel_stub(path: str) -> bool:
+    """Is `path` a Squirrel updater sitting beside a versioned app?
+
+    BOTH HALVES ARE REQUIRED. "Update.exe" is a common enough filename
+    that the name alone would claim every hand-rolled updater on the
+    machine; the app-<version> sibling is what makes it Squirrel.
+    """
+    if not path or os.path.basename(path).lower() not in _SQUIRREL_STUBS:
+        return False
+    return bool(_squirrel_versions(os.path.dirname(path)))
 
 
 def asset_image(path: str) -> QImage | None:

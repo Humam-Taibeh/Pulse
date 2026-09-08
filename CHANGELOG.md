@@ -15,6 +15,124 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.12.1] — 2026-09-08
+
+### Fixed — the Startup Manager was showing identifiers, not names
+
+- **Three of fifteen rows read as internal plumbing.** A startup entry's
+  name is whatever an installer wrote into a Run key, and installers write
+  what is convenient for them: Electron's builder writes
+  `electron.app.Notion`, Edge writes `MicrosoftEdgeAutoLaunch_` plus a
+  32-character machine hash, and a Startup-folder entry is named by its
+  file, `.lnk` and all. That matters more here than it would elsewhere,
+  because the name is the only part of a startup row a person can match
+  against something they recognise — the command is a path and the type is
+  a category.
+
+  A new `DisplayName` travels **beside** the raw name rather than
+  replacing it: `Id` is `Type|||RegPath|||Name` and the toggle re-locates
+  each item by that exact triple, so rewriting `Name` in place would break
+  every switch in the dialog. The raw identifier is the row's tooltip — it
+  is what somebody would paste into a search, and the only thing that
+  tells two entries from the same publisher apart.
+
+- **Three mechanical rules and one small map**, and the split is
+  deliberate. Dropping a shortcut extension, a packaging namespace and a
+  trailing hash is safe; separating words in a CamelCase identifier is
+  not. On this machine's own list a blanket case-split would have fixed
+  three names and mangled twelve — `RtkAudUService` into "Rtk Aud U
+  Service", `SignalRgb` into "Signal Rgb", `iTunesHelper` into "i Tunes
+  Helper" — so the handful of well-known machine-generated names get a
+  curated entry instead.
+
+### Fixed — six grey boxes that were not a rendering bug
+
+- **The blank icons were pointing at software that no longer exists.**
+  Measured on one ordinary machine, SIX of fifteen startup entries named
+  binaries that are not on the disk: Adobe, iTunes, BlueStacks, Riot,
+  Sideloadly, and a Squirrel package carrying its own `.dead` uninstall
+  marker. Five of the six parent *directories* were gone too. Uninstalling
+  software on Windows does not reliably remove its Run key, and Windows
+  tries to launch all six at every boot.
+
+  Pulse drew the neutral executable mark for them, which is the correct
+  picture and reads as a **broken icon**. The rows now carry a `MISSING`
+  badge and say what happened in a sentence: six unexplained grey squares
+  look like a defect in the tool, and six captioned rows are six entries
+  worth turning off.
+
+- **Squirrel / Electron stubs resolve to the application.** An Electron
+  app's Run key often names its updater — `Update.exe --processStart
+  Discord.exe` beside `app-1.0.9256\Discord.exe` — so the row was
+  extracting the icon of an updater. Version directories are compared
+  **numerically**, because `app-1.0.10` is newer than `app-1.0.9` and sorts
+  before it as a string, which is how a resolver pins itself to whichever
+  old build an update left behind.
+
+  Worth stating plainly: this buys **correctness rather than pixels**.
+  Squirrel stamps the app's icon onto the stub, so extraction already
+  produced the right artwork; what changes is that the row now names the
+  application. A package whose inner executable is gone keeps the stub
+  rather than dropping to the generic mark.
+
+### Changed — Shadowed Tools is one card per toolchain, not per command
+
+- **`python`, `pip` and `pip3` were three cards asking one question.** The
+  scan is command-shaped, which is right for a report and wrong as the
+  unit of a choice: a Python installation ships `python.exe` in its root
+  and `pip.exe` in its `Scripts` subdirectory, so one installed Python
+  produced three findings.
+
+  Worse, they were three **independent** questions. Nothing stopped a user
+  promoting 3.14's python and 3.12's pip — a machine where `pip install`
+  puts packages somewhere `python` cannot import them, which is the exact
+  failure the feature exists to prevent, reachable in two clicks through
+  the tool meant to fix it.
+
+  The unit is now an **installation**: a cluster of PATH directories found
+  by containment, needing no per-product knowledge, and promoted together
+  in one write. On this machine it turns nine findings into four honest
+  options across two cards. The fourth option is genuinely separate — a
+  `pip --user` install under `Roaming\Python\Python314\Scripts` whose
+  parent is not on the PATH, so it provides pip and no python. Grouping it
+  with the `C:\Python314` that shares its version *number* would be a
+  guess, and a wrong one.
+
+- **A family with one installation is no longer a finding at all.**
+  `C:\Python314` and `C:\Python314\Scripts` are not two Pythons
+  competing; they are one Python spread over two directories the way every
+  Python is.
+
+- **The verdict moved onto the button and the identity onto the row.**
+  Buttons used to carry elided paths — `…\Python\Python312\Scripts` — so
+  the control the user clicks was a truncated string and the reason it was
+  disabled was a paragraph of PATH-composition theory underneath it. Each
+  installation is now a row stating its version, scope and commands, with
+  one button reading `In use`, `Use this one` or `Needs administrator`.
+  The long form is the tooltip.
+
+- **A label that is unique is not necessarily informative.** The
+  `pip --user` installation was the only option ending in `Scripts`, so the
+  shortest *unique* label was `…\Scripts` — which says nothing about which
+  Python it belongs to. A bare container name (`Scripts`, `bin`, `cmd`) is
+  now qualified by the directory above it.
+
+- **A "Restart as administrator" button appears only when rights are
+  actually the blocker** — never merely because the session is unelevated,
+  which would teach the user that the button means nothing. It goes
+  through `PulseApp._relaunch_as_admin`, so there is still exactly one UAC
+  path in the app.
+
+### Fixed — a guard that was correct in production and inert in tests
+
+- **`Test-StartupTargetPresent` relied on the ambient
+  `$ErrorActionPreference`.** `Test-Path` does not return `$false` for a
+  string containing `|`, `<` or `>` — it throws — and whether that reached
+  the `catch` depended on a preference that is `Stop` inside `core.ps1` and
+  `Continue` under Pester. `-ErrorAction Stop` is now explicit.
+
+---
+
 ## [10.12.0] — 2026-09-07
 
 ### Added — every row in the purge list looks like the app it names

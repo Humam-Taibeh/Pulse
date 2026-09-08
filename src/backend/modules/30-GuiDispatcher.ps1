@@ -505,10 +505,15 @@ function Invoke-GuiTask {
                     Write-Output "##PULSE##ERROR|Pulse was not told which tool and folder to promote."
                     break
                 }
-                $Result = Set-PathToolPriority -Command $PathCommand -Directory $PathDirectory
+                # $PathCommand carries a FAMILY KEY since v10.12.1 -
+                # "python" covers pip and pip3 too, because they are one
+                # installation and promoting them separately is how a
+                # machine ends up running 3.14's python against 3.12's
+                # pip. See Get-PathInstallations.
+                $Result = Set-PathToolPriority -Family $PathCommand -Directory $PathDirectory
                 $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
                 if ($Result.Changed) {
-                    Write-Output "##PULSE##SUCCESS|${Prefix}'$PathCommand' now runs the copy in $PathDirectory. Nothing was removed - the other copies are still on your PATH, just searched later. Open a new terminal to see the change."
+                    Write-Output "##PULSE##SUCCESS|${Prefix}'$PathCommand' now runs from $PathDirectory. Nothing was removed - the other copies are still on your PATH, just searched later. Open a new terminal to see the change."
                 } else {
                     Write-Output "##PULSE##ERROR|$($Result.Reason)"
                 }
