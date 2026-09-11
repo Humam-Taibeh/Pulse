@@ -204,8 +204,457 @@ function Get-DisabledStartupItems {
     return $Items
 }
 
+# ============================================================
+#  SHARED RESOLUTION HELPERS  (v10.13)
+#
+#  Declared HERE, in the first module that loads and needs them, and
+#  consumed by 17-Leftovers.ps1. The Startup Manager and the Leftovers
+#  Cleaner ask the same questions of the same kind of string - "what file
+#  does this command launch?", "where does this shortcut point?", "which
+#  tasks exist?" - and two copies of that parsing would eventually give a
+#  row and its leftover two different answers about the same entry.
+# ============================================================
+function Get-CommandTargetPath {
+    <#
+    .SYNOPSIS
+        The file a command line names - including one that no longer
+        exists.
+
+    .DESCRIPTION
+        Two different questions share this function and need different
+        answers for an unquoted path with spaces:
+
+          THE FILE EXISTS. The longest leading run that names a real file
+          wins, which is how Windows itself resolves
+          "C:\Program Files\App\app.exe /q".
+
+          THE FILE DOES NOT. There is no longer a file to find, so the walk
+          above finds nothing - and "where does the path end?" can only be
+          answered by the executable extension. The leading run through the
+          first token ending in .exe / .dll / .lnk and friends is the path;
+          a command with no such token is not provable and returns $null.
+
+        Quoted runs, environment variables and trailing arguments are all
+        handled. Returns $null rather than guessing.
+    #>
+    param([string]$Command)
+
+    if ([string]::IsNullOrWhiteSpace($Command)) { return $null }
+    $Text = $Command.Trim()
+
+    if ($Text.StartsWith('"')) {
+        $End = $Text.IndexOf('"', 1)
+        if ($End -le 1) { return $null }
+        try {
+            return [System.Environment]::ExpandEnvironmentVariables($Text.Substring(1, $End - 1)).Trim()
+        } catch {
+            return $null
+        }
+    }
+
+    $Expanded = $Text
+    try { $Expanded = [System.Environment]::ExpandEnvironmentVariables($Text) } catch { return $null }
+
+    $Parts = @($Expanded -split ' ')
+    for ($Count = $Parts.Count; $Count -ge 1; $Count--) {
+        $Candidate = ($Parts[0..($Count - 1)] -join ' ').Trim()
+        if ([string]::IsNullOrWhiteSpace($Candidate)) { continue }
+        try {
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf -ErrorAction Stop) { return $Candidate }
+        } catch {
+            continue
+        }
+    }
+
+    $Match = [System.Text.RegularExpressions.Regex]::Match(
+        $Expanded, '^(.+?\.(?:exe|dll|com|bat|cmd|lnk|ps1|vbs|js|msi|scr))(?:\s|,|$)',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($Match.Success) { return $Match.Groups[1].Value.Trim() }
+    return $null
+}
+
+function Get-ShortcutTargetPath {
+    <# A .lnk file's target path, or $null.
+
+       $null for a shortcut with no FILE target - a Store app addressed by
+       identity, a Control Panel item - which is the honest answer: there
+       is no path to prove absent, so such a shortcut is never a leftover. #>
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    $Shell = $null
+    try {
+        $Shell = New-Object -ComObject WScript.Shell
+        $Target = [string]$Shell.CreateShortcut($Path).TargetPath
+        if ([string]::IsNullOrWhiteSpace($Target)) { return $null }
+        return [System.Environment]::ExpandEnvironmentVariables($Target)
+    } catch {
+        return $null
+    } finally {
+        if ($Shell) {
+            try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($Shell) } catch { }
+        }
+    }
+}
+
+function Get-PulseScheduledTasks {
+    <# Every scheduled task this session can see, or nothing.
+
+       A WRAPPER, for two reasons. The Task Scheduler service can be
+       disabled by policy, and Get-ScheduledTask throws rather than
+       returning nothing - neither the Startup Manager nor a leftovers scan
+       may die on that. And it is the seam the tests mock, so no test ever
+       enumerates or touches a real task. #>
+    try {
+        return @(Get-ScheduledTask -ErrorAction Stop)
+    } catch {
+        Write-Log "Scheduled tasks could not be enumerated: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Set-PulseScheduledTaskState {
+    <# Enable or disable ONE task. Wrapped so tests mock this rather than
+       ever toggling a real task. #>
+    param(
+        [Parameter(Mandatory = $true)][string]$TaskPath,
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)][bool]$Enabled
+    )
+    if ($Enabled) {
+        Enable-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction Stop | Out-Null
+    } else {
+        Disable-ScheduledTask -TaskPath $TaskPath -TaskName $TaskName -ErrorAction Stop | Out-Null
+    }
+}
+
+# ============================================================
+#  SCHEDULED TASKS THAT START AT SIGN-IN OR AT BOOT  (v10.13)
+#
+#  THE STARTUP MANAGER WAS AUDITING HALF OF STARTUP. Run keys and the
+#  Startup folders are where software USED to register itself; a large
+#  share of modern third-party autostart is a Task Scheduler entry with a
+#  logon trigger instead - measured on one machine, GIGABYTE's control
+#  centre registers two of them and Office registers another, and none of
+#  the three appeared anywhere in the list that claimed to be auditing boot.
+#
+#  ONLY LOGON AND BOOT TRIGGERS. A daily updater, a task that fires on
+#  unlock or on an event is scheduled work, not startup, and listing it
+#  here would make "startup" mean "anything that ever runs".
+#
+#  \Microsoft\Windows\ IS NEVER LISTED. That tree is the operating
+#  system's own maintenance, and a toggle next to it is an invitation to
+#  break servicing. A task OUTSIDE that folder that launches something
+#  under the Windows directory is excluded too, for the reason the
+#  measurement gave: \CreateExplorerShellUnelevatedTask sits at the ROOT
+#  of the task library and runs explorer.exe.
+#
+#  DISABLING IS INHERENTLY REVERSIBLE. Disable-ScheduledTask leaves the
+#  definition registered, so unlike a Run value there is nothing to back
+#  up and nothing to put back - re-enabling restores it exactly.
+# ============================================================
+$Script:StartupTaskTriggers = @{
+    'MSFT_TaskLogonTrigger' = 'at sign-in'
+    'MSFT_TaskBootTrigger'  = 'at boot'
+}
+
+function Get-StartupTaskItems {
+    <# Third-party tasks triggered at sign-in or boot, shaped like every
+       other startup item. RegPath carries the task FOLDER, so the
+       "Type|||RegPath|||Name" identity the toggles re-locate items by
+       works for tasks unchanged. #>
+    $Items = @()
+    $SystemRoot = [string]$env:SystemRoot
+    foreach ($Task in @(Get-PulseScheduledTasks)) {
+        $TaskPath = [string]$Task.TaskPath
+        if ($TaskPath -like '\Microsoft\Windows\*') { continue }
+
+        $When = ""
+        foreach ($Trigger in @($Task.Triggers)) {
+            $Class = ""
+            try { $Class = [string]$Trigger.CimClass.CimClassName } catch { }
+            if ($Script:StartupTaskTriggers.ContainsKey($Class)) {
+                $When = $Script:StartupTaskTriggers[$Class]
+                break
+            }
+        }
+        if (-not $When) { continue }
+
+        $Exec = $null
+        foreach ($Action in @($Task.Actions)) {
+            $Class = ""
+            try { $Class = [string]$Action.CimClass.CimClassName } catch { }
+            if ($Class -eq 'MSFT_TaskExecAction' -and -not [string]::IsNullOrWhiteSpace([string]$Action.Execute)) {
+                $Exec = $Action
+                break
+            }
+        }
+        # A task with no program to launch (a COM handler) cannot be named
+        # to the user or given an icon, and is not what a person means by
+        # "something that starts with Windows".
+        if (-not $Exec) { continue }
+
+        $Execute = ([string]$Exec.Execute).Trim()
+        $Target = Get-CommandTargetPath -Command $Execute
+        if ($Target -and $SystemRoot -and
+            $Target.StartsWith($SystemRoot.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $Quoted = if ($Execute.StartsWith('"')) { $Execute } else { '"' + $Execute + '"' }
+        $Arguments = [string]$Exec.Arguments
+        $Command = if ([string]::IsNullOrWhiteSpace($Arguments)) { $Quoted } else { "$Quoted $Arguments" }
+
+        $Items += [PSCustomObject]@{
+            Type    = "Task"
+            Hive    = ""
+            RegPath = $TaskPath
+            Name    = [string]$Task.TaskName
+            Command = $Command
+            Enabled = ([string]$Task.State -ne 'Disabled')
+            Trigger = $When
+        }
+    }
+    return $Items
+}
+
 function Get-AllStartupItems {
-    return @(Get-StartupRunKeyItems) + @(Get-StartupFolderItems) + @(Get-DisabledStartupItems)
+    return @(Get-StartupRunKeyItems) + @(Get-StartupFolderItems) + @(Get-DisabledStartupItems) +
+           @(Get-StartupTaskItems)
+}
+
+# ============================================================
+#  MEASURED BOOT DELAYS  (v10.13)
+#
+#  "HIGH IMPACT" WAS A GUESS WEARING A MEASUREMENT'S CLOTHES. The badge
+#  came from a rules table - Steam is High because Steam is usually heavy
+#  - and it read exactly like a number Pulse had taken. Windows DOES take
+#  the number: the Diagnostics-Performance log records every boot's
+#  duration (event 100, BootTime in ms) and, for each application that
+#  made a boot measurably slower, how much slower (event 101,
+#  DegradationTime in ms, with the application's full Path). The field
+#  names used here were read from this machine's provider manifest, not
+#  recalled.
+#
+#  WHERE THE LOG ANSWERS, THE BADGE SAYS WHAT IT MEASURED; where it does
+#  not, the heuristic stays and says nothing more than it did. Two limits
+#  are stated rather than hidden:
+#
+#    THE LOG NEEDS ADMINISTRATOR. Unelevated, even listing it is refused.
+#    Measured: querying it anyway does NOT fail - it answers "no events
+#    were found", which is indistinguishable from a healthy machine. So
+#    access is established FIRST, with the listing that does refuse, and
+#    an unreadable log is reported as unreadable rather than as clean.
+#
+#    WINDOWS ONLY RECORDS OFFENDERS. Event 101 fires for an app that
+#    crossed a degradation threshold. An app with no event is not proven
+#    fast, so it keeps its heuristic badge instead of being awarded "0s".
+# ============================================================
+$Script:BootPerfLogName      = 'Microsoft-Windows-Diagnostics-Performance/Operational'
+$Script:BootPerfLookbackDays = 60
+
+#: Host and stub executables that many unrelated programs share. Matching
+#: a boot event to a startup entry by FILENAME is only safe when the name
+#: identifies one program; two different Update.exe files must never
+#: answer for each other.
+$Script:BootGenericImageNames = @(
+    'update.exe', 'updater.exe', 'setup.exe', 'launcher.exe', 'rundll32.exe',
+    'cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe',
+    'msiexec.exe', 'svchost.exe', 'conhost.exe', 'explorer.exe', 'java.exe',
+    'javaw.exe', 'node.exe', 'python.exe', 'pythonw.exe', 'electron.exe'
+)
+
+function Get-BootPerformanceLogState {
+    <# 'ok', 'disabled', 'needs-admin' or 'unavailable'. See the header for
+       why this is asked BEFORE the events are queried. #>
+    try {
+        $Log = Get-WinEvent -ListLog $Script:BootPerfLogName -ErrorAction Stop
+        if (-not $Log.IsEnabled) { return 'disabled' }
+        return 'ok'
+    } catch {
+        $Message = [string]$_.Exception.Message
+        if ($_.Exception -is [System.UnauthorizedAccessException] -or
+            $Message -match 'unauthori[sz]ed|access is denied') {
+            return 'needs-admin'
+        }
+        return 'unavailable'
+    }
+}
+
+function Read-BootPerformanceEvents {
+    <# Boot (100) and application-delay (101) events since $Since, as
+       plain objects. The seam the tests mock. #>
+    param([datetime]$Since, [int]$MaxEvents = 400)
+    $Filter = @{ LogName = $Script:BootPerfLogName; Id = @(100, 101); StartTime = $Since }
+    try {
+        return @(Get-WinEvent -FilterHashtable $Filter -MaxEvents $MaxEvents -ErrorAction Stop |
+            ForEach-Object { [PSCustomObject]@{ Id = [int]$_.Id; TimeCreated = $_.TimeCreated; Xml = $_.ToXml() } })
+    } catch {
+        if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return @() }
+        throw
+    }
+}
+
+function ConvertFrom-BootEventXml {
+    <# One event's EventData as a name -> value table. Read by the Name
+       ATTRIBUTE, never by position: the schema is versioned, and a field
+       added in a later build must not shift every value after it. #>
+    param([string]$Xml)
+    $Data = @{}
+    if ([string]::IsNullOrWhiteSpace($Xml)) { return $Data }
+    try {
+        $Doc = [xml]$Xml
+        foreach ($Node in @($Doc.Event.EventData.Data)) {
+            if ($Node -isnot [System.Xml.XmlElement]) { continue }
+            $Name = $Node.GetAttribute('Name')
+            if ($Name) { $Data[$Name] = [string]$Node.InnerText }
+        }
+    } catch {
+        return @{}
+    }
+    return $Data
+}
+
+function ConvertTo-BootPathKey {
+    <# A path reduced to what two spellings of the same file share: no
+       drive letter, no \Device\HarddiskVolumeN prefix, lower case. #>
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    $P = $Path.Trim().Trim('"')
+    $P = $P -replace '^\\\\\?\\', ''
+    $P = $P -replace '^\\Device\\HarddiskVolume\d+', ''
+    $P = $P -replace '^[A-Za-z]:', ''
+    return $P.ToLowerInvariant()
+}
+
+function Get-BootPerformanceData {
+    <#
+    .SYNOPSIS
+        What Windows measured about recent boots. READ-ONLY.
+
+    .DESCRIPTION
+        Returns Available, Reason ('ok' / 'disabled' / 'needs-admin' /
+        'unavailable'), LastBootMs, AverageBootMs (the newest ten), Boots,
+        and Apps - one entry per application event 101 named, with Count,
+        AverageDelayMs, MaxDelayMs and LastSeen.
+    #>
+    $Result = [PSCustomObject]@{
+        Available = $false; Reason = ""; LastBootMs = $null; AverageBootMs = $null
+        Boots = 0; Apps = @()
+    }
+    $State = Get-BootPerformanceLogState
+    $Result.Reason = $State
+    if ($State -ne 'ok') { return $Result }
+
+    $Events = @()
+    try {
+        $Events = @(Read-BootPerformanceEvents -Since (Get-Date).AddDays(-$Script:BootPerfLookbackDays))
+    } catch {
+        $Result.Reason = 'unavailable'
+        return $Result
+    }
+
+    $Boots = New-Object System.Collections.ArrayList
+    $Apps = @{}
+    foreach ($BootEvent in $Events) {
+        $Data = ConvertFrom-BootEventXml -Xml ([string]$BootEvent.Xml)
+        if ([int]$BootEvent.Id -eq 100) {
+            $Ms = 0
+            if ([int]::TryParse([string]$Data['BootTime'], [ref]$Ms) -and $Ms -gt 0) {
+                [void]$Boots.Add([PSCustomObject]@{ When = $BootEvent.TimeCreated; Ms = $Ms })
+            }
+        } elseif ([int]$BootEvent.Id -eq 101) {
+            $Delay = 0
+            [void][int]::TryParse([string]$Data['DegradationTime'], [ref]$Delay)
+            $Path = [string]$Data['Path']
+            $Name = [string]$Data['Name']
+            $Key = ConvertTo-BootPathKey -Path $Path
+            if (-not $Key) { $Key = "name:" + $Name.ToLowerInvariant() }
+            if (-not $Apps.ContainsKey($Key)) {
+                $Apps[$Key] = [PSCustomObject]@{
+                    Path = $Path; Name = $Name; FriendlyName = [string]$Data['FriendlyName']
+                    Delays = (New-Object System.Collections.ArrayList); LastSeen = $BootEvent.TimeCreated
+                }
+            }
+            [void]$Apps[$Key].Delays.Add($Delay)
+            if ($BootEvent.TimeCreated -gt $Apps[$Key].LastSeen) { $Apps[$Key].LastSeen = $BootEvent.TimeCreated }
+        }
+    }
+
+    $Ordered = @($Boots | Sort-Object When -Descending)
+    if ($Ordered.Count -gt 0) {
+        $Result.LastBootMs = [int]$Ordered[0].Ms
+        $Recent = @($Ordered | Select-Object -First 10)
+        $Result.AverageBootMs = [int][Math]::Round((($Recent | Measure-Object Ms -Average).Average))
+    }
+    $Result.Boots = $Ordered.Count
+    $Result.Apps = @($Apps.Values | ForEach-Object {
+        $Stats = $_.Delays | Measure-Object -Average -Maximum
+        [PSCustomObject]@{
+            Path           = $_.Path
+            Name           = $_.Name
+            FriendlyName   = $_.FriendlyName
+            Count          = [int]$Stats.Count
+            AverageDelayMs = [int][Math]::Round($Stats.Average)
+            MaxDelayMs     = [int]$Stats.Maximum
+            LastSeen       = $_.LastSeen
+        }
+    })
+    $Result.Available = $true
+    return $Result
+}
+
+function Find-StartupBootDelay {
+    <# The measured delay for one startup item, or $null.
+
+       BY PATH FIRST, and a device-path spelling of the same file counts.
+       BY FILENAME only when exactly one measured application has that name
+       and the name is not a shared host or stub - see
+       $Script:BootGenericImageNames. A bare command ("rundll32.exe ...")
+       never matches: its real payload is an argument. #>
+    param($Item, [object[]]$Apps)
+
+    if (-not $Apps -or @($Apps).Count -eq 0) { return $null }
+    $Target = $null
+    if ($Item.Type -eq 'Folder') {
+        $Target = Get-ShortcutTargetPath -Path ([string]$Item.Command)
+    } else {
+        $Target = Get-CommandTargetPath -Command ([string]$Item.Command)
+    }
+    if ([string]::IsNullOrWhiteSpace($Target) -or $Target -notmatch '^[A-Za-z]:\\') { return $null }
+
+    $Key = ConvertTo-BootPathKey -Path $Target
+    foreach ($App in @($Apps)) {
+        if ((ConvertTo-BootPathKey -Path ([string]$App.Path)) -eq $Key) { return $App }
+    }
+
+    $Leaf = [System.IO.Path]::GetFileName($Target).ToLowerInvariant()
+    if ($Script:BootGenericImageNames -contains $Leaf) { return $null }
+    $ByName = @($Apps | Where-Object { $_.Name -and ([string]$_.Name).ToLowerInvariant() -eq $Leaf })
+    if ($ByName.Count -eq 1) { return $ByName[0] }
+    return $null
+}
+
+function Get-MeasuredBootImpact {
+    <# A measured delay on the same three-step scale the heuristic uses, so
+       sorting and badge colours mean the same thing for both. #>
+    param([int]$DelayMs)
+    if ($DelayMs -ge 3000) { return 'High' }
+    if ($DelayMs -ge 1000) { return 'Medium' }
+    return 'Low'
+}
+
+function Get-BootSummary {
+    <# The report-level half of Get-BootPerformanceData, for the GUI. #>
+    param($Boot)
+    if (-not $Boot) { $Boot = Get-BootPerformanceData }
+    return [PSCustomObject]@{
+        available     = [bool]$Boot.Available
+        reason        = [string]$Boot.Reason
+        lastBootMs    = $Boot.LastBootMs
+        averageBootMs = $Boot.AverageBootMs
+        boots         = [int]$Boot.Boots
+        measuredApps  = @($Boot.Apps).Count
+    }
 }
 
 # ============================================================
@@ -304,6 +753,11 @@ $Script:StartupKeepRules = @(
     @{ Pattern = 'ctfmon';                                            Reason = "Windows input/IME subsystem — required for text input switching." }
     @{ Pattern = 'securityagent|antivirus|endpoint protection|crowdstrike|sentinelone|malwarebytes'; Reason = "Security/endpoint-protection agent — should stay running from boot." }
     @{ Pattern = 'wacom|huion';                                       Reason = "Graphics tablet driver — needed immediately for pen input to work." }
+    # v10.13: the Startup Manager lists sign-in TASKS now, and Office's two
+    # live under \Microsoft\Office\ - outside the protected Windows tree.
+    # Matched by BINARY rather than by the word "Office", which any
+    # third-party tool may carry in its name.
+    @{ Pattern = 'officec2rclient\.exe|sdxhelper\.exe';               Reason = "Microsoft Office's own updater — turning it off stops Office receiving security fixes." }
 )
 
 # Pre-compiled once at module load, not re-compiled on every -match call
@@ -362,9 +816,26 @@ function Get-StartupReportData {
        Resolve-StartupItemByEncodedId uses to re-locate the exact same item
        on a later toggle call (a fresh process, with no memory of this
        scan). #>
+    param($Boot = $null)
+
+    # Read ONCE per report, not once per row. -Boot lets the dispatcher
+    # share one read between this and the report-level summary.
+    if ($null -eq $Boot) { $Boot = Get-BootPerformanceData }
     $Result = @()
     foreach ($It in @(Get-AllStartupItems)) {
         $Rec = Get-StartupRecommendation -Item $It
+        $Impact = $Rec.Impact
+        $DelayMs = $null
+        $DelayMaxMs = $null
+        $DelaySamples = 0
+        $Delay = $null
+        if ($Boot -and $Boot.Available) { $Delay = Find-StartupBootDelay -Item $It -Apps $Boot.Apps }
+        if ($Delay) {
+            $DelayMs = [int]$Delay.AverageDelayMs
+            $DelayMaxMs = [int]$Delay.MaxDelayMs
+            $DelaySamples = [int]$Delay.Count
+            $Impact = Get-MeasuredBootImpact -DelayMs $DelayMs
+        }
         $Result += [PSCustomObject]@{
             Id              = "$($It.Type)|||$($It.RegPath)|||$($It.Name)"
             Name            = $It.Name
@@ -380,7 +851,14 @@ function Get-StartupReportData {
             Command         = $It.Command
             Enabled         = [bool]$It.Enabled
             Recommendation  = $Rec.Recommendation
-            Impact          = $Rec.Impact
+            Impact          = $Impact
+            # MEASURED where Windows recorded this entry slowing a boot
+            # (see Get-BootPerformanceData), the heuristic otherwise.
+            ImpactMeasured  = [bool]$Delay
+            BootDelayMs     = $DelayMs
+            BootDelayMaxMs  = $DelayMaxMs
+            BootDelaySamples = $DelaySamples
+            Trigger         = [string]$It.Trigger
             Reason          = $Rec.Reason
             # Surfaced to the GUI so a protected component can be labelled as
             # such in its row, rather than looking like an ordinary "Safe to
@@ -612,6 +1090,14 @@ function Disable-StartupItem {
     param($Item)
     if (Test-DryRun "Disable startup item '$($Item.Name)' ($($Item.Type)) - backed up for re-enable") { return }
     try {
+        # FIRST, and returning. A task must never reach the branches below:
+        # the Folder branch MOVES $Item.Command, and a task's Command is a
+        # command line rather than a file.
+        if ($Item.Type -eq "Task") {
+            Set-PulseScheduledTaskState -TaskPath $Item.RegPath -TaskName $Item.Name -Enabled $false
+            Write-Success "Disabled scheduled task '$($Item.Name)' - it stays registered, so re-enabling puts it back exactly."
+            return
+        }
         if ($Item.Type -eq "Registry") {
             $DisabledPath = Resolve-UserRegPath $Script:StartupDisabledRegPath
             if (-not (Test-Path $DisabledPath)) {
@@ -661,6 +1147,13 @@ function Enable-StartupItem {
     param($Item)
     if (Test-DryRun "Re-enable startup item '$($Item.Name)' ($($Item.Type)) at its original location") { return }
     try {
+        # Before Resolve-StartupRestoreTarget, which knows only Run keys
+        # and Startup folders - see the matching note in Disable-StartupItem.
+        if ($Item.Type -eq "Task") {
+            Set-PulseScheduledTaskState -TaskPath $Item.RegPath -TaskName $Item.Name -Enabled $true
+            Write-Success "Re-enabled scheduled task '$($Item.Name)'."
+            return
+        }
         $Target = Resolve-StartupRestoreTarget -Type $Item.Type -Name $Item.Name
         if ($Item.Type -eq "Registry") {
             if (-not (Test-Path $Target)) { New-Item -Path $Target -Force | Out-Null }

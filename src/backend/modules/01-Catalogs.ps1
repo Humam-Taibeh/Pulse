@@ -912,5 +912,12 @@ $Script:AdminRequiredTasks = @(
     # "Reversible" is not the test here; "writes machine state" is. Its
     # read-only twin, PathConflictReport, is deliberately absent: listing
     # which tools have two copies needs no rights.
-    "PathPrioritize"
+    "PathPrioritize",
+    # The Leftovers Cleaner's purge and restore write machine state - HKLM
+    # Run keys, scheduled tasks, class registrations - and both open with a
+    # restore point, which needs rights. Its READ-ONLY twin, LeftoversScan,
+    # is deliberately absent: finding what points at missing files needs no
+    # rights, and gating it would raise a UAC prompt just to look.
+    "LeftoversPurge",
+    "LeftoversRestore"
 )

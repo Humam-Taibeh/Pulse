@@ -81,6 +81,11 @@ _PROGRAMMATIC = {
     # both lists — it writes a PATH and opens with a restore point,
     # exactly like the prune beside it.
     "PathPrioritize",
+    # v10.13 Leftovers Cleaner. The card declares the purge (LeftoversPurge)
+    # the way the bloatware card declares RemoveBloatware; the read-only
+    # scan behind it is run by widgets.LeftoversDialog's own PowerShellTask
+    # so the user sees every item before agreeing to remove any of them.
+    "LeftoversScan",
 }
 
 

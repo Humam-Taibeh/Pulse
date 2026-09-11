@@ -300,9 +300,63 @@ function Invoke-GuiTask {
                 Write-Output "##PULSE##SUCCESS|Health report generated."
                 break
             }
+            # ============ LEFTOVERS CLEANER (v10.13) ============
+            #  READ, DECIDE, ACT - the bloatware purge's split, for the
+            #  bloatware purge's reason. The scan is unelevated (finding what
+            #  points at a missing file needs no rights); the purge and the
+            #  restore write machine state behind a restore point and are
+            #  admin-gated in $Script:AdminRequiredTasks.
+            "LeftoversScan" {
+                $Report = Get-LeftoversReport
+                Write-GuiData -Data $Report
+                $Count = @($Report.items).Count
+                Write-LogBatch -Messages (@("LEFTOVERS SCAN: $Count item(s)") +
+                    @($Report.items | ForEach-Object { "  [$($_.kind)] $($_.name) -> $($_.target)" }))
+                if ($Count -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|No leftovers found - nothing on this PC points at software that has been removed."
+                } else {
+                    $Size = if ($Report.totalBytes -gt 0) { ", $([math]::Round($Report.totalBytes / 1MB, 1)) MB of files" } else { "" }
+                    Write-Output "##PULSE##SUCCESS|$Count leftover item(s) found$Size."
+                }
+                break
+            }
+            # NOT Complete-GuiTask: that helper reports one fixed sentence,
+            # and the verdict here has to carry the counts - "removed 7"
+            # and "removed 5, 2 left in place" are different outcomes a
+            # user acts on differently.
+            "LeftoversPurge" {
+                $FailsBefore = $Script:SessionFailCount
+                $Outcome = Invoke-LeftoversPurge -SelectedIds $Script:SelectedAppIds
+                $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
+                if ($Outcome.Removed -eq 0 -and $Outcome.Failed -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Nothing was removed - none of the selected items is still a leftover."
+                } elseif ($Outcome.Failed -gt 0 -or $Script:SessionFailCount -gt $FailsBefore) {
+                    Write-Output "##PULSE##ERROR|${Prefix}Removed $($Outcome.Removed) leftover item(s); $($Outcome.Failed) could not be removed and were left in place. See the Pulse log (Information > View Operation Log)."
+                } else {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Removed $($Outcome.Removed) leftover item(s). Everything was backed up first - Restore Last Purge puts it all back."
+                }
+                break
+            }
+            "LeftoversRestore" {
+                $Outcome = Restore-LeftoversBackup
+                $Prefix = if ($Script:DryRun) { "[DRY-RUN] " } else { "" }
+                if ($Outcome.Restored -eq 0 -and $Outcome.Failed -eq 0) {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}There is no cleanup to restore."
+                } elseif ($Outcome.Failed -gt 0) {
+                    Write-Output "##PULSE##ERROR|${Prefix}Restored $($Outcome.Restored) item(s); $($Outcome.Failed) could not be restored. The cleanup stays restorable, so it can be retried."
+                } else {
+                    Write-Output "##PULSE##SUCCESS|${Prefix}Restored $($Outcome.Restored) item(s) from the last cleanup."
+                }
+                break
+            }
             "StartupReport" {
-                $Items = @(Get-StartupReportData)
-                Write-GuiData -Data $Items
+                # ONE read of the boot-performance log per report, shared by
+                # the rows and the summary. The payload is an OBJECT since
+                # v10.13 - the items plus what Windows measured about recent
+                # boots; StartupManagerDialog still accepts the old bare array.
+                $Boot = Get-BootPerformanceData
+                $Items = @(Get-StartupReportData -Boot $Boot)
+                Write-GuiData -Data ([PSCustomObject]@{ items = $Items; boot = (Get-BootSummary -Boot $Boot) })
                 $Enabled     = @($Items | Where-Object { $_.Enabled }).Count
                 $Disabled    = @($Items | Where-Object { -not $_.Enabled }).Count
                 $Recommended = @($Items | Where-Object { $_.Enabled -and $_.Recommendation -eq 'Disable' }).Count
@@ -310,7 +364,8 @@ function Invoke-GuiTask {
                 # Write-LogBatch (00-Foundation.ps1).
                 $LogLines = @($Items | ForEach-Object {
                     $State = if ($_.Enabled) { "ENABLED " } else { "DISABLED" }
-                    "STARTUP [{0}] ({1}) {2} -> {3} [{4}/{5}]" -f $State, $_.Type, $_.Name, $_.Command, $_.Recommendation, $_.Impact
+                    $Measured = if ($_.ImpactMeasured) { " measured $($_.BootDelayMs)ms" } else { "" }
+                    "STARTUP [{0}] ({1}) {2} -> {3} [{4}/{5}{6}]" -f $State, $_.Type, $_.Name, $_.Command, $_.Recommendation, $_.Impact, $Measured
                 })
                 Write-LogBatch -Messages $LogLines
                 $Suffix = if ($Recommended -gt 0) { " — $Recommended recommended to disable." } else { " — nothing flagged." }

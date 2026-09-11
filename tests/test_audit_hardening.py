@@ -542,6 +542,9 @@ _WORKER_DIALOGS = [
     # builds with the same (window, "", t) the others use and there is no
     # reason to settle for inheriting the guard when it can be measured.
     "PathConflictDialog",
+    # v10.13: the Leftovers Cleaner scans on open, like the bloatware purge
+    # it is modelled on, so it owes the same settle-on-close guarantee.
+    "LeftoversDialog",
 ]
 
 

@@ -11582,6 +11582,435 @@ class BloatRow(QFrame):
 
 
 # ============================================================
+#  LEFTOVERS CLEANER — what uninstalled software left behind  (v10.13)
+# ============================================================
+def _leftover_size_text(size: int) -> str:
+    """Bytes as the one unit a person reads at a glance."""
+    if size >= 1024 ** 3:
+        return f"{size / 1024 ** 3:.1f} GB"
+    if size >= 1024 ** 2:
+        return f"{size / 1024 ** 2:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+class LeftoverRow(QFrame):
+    """One leftover: what it is, why it is here, what it pointed at, and a
+    checkbox.
+
+    THE TARGET IS ON THE ROW, NOT IN A TOOLTIP. Every item in this list is
+    here for one reason - it points at a file that is gone - and the path
+    of that file is the evidence. A cleaner that asked for trust without
+    showing what its verdict was based on would be asking for exactly the
+    blind deletion 17-Leftovers.ps1 was built to refuse.
+
+    THE PATH ELIDES, IT DOES NOT WRAP. A path has no spaces to break at, so
+    a word-wrapped QLabel makes its whole length the row's minimum width,
+    and one deep AppData path would widen the dialog for every other row.
+    ElidedCaption keeps both ends - the drive and the file name, which is
+    where two leftovers from one publisher differ - and the tooltip keeps
+    all of it.
+    """
+
+    _KIND_LABELS = {
+        "startup-run": "Startup entry",
+        "startup-folder": "Startup shortcut",
+        "task": "Scheduled task",
+        "residue": "App folder",
+        "shell-handler": "Right-click extension",
+        "shell-verb": "Right-click entry",
+    }
+
+    #: What the evidence line may ASK for; it takes less when the row has
+    #: less, and elides in the middle past it.
+    TARGET_MAX_W = 640
+
+    def __init__(self, item: dict, t: dict):
+        super().__init__()
+        self.item_id = str(item.get("id") or "")
+        self.kind = str(item.get("kind") or "")
+        self.group = str(item.get("group") or "")
+        self._name = str(item.get("name") or self.item_id)
+        self.needs_admin = bool(item.get("needsAdmin"))
+        self.size_bytes = int(item.get("sizeBytes") or 0)
+
+        outer = QHBoxLayout(self)
+        row_padding(outer)
+        outer.setSpacing(TH.SPACE["md"])
+        col = QVBoxLayout()
+        col.setSpacing(TH.SPACE["xxs"])
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(TH.SPACE["sm"])
+        # "&&" for the reason BloatRow learned it: Qt reads "&" as a
+        # mnemonic marker, and a leftover's name is whatever an installer
+        # wrote.
+        self.checkbox = QCheckBox(self._name.replace("&", "&&"))
+        self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        name_row.addWidget(self.checkbox)
+        self._kind_badge = QLabel(self._KIND_LABELS.get(self.kind, self.kind).upper())
+        name_row.addWidget(self._kind_badge)
+        self._size_badge: QLabel | None = None
+        if self.size_bytes > 0:
+            self._size_badge = QLabel(_leftover_size_text(self.size_bytes))
+            self._size_badge.setToolTip(
+                "Disk space this frees once the cleanup's backup folder is "
+                "emptied — a purge moves folders aside rather than deleting "
+                "them, so it can be undone.")
+            name_row.addWidget(self._size_badge)
+        name_row.addStretch()
+        col.addLayout(name_row)
+
+        self._note = QLabel(str(item.get("reason") or ""))
+        self._note.setWordWrap(True)
+        self._note.setToolTip(str(item.get("location") or ""))
+        col.addWidget(self._note)
+
+        self._target = ElidedCaption(max_width=self.TARGET_MAX_W,
+                                     elide=Qt.TextElideMode.ElideMiddle)
+        self._target.setFullText(str(item.get("target") or ""))
+        self._target.setVisible(bool(item.get("target")))
+        col.addWidget(self._target)
+        outer.addLayout(col, 1)
+        self.apply_theme(t)
+
+    def set_checked(self, on: bool):
+        self.checkbox.setChecked(on)
+
+    def is_selected(self) -> bool:
+        return self.checkbox.isChecked()
+
+    def apply_theme(self, t: dict):
+        self.setStyleSheet(TH.startup_row_qss(t))
+        self.checkbox.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
+        self._kind_badge.setStyleSheet(TH.micro_chip_qss(t, "neutral"))
+        if self._size_badge is not None:
+            self._size_badge.setStyleSheet(TH.micro_chip_qss(t, "warn"))
+        self._note.setStyleSheet(TH.label_qss(t, "caption"))
+        self._target.setStyleSheet(TH.label_qss(t, "caption"))
+        # Re-elide against the new font, as StartupRow does for its name.
+        self._target.setFullText(self._target.fullText())
+
+
+class LeftoversDialog(PulseDialog):
+    """Scans for what uninstalled software left behind and hands back the
+    ids to purge.
+
+    IT DECIDES, IT DOES NOT DO - the bloatware purge's contract. The dialog
+    returns `selected_ids` and main.py runs LeftoversPurge through the
+    ordinary task pipeline, so the purge gets the live console, the
+    concurrency guard and the restore point rather than a private worker
+    inside a modal.
+
+    PRE-TICKED, because every row is here on evidence rather than on
+    resemblance: it points at a file that is provably gone, or it is a
+    package its own uninstaller marked dead. And every removal is backed
+    up, so the cost of a tick the user did not look at is one click on
+    Restore Last Purge.
+    """
+
+    SECTIONS = [
+        ("startup", "Startup entries"),
+        ("tasks", "Scheduled tasks"),
+        ("residue", "Abandoned app folders"),
+        ("shell", "Right-click menu"),
+    ]
+
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+        super().__init__(parent)
+        self._t = t
+        self._ps1_path = ps1_path
+        self.selected_ids: list[str] = []
+        self._rows: dict[str, LeftoverRow] = {}
+        self._thread: QThread | None = None
+        self._worker: PowerShellTask | None = None
+
+        accent = t["accent"]
+        panel = _dialog_chrome(self, t, accent, responsive=True)
+        lay = dialog_body(panel, "sm")
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(TH.SPACE["xxs"])
+        title = QLabel("🧽  Leftovers Cleaner")
+        title.setStyleSheet(TH.label_qss(t, "dialog"))
+        title_col.addWidget(title)
+        self._subtitle = QLabel("Looking for what uninstalled software left behind…")
+        self._subtitle.setWordWrap(True)
+        self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
+        title_col.addWidget(self._subtitle)
+        lay.addLayout(title_col)
+
+        self._stack = fit_stack(QStackedWidget())
+        self._stack.setStyleSheet(TH.stack_qss())
+        lay.addWidget(self._stack, 1)
+        self._loading_page = self._build_loading_page()
+        self._stack.addWidget(self._loading_page)
+        self._error_page = self._build_error_page()
+        self._stack.addWidget(self._error_page)
+        self._results_page = self._build_results_page()
+        self._stack.addWidget(self._results_page)
+        self._clean_page = self._build_clean_page()
+        self._stack.addWidget(self._clean_page)
+        self._stack.setCurrentWidget(self._loading_page)
+
+        self._footer = dialog_footer(lay, self._cancel_btn, self._purge_btn)
+        self._start_scan()
+
+    # -- pages ---------------------------------------------------------
+    def _build_loading_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["lg"])
+        lay.addStretch()
+        self._shimmer = ShimmerBar(height=6)
+        self._shimmer.set_theme(t)
+        lay.addWidget(self._shimmer)
+        label = QLabel("Checking startup entries, scheduled tasks, app folders and "
+                       "the right-click menu for anything pointing at software "
+                       "that is gone…")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(label)
+        lay.addStretch()
+        return page
+
+    def _build_error_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+        icon = QLabel("⚠️")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet(
+            f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
+        lay.addWidget(icon)
+        self._error_label = QLabel("")
+        self._error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._error_label.setWordWrap(True)
+        self._error_label.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(self._error_label)
+        lay.addStretch()
+        return page
+
+    def _build_clean_page(self) -> QWidget:
+        """The answer, at the dialog-title weight - the bloatware purge's
+        clean page, with its painted plaque for the same reason."""
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
+        lay.setSpacing(TH.SPACE["md"])
+        lay.addStretch()
+
+        badge = IconPlaque("")
+        badge.setFixedSize(TH.PLAQUE_SIZE * 2, TH.PLAQUE_SIZE * 2)
+        char, is_fluent = TH.glyph("checkcircle")
+        badge.setText(char)
+        px = TH.ICON["plaque"] * 2
+        font = TH.icon_font(px) if is_fluent else None
+        if font is None:
+            font = badge.font()
+            font.setPixelSize(px)
+        badge.setFont(font)
+        badge.apply_theme(t, t["ok"])
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(badge)
+        row.addStretch()
+        lay.addLayout(row)
+
+        headline = QLabel("Nothing left behind")
+        headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        headline.setStyleSheet(TH.label_qss(t, "dialog"))
+        lay.addWidget(headline)
+        note = QLabel("No startup entry, scheduled task, app folder or right-click "
+                      "entry on this PC points at software that has been removed.")
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setWordWrap(True)
+        note.setStyleSheet(TH.label_qss(t, "body"))
+        lay.addWidget(note)
+        lay.addStretch()
+        return page
+
+    def _build_results_page(self) -> QWidget:
+        t = self._t
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(TH.SPACE["sm"])
+
+        bar = QHBoxLayout()
+        bar.setSpacing(TH.SPACE["lg"])
+        self._all_btn = QPushButton("Select All")
+        self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._all_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._all_btn.clicked.connect(lambda: self._select_all(True))
+        bar.addWidget(self._all_btn)
+        self._none_btn = QPushButton("Deselect All")
+        self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._none_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._none_btn.clicked.connect(lambda: self._select_all(False))
+        bar.addWidget(self._none_btn)
+        bar.addStretch()
+        self._count = QLabel("0 selected")
+        self._count.setStyleSheet(TH.label_qss(t, "caption"))
+        bar.addWidget(self._count)
+        lay.addLayout(bar)
+
+        self._scroll = FitScroll()
+        self._scroll.setStyleSheet(TH.scroll_area_qss(t))
+        host = QWidget()
+        host.setStyleSheet("background: transparent;")
+        self._host_lay = scroll_host_layout(host, "sm")
+        self._host_lay.addStretch()
+        self._scroll.setWidget(host)
+        lay.addWidget(self._scroll, 1)
+
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setStyleSheet(TH.dialog_cancel_qss(t))
+        self._cancel_btn.clicked.connect(self.reject)
+        self._purge_btn = QPushButton("Safe Purge")
+        self._purge_btn.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
+        self._purge_btn.setEnabled(False)
+        self._purge_btn.clicked.connect(self._accept_selection)
+        return page
+
+    # -- scan ----------------------------------------------------------
+    def _start_scan(self):
+        if self._thread is not None:
+            return
+        self._shimmer.start()
+        thread = QThread(self)
+        # 300s: the residue scan sizes every dead package folder, and a
+        # 450 MB Electron install is thousands of files on a cold disk.
+        worker = PowerShellTask(self._ps1_path, "LeftoversScan", timeout=300)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_scan_finished)
+        worker.failed.connect(self._on_scan_failed)
+        for signal in (worker.finished, worker.failed, worker.cancelled):
+            signal.connect(thread.quit)
+        thread.finished.connect(self._cleanup)
+        self._thread, self._worker = thread, worker
+        thread.start()
+
+    def _on_scan_finished(self, result: TaskResult):
+        self._shimmer.stop()
+        report = result.data if isinstance(result.data, dict) else None
+        if not result.success or report is None:
+            self._on_scan_failed(result.message or "The leftovers scan returned nothing.")
+            return
+        items = [it for it in (report.get("items") or [])
+                 if isinstance(it, dict) and it.get("id")]
+        self._render(items, bool(report.get("elevated")),
+                     int(report.get("totalBytes") or 0))
+
+    def _on_scan_failed(self, message: str):
+        self._shimmer.stop()
+        self._error_label.setText(f"{message}\n\nNothing was changed.")
+        self._stack.setCurrentWidget(self._error_page)
+        self._purge_btn.setEnabled(False)
+
+    def _cleanup(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
+        if self._thread is not None:
+            self._thread.deleteLater()
+            self._thread = None
+
+    # -- rendering -----------------------------------------------------
+    def _render(self, items: list, elevated: bool, total_bytes: int):
+        if not items:
+            # THE FOOTER FOLLOWS THE PAGE, as it does in the bloatware
+            # purge: a disabled destructive button under "Nothing left
+            # behind" offers to do the one thing the page just ruled out.
+            self._purge_btn.setVisible(False)
+            self._cancel_btn.setText("Close")
+            self._subtitle.setText("Checked startup entries, scheduled tasks, app "
+                                   "folders and the right-click menu.")
+            self._stack.setCurrentWidget(self._clean_page)
+            return
+
+        by_group: dict[str, list] = {}
+        for item in items:
+            by_group.setdefault(str(item.get("group") or ""), []).append(item)
+        sections = list(self.SECTIONS)
+        # A group a newer engine emits that this GUI has no title for still
+        # renders - under a generic heading, never silently dropped, because
+        # a leftover the user cannot see is one they cannot untick.
+        sections += [(key, "Other") for key in by_group
+                     if key not in {k for k, _title in self.SECTIONS}]
+        for key, title in sections:
+            rows = by_group.get(key) or []
+            if not rows:
+                continue
+            header = QLabel(f"{title}  ·  {len(rows)}".upper())
+            header.setStyleSheet(TH.label_qss(self._t, "section"))
+            header.setContentsMargins(TH.SPACE["xs"], TH.SPACE["sm"], TH.SPACE["xs"], 0)
+            self._insert(header)
+            for item in sorted(rows, key=lambda it: str(it.get("name") or "").lower()):
+                row = LeftoverRow(item, self._t)
+                row.checkbox.toggled.connect(self._sync_count)
+                self._rows[row.item_id] = row
+                self._insert(row)
+
+        noun = "item points" if len(items) == 1 else "items point"
+        summary = f"{len(items)} {noun} at software that is no longer installed"
+        if total_bytes > 0:
+            summary += f", holding {_leftover_size_text(total_bytes)}"
+        summary += (". Everything you purge is backed up first — Restore Last "
+                    "Purge puts it back.")
+        if not elevated and any(row.needs_admin for row in self._rows.values()):
+            summary += " Removing some of these needs administrator; Pulse will ask."
+        self._subtitle.setText(summary)
+        self._select_all(True)
+        self._stack.setCurrentWidget(self._results_page)
+        self._scroll.refresh()
+
+    def _insert(self, widget: QWidget):
+        self._host_lay.insertWidget(self._host_lay.count() - 1, widget)
+
+    # -- selection -----------------------------------------------------
+    def _select_all(self, on: bool):
+        for row in self._rows.values():
+            row.set_checked(on)
+        self._sync_count()
+
+    def _sync_count(self):
+        chosen = [row for row in self._rows.values() if row.is_selected()]
+        self._count.setText(f"{len(chosen)} selected")
+        self._purge_btn.setEnabled(bool(chosen))
+        self._purge_btn.setText(
+            "Safe Purge" if not chosen else f"Safe Purge ({len(chosen)})")
+
+    def _accept_selection(self):
+        self.selected_ids = [row.item_id for row in self._rows.values()
+                             if row.is_selected()]
+        if not self.selected_ids:
+            return
+        self.accept()
+
+    # -- lifecycle -----------------------------------------------------
+    def showEvent(self, e):
+        super().showEvent(e)
+        _present_dialog(self)
+
+    def done(self, code: int):
+        """Settle the scan before the wrapper goes away — the guard every
+        dialog that owns a worker thread carries (see PulseDialog.done)."""
+        if self._worker is not None:
+            self._worker.cancel()
+        super().done(code)
+
+
+# ============================================================
 #  BLOATWARE PURGE — scan, classify, remove permanently
 # ============================================================
 class BloatwarePurgeDialog(PulseDialog):
@@ -12193,7 +12622,29 @@ class StartupRow(QFrame):
             self._raw_name if self._raw_name != display
             else display)
         name_row.addWidget(self._name)
-        self._impact_badge = QLabel(f"{self._impact.upper()} IMPACT")
+        # MEASURED OR ESTIMATED, and the badge now says which (v10.13).
+        # "HIGH IMPACT" came from a rules table - Steam is heavy because
+        # Steam is usually heavy - and read exactly like a number Pulse had
+        # taken. Where Windows recorded this entry slowing a real boot the
+        # badge carries that measurement (see Get-BootPerformanceData);
+        # everywhere else it keeps the estimate and its tooltip says so.
+        delay_ms = item.get("BootDelayMs")
+        self._measured = bool(item.get("ImpactMeasured")) and delay_ms not in (None, "")
+        if self._measured:
+            seconds = float(delay_ms) / 1000.0
+            self._impact_badge = QLabel(f"DELAYS BOOT {seconds:.1f}s")
+            samples = int(item.get("BootDelaySamples") or 0)
+            tip = (f"Measured by Windows: this entry slowed {samples} recent "
+                   f"boot{'' if samples == 1 else 's'} by {seconds:.1f}s on average")
+            worst = item.get("BootDelayMaxMs")
+            if worst not in (None, ""):
+                tip += f", {float(worst) / 1000.0:.1f}s at worst"
+            self._impact_badge.setToolTip(tip + ".")
+        else:
+            self._impact_badge = QLabel(f"{self._impact.upper()} IMPACT")
+            self._impact_badge.setToolTip(
+                "Estimated from what this kind of program usually costs at "
+                "startup — not a measurement taken on this PC.")
         name_row.addWidget(self._impact_badge)
         self._rec_badge = QLabel(
             "System Critical" if self._protected
@@ -12222,7 +12673,16 @@ class StartupRow(QFrame):
                 "Startup” will not touch it. You can still toggle it by hand.")
         col.addLayout(name_row)
 
-        type_label = "Registry (Run key)" if item.get("Type") == "Registry" else "Startup folder shortcut"
+        item_type = item.get("Type")
+        if item_type == "Registry":
+            type_label = "Registry (Run key)"
+        elif item_type == "Task":
+            # v10.13: a Task Scheduler entry with a logon or boot trigger.
+            # The trigger is part of the label because "scheduled task" on
+            # its own does not say why the row is in a STARTUP list.
+            type_label = f"Scheduled task ({item.get('Trigger') or 'at sign-in'})"
+        else:
+            type_label = "Startup folder shortcut"
         reason = str(item.get("Reason") or "")
         if not self._target_present:
             # REPLACES the recommendation rather than joining it. The
@@ -12337,12 +12797,16 @@ class StartupManagerDialog(PulseDialog):
         title = QLabel("🚀  Startup Manager")
         title.setStyleSheet(TH.label_qss(t, "dialog"))
         title_col.addWidget(title)
-        self._subtitle = QLabel("Auditing Run keys and Startup folders…")
+        self._subtitle = QLabel("Auditing Run keys, Startup folders and sign-in tasks…")
         self._subtitle.setWordWrap(True)
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         title_col.addWidget(self._subtitle)
-        head.addLayout(title_col)
-        head.addStretch()
+        # THE COLUMN TAKES THE ROW, not a stretch beside it. Next to a
+        # stretch, a word-wrapped subtitle is squeezed to its narrowest
+        # wrap; the one-sentence subtitle this dialog used to have never
+        # showed it, and the v10.13 "badges are estimates" notice rendered
+        # as a 238px column five lines deep in an 838px dialog.
+        head.addLayout(title_col, 1)
         lay.addLayout(head)
 
         self._stack = fit_stack(QStackedWidget())
@@ -12377,8 +12841,10 @@ class StartupManagerDialog(PulseDialog):
         self._shimmer = ShimmerBar(height=6)
         self._shimmer.set_theme(t)
         lay.addWidget(self._shimmer)
-        label = QLabel("Reading Run keys, the Startup folders, and scoring boot impact…")
+        label = QLabel("Reading Run keys, Startup folders and sign-in tasks, and what "
+                       "Windows measured about recent boots…")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
         label.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(label)
         lay.addStretch()
@@ -12494,7 +12960,7 @@ class StartupManagerDialog(PulseDialog):
         self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._rescan_btn.setStyleSheet(TH.link_button_qss(t, accent))
         self._rescan_btn.setToolTip(
-            "Re-read the Run keys and Startup folders from disk.")
+            "Re-read the Run keys, Startup folders and sign-in tasks.")
         self._rescan_btn.clicked.connect(self._start_scan)
         summary.addWidget(self._rescan_btn)
         lay.addLayout(summary)
@@ -12530,7 +12996,7 @@ class StartupManagerDialog(PulseDialog):
     def _start_scan(self):
         if self._scan_thread is not None:
             return
-        self._subtitle.setText("Auditing Run keys and Startup folders…")
+        self._subtitle.setText("Auditing Run keys, Startup folders and sign-in tasks…")
         self._clear_rows()
         # Back to the full list for a fresh scan. Carrying a filter across a
         # rescan can land the user on an empty list whose emptiness is the
@@ -12575,14 +13041,56 @@ class StartupManagerDialog(PulseDialog):
         if not result.success:
             self._show_error(result.message)
             return
-        items = result.data if isinstance(result.data, list) else []
+        # AN OBJECT SINCE v10.13 - {items, boot} - and still a bare array
+        # from an older engine. Accepting both is what lets a GUI update land
+        # before the engine it talks to.
+        data = result.data
+        boot: dict = {}
+        if isinstance(data, dict):
+            boot = data.get("boot") if isinstance(data.get("boot"), dict) else {}
+            data = data.get("items")
+        items = data if isinstance(data, list) else []
         items = [it for it in items if isinstance(it, dict) and it.get("Id")]
         if not items:
             self._show_error("No startup items were found to audit.")
             return
         self._populate_rows(items)
-        self._subtitle.setText("Toggle any item to change it instantly — changes are reversible.")
+        self._subtitle.setText(self._boot_summary(boot, items))
         self._stack.setCurrentWidget(self._results_page)
+
+    @staticmethod
+    def _boot_summary(boot: dict, items: list) -> str:
+        """The subtitle, carrying what Windows measured when it could.
+
+        THREE HONEST STATES. Measured: the last boot's duration and how many
+        rows carry a real delay. Unreadable: the badges are estimates and
+        the reason is stated - "needs administrator" is actionable, and a
+        silent fallback would let an estimate pass for a measurement. And an
+        older engine with no boot data at all, which says nothing new.
+        """
+        base = "Toggle any item to change it instantly — changes are reversible."
+        if not isinstance(boot, dict) or not boot:
+            return base
+        if boot.get("available") and boot.get("lastBootMs"):
+            text = f"Last boot took {float(boot['lastBootMs']) / 1000.0:.1f}s"
+            boots = int(boot.get("boots") or 0)
+            if boot.get("averageBootMs") and boots > 1:
+                text += (f" (average {float(boot['averageBootMs']) / 1000.0:.1f}s "
+                         f"over {boots} boots)")
+            text += ". "
+            measured = sum(1 for it in items if it.get("ImpactMeasured"))
+            if measured:
+                noun = "entry was" if measured == 1 else "entries were"
+                text += f"{measured} {noun} measured slowing it down. "
+            return text + base
+        reason = str(boot.get("reason") or "")
+        if reason == "needs-admin":
+            return ("Impact badges are estimates — Windows records real boot "
+                    "delays, but reading them needs administrator. " + base)
+        if reason == "disabled":
+            return ("Impact badges are estimates — this PC's boot-performance "
+                    "log is turned off. " + base)
+        return base
 
     def _show_error(self, message: str):
         self._shimmer.stop()

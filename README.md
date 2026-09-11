@@ -16,7 +16,7 @@
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![Release](https://img.shields.io/github/v/release/Humam-Taibeh/Pulse?label=release&color=blueviolet&logo=github)](https://github.com/Humam-Taibeh/Pulse/releases/latest)
-[![Tests](https://img.shields.io/badge/tests-1%2C303%20pytest%20%2B%20180%20Pester-success)](#-testing--continuous-integration)
+[![Tests](https://img.shields.io/badge/tests-1%2C503%20pytest%20%2B%20352%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml)
 [![Release build](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml/badge.svg)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
@@ -40,11 +40,11 @@ Setting up or rescuing a Windows machine is a long tail of manual work: install 
 | Layer | Technology | Role |
 |---|---|---|
 | 🖥️ **Frontend** | Python 3.10+ · PySide6 (Qt 6) | Frameless glass shell, dual themes, static obsidian canvas, real-time streaming console with live phase reporting, global kill switch, command palette, toasts |
-| ⚙️ **Backend** | PowerShell 5.1+ — 19 modules, ~10k lines | Data-driven engine for deployment, tweaks, maintenance, privacy, recovery and read-only reporting |
+| ⚙️ **Backend** | PowerShell 5.1+ — 20 modules, ~10k lines | Data-driven engine for deployment, tweaks, maintenance, privacy, recovery and read-only reporting |
 
 **The GUI never touches the system itself.** Every card dispatches a *named task* to `core.ps1` on a background `QThread`; the engine executes it, streams progress to the UI as it happens, and closes with exactly one machine-parseable verdict line. The same engine also runs **fully standalone** as a self-elevating terminal application with a hierarchical menu — no Python required.
 
-> **Two different "module" counts, both correct.** The release notes describe a **4-module core architecture**; this README counts **19 backend modules**. They are not in conflict — they count different layers. The **4** are the top-level modules a *user* navigates in the sidebar: Software Management, System & Tweaks, Maintenance & Security, and Utilities & Tools (defined as the four top-level entries in [menu_structure.py](src/frontend/menu_structure.py), each with its own semantic accent token). The **19** are the numbered PowerShell engine files under [src/backend/modules/](src/backend/modules/) that those four surfaces dispatch into — `00-Foundation` through `30-GuiDispatcher`. One user-facing module is served by many engine files: *Maintenance & Security*, for instance, draws on `02-Safety`, `07-Maintenance`, `08-Privacy` and `14-Inspectors`.
+> **Two different "module" counts, both correct.** The release notes describe a **4-module core architecture**; this README counts **20 backend modules**. They are not in conflict — they count different layers. The **4** are the top-level modules a *user* navigates in the sidebar: Software Management, System & Tweaks, Maintenance & Security, and Utilities & Tools (defined as the four top-level entries in [menu_structure.py](src/frontend/menu_structure.py), each with its own semantic accent token). The **20** are the numbered PowerShell engine files under [src/backend/modules/](src/backend/modules/) that those four surfaces dispatch into — `00-Foundation` through `30-GuiDispatcher`. One user-facing module is served by many engine files: *Maintenance & Security*, for instance, draws on `02-Safety`, `07-Maintenance`, `08-Privacy` and `14-Inspectors`.
 
 Every module follows the same lifecycle:
 
@@ -80,7 +80,8 @@ The execution engine is built for **observability and control**, not fire-and-fo
 - **Curated `winget` catalogs** across four tabs — Browsers & Media, Development & Tools, Gaming Launchers, System Runtimes & Utilities — with a per-app checkbox selector, live search and **authentic full-colour vendor logos** — the real artwork, gradients and all, each centred at 20px in a uniform 36px well. 36 of the 37 bundled marks are full colour (Cursor's own brand cube is monochrome); six catalog apps have no authentic logo in any open licensed set and fall back to the app's own installed binary artwork, then to a neutral "no logo available" glyph. Nothing is ever invented
 - **Update Center** — live audit of installed apps with per-app version deltas; update exactly what you tick
 - **Microsoft Office Suite** deployment through the official ODT, driven by an in-app wizard
-- **Startup Manager** — boot-impact audit with instant per-entry enable/disable
+- **Startup Manager** — Run keys, Startup folders and third-party sign-in / boot **scheduled tasks**, each with an instant, reversible toggle (`\Microsoft\Windows\` tasks are never listed). Where Windows' Diagnostics-Performance log is readable, a row says how long that entry **actually** delayed recent boots — `DELAYS BOOT 3.8s` — and everywhere else the badge is labelled an estimate rather than passing for a measurement
+- **Leftovers Cleaner** — finds what uninstalled software left behind: startup entries and scheduled tasks whose program is **provably** gone from a mounted local disk, app folders their own uninstaller marked dead, and right-click entries pointing at deleted binaries. Nothing under Windows' own directories is ever flagged, and name-alike folders are deliberately not guessed at. Every purge re-scans first, takes a restore point, and backs each item up — `.reg` exports, task XML, and folders **moved** aside rather than deleted, indexed under `HKCU\Software\Pulse\Backups` — so *Restore Last Purge* puts it all back
 - **PATH Doctor** (`VerifyEnvironment`) — resolves Git, Python, Java, Node, VS Code, GCC and Ollama, repairs missing user-PATH entries from known install roots, and sets `JAVA_HOME` when resolvable — then **scans the whole system PATH** (both scopes, read from the registry) for dead and duplicate entries. Every finding is one scannable `[TAG] name -> path` line; the PATH scan reports and never removes, because a folder that is merely offline looks exactly like a dead one
 
 ### ⚡ System & Tweaks
@@ -133,7 +134,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` on — the manifest requests `requireAdministrator`, so every launch elevates (v10.7). See [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (840) + **Pester 5+** (126) | 80 tests marked `native` need a real window station |
+| Tests | **pytest 8** (1,503) + **Pester 5+** (352) | 80 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -213,6 +214,7 @@ Pulse/
 │   │       ├── 14-Inspectors.ps1        # power health, restore points, storage scan
 │   │       ├── 15-Network.ps1           # per-adapter DNS profile switching
 │   │       ├── 16-ContextMenu.ps1       # shell context-menu extension manager
+│   │       ├── 17-Leftovers.ps1         # leftovers of uninstalled software — scan, backed-up purge, restore
 │   │       ├── 20-Menus.ps1             # the full interactive terminal experience
 │   │       └── 30-GuiDispatcher.ps1     # Invoke-GuiTask — the GUI task contract
 │   │
@@ -249,9 +251,9 @@ Pulse/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
 │   └── fetch_app_icons.py           # Build-time vendor icon fetcher
 │
-├── tests/                           # 1,303 collected pytest tests
+├── tests/                           # 1,503 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
-│   ├── backend/                     # 180 Pester tests (safety, startup, hardening, …)
+│   ├── backend/                     # 352 Pester tests (safety, startup, leftovers, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
 │
 └── .github/workflows/
@@ -505,10 +507,10 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 1,303-test regression suite |
+| `python -m pytest tests` | The full 1,503-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
-| `Invoke-Pester -Path tests\backend` | The 101-test Pester suite (backup/restore, startup, hardening) |
+| `Invoke-Pester -Path tests\backend` | The 352-test Pester suite (backup/restore, startup, leftovers, hardening) |
 | `Invoke-ScriptAnalyzer -Path src\backend -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` | Lint the engine — must report **zero** findings |
 | `pyinstaller main.spec` | Build `dist\PULSE\` |
 | `.\tools\build_release.ps1` | Build bundle + installer + `SHA256SUMS` |
@@ -546,18 +548,18 @@ An unknown task name is answered with `##PULSE##ERROR|Unknown task: <name>`. A t
 
 ### Task catalog
 
-44 task identifiers are reachable from the UI: 37 dispatch to the engine, and 7 prefixed with `@` are handled locally by the GUI.
+53 task identifiers are reachable from the UI: 43 dispatch to the engine, and 10 prefixed with `@` are handled locally by the GUI. (Counted from `menu_structure.iter_leaf_items()` for v10.13.0 — the previous figures had drifted and the table below was missing seven engine tasks.)
 
 | Domain | Tasks |
 |---|---|
-| **Software** | `InstallCatalogApps` · `InstallOfficeODT` · `UpdateSelectedApps` · `StartupReport` · `VerifyEnvironment` · `RemoveBloatware` · `RemoveEdge` · `RestoreEdge` · `RemoveOneDrive` · `RestoreOneDrive` |
+| **Software** | `InstallCatalogApps` · `InstallOfficeODT` · `UpdateSelectedApps` · `StartupReport` · `VerifyEnvironment` · `PathConflictReport` · `PathSanitize` · `RemoveBloatware` · `RemoveEdge` · `RestoreEdge` · `RemoveOneDrive` · `RestoreOneDrive` · `LeftoversPurge` · `LeftoversRestore` |
 | **Tweaks & UI** | `DarkMode` · `MinimalistTaskbar` · `ClassicContextMenu` · `GameMode` · `DisableMouseAccel` · `UltimatePowerPlan` · `ContextMenuScan` |
-| **Network** | `NetworkOptimization` · `NetworkProfiles` |
+| **Network** | `NetworkOptimization` · `NetworkProfiles` · `NetworkAdapterReport` · `NetworkDriverCheck` · `NetworkStackReset` |
 | **Privacy** | `DisableTelemetry` · `DisableAdvertisingID` · `DisableActivityHistory` |
 | **Maintenance** | `RunSFC` · `CleanCache` · `OptimizeDrives` · `RemoveWindowsOld` · `DisableHibernation` · `EnableHibernation` · `DriverBackup` · `DriverScan` |
 | **Storage & info** | `DriveSpaceReport` · `StorageScan` · `SystemInfo` |
 | **Recovery** | `CreateRestorePoint` · `ResetTweaks` · `RestoreServices` |
-| **Local (`@`)** | `@playbooks` · `@health_report` · `@activation` · `@power_health` · `@restore_points` · `@open_log` · `@open_onedrive_backup` · `@open_edge_backup` |
+| **Local (`@`)** | `@playbooks` · `@health_report` · `@activation` · `@power_health` · `@restore_points` · `@open_log` · `@open_onedrive_backup` · `@open_edge_backup` · `@open_leftovers_backup` · `@data_hygiene` |
 
 Local `@` actions open a Pulse surface instead of spawning a task through the main pipeline; the dialogs that need engine data (`HealthReport`, `ActivationStatus`, the inspectors) run their own `PowerShellTask`. `tests/test_contract.py` fails if any GUI task lacks a dispatcher case, or if any dispatcher case becomes unreachable without being allow-listed.
 
@@ -609,8 +611,8 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 1,303 collected tests
-Invoke-Pester -Path tests\backend  # 180 tests
+python -m pytest tests -v          # 1,503 collected tests
+Invoke-Pester -Path tests\backend  # 352 tests
 ```
 
 The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **Around 100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless. The figure is not counted by hand — every hand-counted number in this file had drifted by the time anyone re-read it — it is what `pytest --collect-only -m native` reports, which was 99 of 1,309 when this line was written. Re-run that rather than trusting this sentence.
@@ -700,6 +702,8 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Every row in the debloat catalog carries a full-colour mark — twenty-eight drawn here in each product's own palette and labelled `drawn: true`, plus the Office launcher's genuine vendor artwork that the first pass had missed. The single-colour pictogram tier is gone *(v10.12.0)*
 - [x] Startup Manager resolves what a command line actually names — `.lnk` shortcuts followed to their targets through `IShellLinkW`, and Store apps answered from `AppxManifest.xml` at 256px instead of Windows' generic placeholder *(v10.12.0)*
 - [x] PATH Doctor can fix the conflict it finds — "Fix Shadowed Tools" promotes the copy you pick by REORDERING the PATH, never removing an entry, and refuses the one case reordering cannot reach instead of pretending to fix it *(v10.12.0)*
+- [x] Leftovers Cleaner — startup entries, scheduled tasks, dead app folders and right-click entries left behind by uninstalled software, flagged only when their target is provably absent, purged behind a restore point with every item backed up and restorable in one click *(v10.13.0)*
+- [x] Startup Manager lists third-party sign-in and boot scheduled tasks, and reports the boot delay Windows actually measured instead of an estimate wherever the Diagnostics-Performance log is readable *(v10.13.0)*
 
 **Planned**
 

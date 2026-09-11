@@ -49,6 +49,16 @@ BeforeAll {
     . (Join-Path $script:ModuleDir "11-StateProbe.ps1")
     . (Join-Path $script:ModuleDir "12-HealthReport.ps1")
 
+    # HERMETIC SINCE v10.13. Get-AllStartupItems now reads Task Scheduler
+    # and Get-StartupReportData reads the boot-performance log. Left real,
+    # every count-based test below would change with whatever tasks the
+    # developer's machine happens to have registered - GIGABYTE's two logon
+    # tasks alone would break "reports totals consistent". Mocked at the
+    # root, so every Describe inherits them; the Describes that are about
+    # tasks or boot timings override them.
+    Mock Get-PulseScheduledTasks { @() }
+    Mock Get-BootPerformanceLogState { 'needs-admin' }
+
     # --- isolation ---------------------------------------------------
     $script:TestRoot = "HKCU:\Software\PulsePesterTests"
     $script:UserRunKey = "$script:TestRoot\Run_User"
@@ -494,5 +504,337 @@ Describe "Get-StartupReportData carries the label and the presence" {
         Set-ItemProperty -Path $script:UserRunKey -Name "PulseProbe" -Value "`"$exe`" -x" -Force
         $row = @(Get-StartupReportData | Where-Object { $_.Name -eq 'PulseProbe' })[0]
         $row.TargetPresent | Should -BeTrue
+    }
+}
+
+
+# ============================================================
+#  OFFICE'S OWN UPDATERS READ "SAFE TO KEEP"  (v10.13)
+#
+#  Listing sign-in tasks put two of Office's, under \Microsoft\Office\, in
+#  front of the user. That is outside the protected \Microsoft\Windows\
+#  tree and no rule matched them, so they read "Worth Reviewing" - an
+#  invitation to switch off Office security fixes. The commands are the
+#  ones measured on the machine this was built on.
+# ============================================================
+Describe "Get-StartupRecommendation for Office's own updaters" {
+
+    It "keeps <Name>" -ForEach @(
+        @{ Name    = 'Office Automatic Updates 2.0'
+           Command = '"C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeC2RClient.exe" /frequentupdate SCHEDULEDTASK displaylevel=False' }
+        @{ Name    = 'Office Feature Updates Logon'
+           Command = '"C:\Program Files\Microsoft Office\root\Office16\sdxhelper.exe" /onlogon' }
+    ) {
+        $Rec = Get-StartupRecommendation -Item ([PSCustomObject]@{ Type = 'Task'; Name = $Name; Command = $Command })
+        $Rec.Recommendation | Should -Be 'Keep'
+        # KEPT, not PROTECTED: an updater is not a system component, so it
+        # does not wear "System Critical", and it can still be turned off
+        # by hand.
+        $Rec.Protected | Should -BeFalse
+    }
+
+    It "does not keep a program just because its name says Office" {
+        $Rec = Get-StartupRecommendation -Item ([PSCustomObject]@{
+            Type = 'Registry'; Name = 'OfficeTimeTracker'; Command = 'C:\Tools\officetimetracker.exe' })
+        $Rec.Recommendation | Should -Be 'Review'
+    }
+}
+
+
+# ============================================================
+#  SCHEDULED TASKS IN THE STARTUP MANAGER  (v10.13)
+#
+#  The Startup Manager audited Run keys and Startup folders only, and a
+#  large share of modern autostart is a Task Scheduler entry with a logon
+#  trigger instead. Every task here is a mock - nothing in this file can
+#  enable or disable a real task.
+# ============================================================
+Describe "Get-StartupTaskItems" {
+
+    BeforeAll {
+        function script:New-Trigger([string]$Class) {
+            [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = $Class } }
+        }
+        function script:New-Exec([string]$Execute, [string]$Arguments = '') {
+            [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = 'MSFT_TaskExecAction' }
+                               Execute = $Execute; Arguments = $Arguments }
+        }
+        function script:New-Task([string]$Path, [string]$Name, [object[]]$Triggers, [object[]]$Actions,
+                                 [string]$State = 'Ready') {
+            [PSCustomObject]@{ TaskPath = $Path; TaskName = $Name; State = $State
+                               Triggers = $Triggers; Actions = $Actions }
+        }
+    }
+
+    BeforeEach {
+        Reset-TestState
+        $script:FakeTasks = @()
+        Mock Get-PulseScheduledTasks { $script:FakeTasks }
+    }
+
+    It "lists a third-party task that runs at sign-in" {
+        $script:FakeTasks = @(New-Task -Path '\' -Name 'GCC' `
+            -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') `
+            -Actions @(New-Exec '"C:\Program Files\GIGABYTE\Control Center\GCC.exe"' '-b'))
+        $Items = @(Get-StartupTaskItems)
+        $Items.Count | Should -Be 1
+        $Items[0].Type | Should -Be 'Task'
+        $Items[0].RegPath | Should -Be '\'
+        $Items[0].Name | Should -Be 'GCC'
+        $Items[0].Command | Should -Be '"C:\Program Files\GIGABYTE\Control Center\GCC.exe" -b'
+        $Items[0].Enabled | Should -BeTrue
+        $Items[0].Trigger | Should -Be 'at sign-in'
+    }
+
+    It "lists a boot-triggered task, and reports a disabled one as disabled" {
+        $script:FakeTasks = @(New-Task -Path '\Vendor\' -Name 'AtBoot' -State 'Disabled' `
+            -Triggers @(New-Trigger 'MSFT_TaskBootTrigger') -Actions @(New-Exec 'C:\Vendor\boot.exe'))
+        $Item = @(Get-StartupTaskItems)[0]
+        $Item.Trigger | Should -Be 'at boot'
+        $Item.Enabled | Should -BeFalse
+    }
+
+    It "does not treat scheduled work as startup" {
+        # A daily updater or an on-unlock helper runs, but not at startup.
+        $script:FakeTasks = @(
+            (New-Task -Path '\' -Name 'Daily' -Triggers @(New-Trigger 'MSFT_TaskDailyTrigger') -Actions @(New-Exec 'C:\V\d.exe')),
+            (New-Task -Path '\' -Name 'Unlock' -Triggers @(New-Trigger 'MSFT_TaskSessionStateChangeTrigger') -Actions @(New-Exec 'C:\V\u.exe'))
+        )
+        @(Get-StartupTaskItems).Count | Should -Be 0
+    }
+
+    It "never lists the operating system's own tasks" {
+        $script:FakeTasks = @(
+            (New-Task -Path '\Microsoft\Windows\Shell\' -Name 'OsTask' -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') -Actions @(New-Exec 'C:\V\x.exe')),
+            (New-Task -Path '\' -Name 'CreateExplorerShellUnelevatedTask' -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') `
+                -Actions @(New-Exec (Join-Path $env:SystemRoot 'explorer.exe') '/NoUACCheck'))
+        )
+        @(Get-StartupTaskItems).Count | Should -Be 0
+    }
+
+    It "skips a task with no program to launch" {
+        $Com = [PSCustomObject]@{ CimClass = [PSCustomObject]@{ CimClassName = 'MSFT_TaskComHandlerAction' } }
+        $script:FakeTasks = @(New-Task -Path '\' -Name 'ComOnly' -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') -Actions @($Com))
+        @(Get-StartupTaskItems).Count | Should -Be 0
+    }
+
+    It "flows into Get-AllStartupItems and the report, with its MISSING state" {
+        $script:FakeTasks = @(New-Task -Path '\GoneVendor\' -Name 'Helper' `
+            -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') -Actions @(New-Exec 'C:\PulseNoSuchVendor\helper.exe'))
+        @(Get-AllStartupItems | Where-Object { $_.Type -eq 'Task' }).Count | Should -Be 1
+        $Row = @(Get-StartupReportData | Where-Object { $_.Type -eq 'Task' })[0]
+        $Row.Id | Should -Be 'Task|||\GoneVendor\|||Helper'
+        $Row.TargetPresent | Should -BeFalse
+    }
+
+    It "is found again by its encoded id, which is how a toggle locates it" {
+        $script:FakeTasks = @(New-Task -Path '\Vendor\' -Name 'Helper' `
+            -Triggers @(New-Trigger 'MSFT_TaskLogonTrigger') -Actions @(New-Exec 'C:\V\h.exe'))
+        $Found = Resolve-StartupItemByEncodedId -EncodedId 'Task|||\Vendor\|||Helper'
+        $Found | Should -Not -BeNullOrEmpty
+        $Found.Type | Should -Be 'Task'
+    }
+}
+
+Describe "Disabling and enabling a startup task" {
+
+    BeforeEach {
+        Reset-TestState
+        $script:Calls = New-Object System.Collections.ArrayList
+        Mock Set-PulseScheduledTaskState { [void]$script:Calls.Add("$TaskPath|$TaskName|$Enabled") }
+        Mock Move-Item { }
+        Mock Remove-ItemProperty { }
+    }
+
+    It "disables through Task Scheduler, never through the Run-key or folder branches" {
+        <#
+            THE BRANCH ORDER IS THE SAFETY PROPERTY. The folder branch
+            MOVES $Item.Command, and a task's Command is a command line. A
+            task that fell through to it would try to move a string.
+        #>
+        $Task = [PSCustomObject]@{ Type = 'Task'; Hive = ''; RegPath = '\Vendor\'; Name = 'Helper'
+                                   Command = '"C:\V\h.exe"'; Enabled = $true }
+        Disable-StartupItem -Item $Task
+        @($script:Calls) | Should -Be @('\Vendor\|Helper|False')
+        Should -Invoke Move-Item -Times 0
+        Should -Invoke Remove-ItemProperty -Times 0
+    }
+
+    It "enables through Task Scheduler, never through the restore-target logic" {
+        $Task = [PSCustomObject]@{ Type = 'Task'; Hive = ''; RegPath = '\Vendor\'; Name = 'Helper'
+                                   Command = '"C:\V\h.exe"'; Enabled = $false }
+        Enable-StartupItem -Item $Task
+        @($script:Calls) | Should -Be @('\Vendor\|Helper|True')
+        Should -Invoke Move-Item -Times 0
+    }
+
+    It "changes nothing under -WhatIf" {
+        $Task = [PSCustomObject]@{ Type = 'Task'; Hive = ''; RegPath = '\Vendor\'; Name = 'Helper'
+                                   Command = '"C:\V\h.exe"'; Enabled = $true }
+        $Script:DryRun = $true
+        try { Disable-StartupItem -Item $Task } finally { $Script:DryRun = $false }
+        @($script:Calls).Count | Should -Be 0
+    }
+}
+
+# ============================================================
+#  MEASURED BOOT DELAYS  (v10.13)
+#
+#  The field names in these fixtures - BootTime, DegradationTime, Path,
+#  Name - were read from the Microsoft-Windows-Diagnostics-Performance
+#  provider manifest on a real machine. The log itself needs
+#  administrator to read, so the events are fixtures; the SCHEMA is not
+#  invented.
+# ============================================================
+Describe "Boot performance data" {
+
+    BeforeAll {
+        function script:New-BootEventXml([hashtable]$Data) {
+            $Fields = ($Data.GetEnumerator() | ForEach-Object {
+                "<Data Name='$($_.Key)'>$([System.Security.SecurityElement]::Escape([string]$_.Value))</Data>"
+            }) -join ''
+            return "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><EventID>0</EventID></System><EventData>$Fields</EventData></Event>"
+        }
+        function script:New-BootEvent([int]$Id, [datetime]$When, [hashtable]$Data) {
+            [PSCustomObject]@{ Id = $Id; TimeCreated = $When; Xml = (New-BootEventXml $Data) }
+        }
+    }
+
+    BeforeEach {
+        Reset-TestState
+        $script:FakeBootEvents = @()
+        Mock Read-BootPerformanceEvents { $script:FakeBootEvents }
+    }
+
+    It "reads EventData by NAME, so a reordered schema cannot shift the values" {
+        $Data = ConvertFrom-BootEventXml -Xml (New-BootEventXml @{ DegradationTime = '3200'; Path = 'C:\V\a.exe'; Name = 'a.exe' })
+        $Data['DegradationTime'] | Should -Be '3200'
+        $Data['Path'] | Should -Be 'C:\V\a.exe'
+    }
+
+    It "survives XML that is not an event at all" {
+        { ConvertFrom-BootEventXml -Xml 'not xml <' } | Should -Not -Throw
+        (ConvertFrom-BootEventXml -Xml 'not xml <').Count | Should -Be 0
+    }
+
+    It "reports an unreadable log as UNREADABLE, and never queries it" {
+        <#
+            MEASURED: unelevated, querying this log does not fail - it
+            answers "no events were found", which is indistinguishable from
+            a healthy machine. So access is established first, and the query
+            is not even attempted without it.
+        #>
+        Mock Get-BootPerformanceLogState { 'needs-admin' }
+        $Boot = Get-BootPerformanceData
+        $Boot.Available | Should -BeFalse
+        $Boot.Reason | Should -Be 'needs-admin'
+        Should -Invoke Read-BootPerformanceEvents -Times 0
+    }
+
+    It "reports a disabled log as disabled" {
+        Mock Get-BootPerformanceLogState { 'disabled' }
+        (Get-BootPerformanceData).Reason | Should -Be 'disabled'
+    }
+
+    It "summarises boots and per-application delays" {
+        Mock Get-BootPerformanceLogState { 'ok' }
+        $Now = Get-Date
+        $script:FakeBootEvents = @(
+            (New-BootEvent 100 $Now.AddDays(-1) @{ BootTime = '42000' }),
+            (New-BootEvent 100 $Now.AddDays(-3) @{ BootTime = '38000' }),
+            (New-BootEvent 101 $Now.AddDays(-1) @{ Name = 'Steam.exe'; Path = 'C:\Program Files (x86)\Steam\steam.exe'; DegradationTime = '3200'; TotalTime = '5100' }),
+            (New-BootEvent 101 $Now.AddDays(-3) @{ Name = 'Steam.exe'; Path = 'C:\Program Files (x86)\Steam\steam.exe'; DegradationTime = '4400'; TotalTime = '6000' })
+        )
+        $Boot = Get-BootPerformanceData
+        $Boot.Available | Should -BeTrue
+        $Boot.LastBootMs | Should -Be 42000
+        $Boot.AverageBootMs | Should -Be 40000
+        $Boot.Boots | Should -Be 2
+        @($Boot.Apps).Count | Should -Be 1
+        $Boot.Apps[0].AverageDelayMs | Should -Be 3800
+        $Boot.Apps[0].MaxDelayMs | Should -Be 4400
+        $Boot.Apps[0].Count | Should -Be 2
+    }
+}
+
+Describe "Matching a boot delay to a startup entry" {
+
+    BeforeEach { Reset-TestState }
+
+    It "matches by path" {
+        $Apps = @([PSCustomObject]@{ Path = 'C:\Program Files (x86)\Steam\steam.exe'; Name = 'steam.exe'; AverageDelayMs = 3800 })
+        $Item = [PSCustomObject]@{ Type = 'Registry'; Command = '"C:\Program Files (x86)\Steam\steam.exe" -silent' }
+        (Find-StartupBootDelay -Item $Item -Apps $Apps).AverageDelayMs | Should -Be 3800
+    }
+
+    It "matches a device-path spelling of the same file" {
+        $Apps = @([PSCustomObject]@{ Path = '\Device\HarddiskVolume3\Program Files\Vendor\app.exe'; Name = 'app.exe'; AverageDelayMs = 1200 })
+        $Item = [PSCustomObject]@{ Type = 'Registry'; Command = '"C:\Program Files\Vendor\app.exe"' }
+        Find-StartupBootDelay -Item $Item -Apps $Apps | Should -Not -BeNullOrEmpty
+    }
+
+    It "falls back to the filename only when exactly one application has it" {
+        $One = @([PSCustomObject]@{ Path = ''; Name = 'uniqueapp.exe'; AverageDelayMs = 900 })
+        $Item = [PSCustomObject]@{ Type = 'Registry'; Command = 'C:\Somewhere\UniqueApp.exe' }
+        Find-StartupBootDelay -Item $Item -Apps $One | Should -Not -BeNullOrEmpty
+
+        $Two = @(
+            [PSCustomObject]@{ Path = ''; Name = 'uniqueapp.exe'; AverageDelayMs = 900 },
+            [PSCustomObject]@{ Path = ''; Name = 'uniqueapp.exe'; AverageDelayMs = 100 }
+        )
+        Find-StartupBootDelay -Item $Item -Apps $Two | Should -BeNullOrEmpty
+    }
+
+    It "never lets two different Update.exe files answer for each other" {
+        $Apps = @([PSCustomObject]@{ Path = 'C:\Users\x\AppData\Local\Slack\Update.exe'; Name = 'Update.exe'; AverageDelayMs = 5000 })
+        $Item = [PSCustomObject]@{ Type = 'Registry'; Command = '"C:\Users\x\AppData\Local\Discord\Update.exe" --processStart Discord.exe' }
+        Find-StartupBootDelay -Item $Item -Apps $Apps | Should -BeNullOrEmpty
+    }
+
+    It "never matches a bare host command" {
+        $Apps = @([PSCustomObject]@{ Path = ''; Name = 'rundll32.exe'; AverageDelayMs = 5000 })
+        $Item = [PSCustomObject]@{ Type = 'Registry'; Command = 'rundll32.exe C:\V\thing.dll,Entry' }
+        Find-StartupBootDelay -Item $Item -Apps $Apps | Should -BeNullOrEmpty
+    }
+
+    It "maps a measured delay onto the badge scale" {
+        Get-MeasuredBootImpact -DelayMs 3000 | Should -Be 'High'
+        Get-MeasuredBootImpact -DelayMs 2999 | Should -Be 'Medium'
+        Get-MeasuredBootImpact -DelayMs 1000 | Should -Be 'Medium'
+        Get-MeasuredBootImpact -DelayMs 999 | Should -Be 'Low'
+    }
+}
+
+Describe "Get-StartupReportData carries the measurement" {
+
+    BeforeEach { Reset-TestState }
+
+    It "replaces the heuristic impact with the measured one, and says so" {
+        Set-ItemProperty -Path $script:UserRunKey -Name "Steam" -Value '"C:\Program Files (x86)\Steam\steam.exe" -silent' -Force
+        Set-ItemProperty -Path $script:UserRunKey -Name "Unmeasured" -Value '"C:\Vendor\quiet.exe"' -Force
+        $Boot = [PSCustomObject]@{
+            Available = $true; Reason = 'ok'; LastBootMs = 42000; AverageBootMs = 40000; Boots = 2
+            Apps = @([PSCustomObject]@{ Path = 'C:\Program Files (x86)\Steam\steam.exe'; Name = 'steam.exe'
+                                        Count = 2; AverageDelayMs = 3800; MaxDelayMs = 4400 })
+        }
+        $Rows = @(Get-StartupReportData -Boot $Boot)
+        $Steam = @($Rows | Where-Object { $_.Name -eq 'Steam' })[0]
+        $Steam.ImpactMeasured | Should -BeTrue
+        $Steam.BootDelayMs | Should -Be 3800
+        $Steam.BootDelayMaxMs | Should -Be 4400
+        $Steam.BootDelaySamples | Should -Be 2
+        $Steam.Impact | Should -Be 'High'
+
+        $Quiet = @($Rows | Where-Object { $_.Name -eq 'Unmeasured' })[0]
+        $Quiet.ImpactMeasured | Should -BeFalse
+        $Quiet.BootDelayMs | Should -BeNullOrEmpty
+    }
+
+    It "keeps every heuristic badge when the log could not be read" {
+        Set-ItemProperty -Path $script:UserRunKey -Name "Steam" -Value '"C:\Program Files (x86)\Steam\steam.exe" -silent' -Force
+        $Boot = [PSCustomObject]@{ Available = $false; Reason = 'needs-admin'; Apps = @() }
+        $Steam = @(Get-StartupReportData -Boot $Boot | Where-Object { $_.Name -eq 'Steam' })[0]
+        $Steam.ImpactMeasured | Should -BeFalse
+        $Steam.Impact | Should -Be 'High' -Because "that is the rules table's answer for Steam"
     }
 }

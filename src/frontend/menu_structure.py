@@ -687,6 +687,52 @@ CATEGORIES = [
                       "glyph": "delete", "task": "PathSanitize", "timeout": 300,
                       "confirm": True, "danger": True, "action": "Prune"},
                  ]},
+                # THE LEFTOVERS CLEANER (v10.13), and a HUB for the reason
+                # the Edge and OneDrive teardowns are: the removal is only
+                # safe to offer BESIDE the restore that undoes it and the
+                # folder its backups live in. It sits in MANAGE INSTALLED
+                # because what it cleans is the residue of software that
+                # was once installed here.
+                #
+                # glyph `clear`, because `delete` is Remove Bloatware's and
+                # `broom` is Aggressive Cache Clean's - see
+                # test_no_two_cards_share_an_icon. The sub-actions below
+                # reuse delete / sync / folder in the teardown hubs' order,
+                # which is what makes the three hubs read as one pattern.
+                {"icon": "🧽", "glyph": "clear", "title": "Leftovers Cleaner",
+                 "desc": "Find what uninstalled software left behind — dead "
+                         "startup entries, ghost scheduled tasks, abandoned "
+                         "app folders — and remove it safely.",
+                 "hub": True,
+                 "items": [
+                     # `leftovers` opens LeftoversDialog first, exactly as
+                     # `bloatware` does - the selector names every item it
+                     # is about to remove, which is a stronger confirmation
+                     # than a yes/no sheet, so `confirm` is deliberately
+                     # absent. Not `danger` either: every removal is backed
+                     # up behind a restore point, and the next row undoes it.
+                     {"icon": "🧽", "title": "Scan & Purge Leftovers",
+                      "desc": "Flags only what points at files that are "
+                              "provably gone. Everything removed is backed "
+                              "up first, behind a restore point.",
+                      "glyph": "delete", "task": "LeftoversPurge",
+                      "timeout": 900, "leftovers": True, "action": "Scan"},
+                     # "Purge", not "Cleanup": the palette reads "تنظيف"
+                     # (cleaning) as clean / cache / cleanup, and a RESTORE
+                     # row titled "Cleanup" outranked Aggressive Cache Clean
+                     # for it - see test_arabic_queries_reach_the_right_
+                     # operations. It also names what it undoes.
+                     {"icon": "🔁", "title": "Restore Last Purge",
+                      "desc": "Put back everything the most recent purge "
+                              "removed.",
+                      "glyph": "sync", "task": "LeftoversRestore",
+                      "timeout": 600, "action": "Restore"},
+                     {"icon": "📁", "title": "Leftovers Backup Folder",
+                      "desc": "Open the registry exports, task definitions "
+                              "and folders a purge set aside.",
+                      "glyph": "folder", "task": "@open_leftovers_backup",
+                      "action": "Open"},
+                 ]},
             ]},
             # -- THE BUNDLED MICROSOFT APPS -------------------------------
             #
@@ -1313,6 +1359,11 @@ ADMIN_REQUIRED_TASKS = frozenset({
     # the findings either way, disabling only the buttons that would
     # write. A user who cannot fix it can still find out what is wrong.
     "PathPrioritize",
+    # The Leftovers Cleaner's purge and restore write machine state behind
+    # a restore point, mirroring 01-Catalogs.ps1. The scan behind the
+    # dialog (LeftoversScan) is deliberately absent - looking needs no
+    # rights.
+    "LeftoversPurge", "LeftoversRestore",
 })
 
 

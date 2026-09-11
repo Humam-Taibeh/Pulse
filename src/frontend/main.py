@@ -76,7 +76,7 @@ from frontend.widgets import (  # noqa: E402
     ContextMenuDialog, DnsSwitcherDialog, ElidedCaption,
     BloatwarePurgeDialog,
     ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
-    HubDialog,
+    HubDialog, LeftoversDialog,
     NavButton,
     NavPill, NoticeDialog, OfficeWizardDialog, PathConflictDialog,
     PlaybookDialog,
@@ -3019,6 +3019,21 @@ class PulseApp(QMainWindow):
             app_ids = dialog.selected_ids
             item = {**item}
             item.pop("confirm", None)   # the selector WAS the confirm step
+        elif item.get("leftovers"):
+            # SCAN FIRST, THEN DECIDE - the bloatware purge's shape, for a
+            # stronger version of its reason: this list is not a curated
+            # catalog but whatever a scan of THIS machine found, so nothing
+            # is removed that the user has not been shown. The backend
+            # re-scans before removing anything, so an app reinstalled
+            # between the scan and the click keeps its entries.
+            dialog = LeftoversDialog(self, self.ps1_path, self.theme.t)
+            if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
+                return
+            if not dialog.selected_ids:
+                return
+            app_ids = dialog.selected_ids
+            item = {**item}
+            item.pop("confirm", None)   # the selector WAS the confirm step
         elif item.get("wizard") == "office":
             wizard = OfficeWizardDialog(self, self.theme.t)
             if self._exec_dialog(wizard) != QDialog.DialogCode.Accepted:
@@ -3288,6 +3303,12 @@ class PulseApp(QMainWindow):
                 os.path.join(root, "Backups", "Edge"),
                 os.path.join(desktop, "Pulse_EdgeBackup"),
                 os.path.join(desktop, "HTCore_EdgeBackup"),
+            ),
+            # 17-Leftovers.ps1 writes one sub-folder per cleanup here: the
+            # .reg exports, task XML, and the shortcuts and folders it MOVED
+            # aside rather than deleting. No legacy home - the feature is new.
+            "@open_leftovers_backup": (
+                os.path.join(root, "Backups", "Leftovers"),
             ),
         }
         candidates = targets.get(task)

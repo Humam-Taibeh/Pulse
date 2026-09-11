@@ -15,6 +15,127 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.13.0] — 2026-09-11
+
+### Added — the Leftovers Cleaner
+
+- **What uninstalled software leaves behind, found on evidence rather than
+  resemblance.** A new hub in *Manage Installed* — *Scan & Purge Leftovers*,
+  *Restore Last Purge*, *Leftovers Backup Folder*, in the same remove ·
+  restore · open-what-was-saved order as the Edge and OneDrive hubs. It looks
+  for four kinds of leftover:
+  - **startup entries** (Run values and Startup-folder shortcuts) whose
+    program is gone — including records Pulse itself had *disabled*;
+  - **scheduled tasks** outside `\Microsoft\Windows\` whose every action
+    runs a program that is gone (a task with a COM action is never flagged);
+  - **app folders** in `%LOCALAPPDATA%`, `%APPDATA%` and `%PROGRAMDATA%`
+    that their own uninstaller marked dead (a Squirrel package's `.dead`
+    marker beside its `Update.exe`), sized, and skipped while any file in
+    them is open;
+  - **right-click entries** — shell-extension handlers whose DLL is gone,
+    and verbs whose command is.
+
+- **"Provably absent" is a predicate, not a `Test-Path`.** A target counts
+  as missing only when its path is drive-rooted, not UNC, on a fixed volume
+  that is mounted, `Test-Path` says it is not there, **and** its nearest
+  existing parent folder can be listed. That last clause is what keeps a
+  folder Pulse is not allowed to read — `WindowsApps` is the standing
+  example — from ever passing for one that is gone. The Windows directory,
+  `WindowsApps`, `WindowsPowerShell`, the `Microsoft` and
+  `Common Files\Microsoft Shared` trees under both Program Files roots, and
+  `ProgramData\Microsoft` are refused outright.
+
+- **Name-matching AppData folders was measured and declined.** "A folder
+  whose name matches no installed program" sounds like a leftover and
+  mostly is not: on the machine this was built on, 12 of the 13 folders
+  under `%LOCALAPPDATA%\Packages` that no installed app claimed by name were
+  live AppContainer profiles — Chrome's sandbox (`cr.sb.*`) among them.
+  Deleting those breaks running software, so only folders carrying their
+  own uninstaller's verdict are offered.
+
+- **Disabled records count, and that was a diagnosis before it was a
+  feature.** The six orphaned startup entries v10.12.1 badged `MISSING` do
+  not live in the Run keys any more — they had been disabled into
+  `HKCU\Software\Pulse\DisabledStartup`, so a scan of the live Run keys
+  found none of them. On that same machine the scan now finds all six, the
+  two ghost Adobe tasks, and a 454.2 MB dead VortxEngine package.
+
+- **Nothing is removed without a way back.** *Safe Purge* re-scans and acts
+  only on selected items that are **still** leftovers, so software
+  reinstalled between the scan and the click keeps its entries. It then
+  takes a restore point and opens a backup set indexed under
+  `HKCU\Software\Pulse\Backups\Leftovers`, and backs each item up before
+  touching it — an item whose backup fails is left in place. Run values
+  are recorded with their exact registry type (`REG_EXPAND_SZ` stays
+  expandable), tasks are exported as XML **before** they are unregistered,
+  class keys are exported with `reg.exe`, and shortcuts and folders are
+  **moved** into `%LOCALAPPDATA%\PULSE\Backups\Leftovers` rather than
+  deleted. *Restore Last Purge* puts items back in reverse order, will not
+  overwrite a path something new now occupies, and marks the set restored
+  only when every item came back.
+
+- **The review sheet shows its evidence.** Findings are grouped by kind and
+  pre-ticked, each row carries the reason it is there **and** the path it
+  pointed at (elided in the middle, never wrapped — a path has nowhere to
+  break), and the button counts what is ticked: `Safe Purge (7)`. The scan
+  runs unelevated; the purge and the restore are admin-gated.
+
+### Added — scheduled tasks in the Startup Manager
+
+- **Sign-in and boot tasks are startup items too**, and were invisible.
+  Third-party tasks with a logon or boot trigger now appear beside the Run
+  keys and Startup folder as `Scheduled task (at sign-in)`. Anything under
+  `\Microsoft\Windows\`, or running a program from the Windows directory, is
+  not listed. The toggle is `Disable-ScheduledTask` / `Enable-ScheduledTask`
+  — nothing is moved or deleted — and a task pointing at a missing program
+  gets the same `MISSING` badge as a Run key.
+- **Office's own updaters read "Safe to Keep".** `\Microsoft\Office\` is
+  outside the protected Windows tree, so its two sign-in tasks were showing
+  as *Worth Reviewing* — an invitation to switch off Office security fixes.
+
+### Changed — boot impact is a measurement where Windows took one
+
+- **"HIGH IMPACT" was an estimate that read like a number.** It came from a
+  rules table — Steam is heavy because Steam is usually heavy. The Startup
+  Manager now reads the `Microsoft-Windows-Diagnostics-Performance`
+  operational log — event 100 for each boot's duration, 101–103 for the
+  programs that slowed it — over the last 60 days, and a row Windows
+  measured says so: `DELAYS BOOT 3.8s`, with the sample count and the worst
+  case in its tooltip. Programs are matched by full path with the volume
+  prefix normalised away; a bare file name is used only when it is unique
+  and is not a generic host such as `update.exe` or `rundll32.exe`.
+- **The fallback says it is one.** Estimated badges carry a tooltip saying
+  so, and the subtitle states why nothing was measured. Reading that log
+  needs administrator, and an unelevated query returns *"No events were
+  found"* — indistinguishable from an empty log — so access is checked
+  first and reported as `needs-admin` rather than as a clean boot. The
+  event fields used were verified against the provider's manifest on
+  Windows 11 26200; this release was developed unelevated, so no live
+  degradation event was read during development.
+- `StartupReport` now returns `{items, boot}`. The dialog still accepts the
+  bare array an older engine sends.
+
+### Engineering
+
+- `reg import` reports success on **stderr**, which under the engine's
+  `$ErrorActionPreference = "Stop"` became a terminating error — a restore
+  that worked and then reported failure. Every `reg.exe` call now goes
+  through `Invoke-RegExe`, which scopes the preference and judges by exit
+  code. Caught by the Pester suite before it shipped.
+- The Leftovers Pester suite runs entirely in fixtures — a private
+  `HKCU:\Software\PulsePesterLeftovers` hive, a temp directory, and mocked
+  task cmdlets — and never reads or writes the real Run keys, Startup
+  folders or Task Scheduler.
+- `tests/test_backend_function_uniqueness.py`: two modules defining the same
+  function is silent in a dot-sourced engine (the later one wins), so it is
+  now a failing test. It caught three helpers duplicated during this work.
+- README and ROADMAP figures were re-measured rather than carried forward:
+  20 engine modules, 53 UI task identifiers (43 engine, 10 local — the task
+  table had been missing seven engine tasks), and 1,503 pytest + 352 Pester
+  tests.
+
+---
+
 ## [10.12.1] — 2026-09-08
 
 ### Fixed — the Startup Manager was showing identifiers, not names
