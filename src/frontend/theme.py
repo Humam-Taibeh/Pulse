@@ -1838,13 +1838,19 @@ def chrome_qss(t: dict) -> str:
     return shell_qss(t) + sidebar_qss(t) + content_qss(t)
 
 
-def nav_button_qss(t: dict) -> str:
+def nav_button_qss(t: dict, rtl: bool = False) -> str:
     """v9 ghost rail: at rest the nav entry is a bare, transparent row —
     only its colored icon plaque and label carry weight — so the sidebar
     reads light, airy and modern (the Linear / VS Code activity-bar feel)
     instead of a stack of heavy filled pills floating over a void. Hover and
     the selected state are where surface and the Aurora brand sweep light
-    up, so the pointer always gets a clear, premium answer."""
+    up, so the pointer always gets a clear, premium answer.
+
+    `rtl` (v10.15) mirrors the label side the padding clears — the plaque
+    itself moves too, but that is NavButton._paint_plaque's job (a raw
+    QPainter box this QSS cannot reach); the two stay in step because
+    NavButton.set_rtl changes both from the same flag."""
+    side = "right" if rtl else "left"
     return f"""
         QPushButton {{
             background-color: transparent;
@@ -1854,8 +1860,8 @@ def nav_button_qss(t: dict) -> str:
             font-size: {TYPE['label']}px; font-weight: 500;
             /* padding clears the painted icon plaque (the rail gutter +
                the PLAQUE_SIZE well + an 8px gap) — see NavButton.paintEvent */
-            text-align: left;
-            padding-left: {SIDEBAR_GUTTER + PLAQUE_SIZE + SPACE['sm']}px;
+            text-align: {side};
+            padding-{side}: {SIDEBAR_GUTTER + PLAQUE_SIZE + SPACE['sm']}px;
         }}
         QPushButton:hover {{
             background-color: {t['card_hover']};

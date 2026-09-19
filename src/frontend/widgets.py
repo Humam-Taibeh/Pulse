@@ -49,6 +49,8 @@ from frontend import theme as TH
 # Data-only module (no widget imports), so this cannot cycle: the command
 # palette scores against its structured search fields (see _match_entry).
 from frontend import menu_structure as MS
+# Also data-only (a string table + is_rtl()), for the same reason.
+from frontend import i18n as I18N
 # Update Center / Startup Manager (v6.3) run their own background scans and
 # per-item actions independently of main.py's single-task console pipeline
 # (both are modal dialogs that fully cover it anyway) - the one deliberate
@@ -1966,10 +1968,23 @@ class NavButton(QPushButton):
         #: Whether the CURRENT focus arrived by keyboard. Read by
         #: paintEvent, written by focusInEvent — see focus_ring_visible.
         self._focus_ring = False
+        #: Set by set_rtl (the sidebar's language direction, not this
+        #: button's own text — the four module buttons keep English
+        #: labels but still mirror with everything else; see i18n.py).
+        #: Qt's automatic RTL mirroring covers QSS text-align/padding and
+        #: the standard layout, but NOT this class's own QPainter plaque,
+        #: which is why both nav_button_qss and _paint_plaque take it
+        #: explicitly instead of relying on isRightToLeft().
+        self._rtl = False
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
-        self.setStyleSheet(TH.nav_button_qss(t))
+        #: Kept for set_rtl, which changes independently of a theme switch
+        #: and needs the last-known tokens to rebuild the QSS without the
+        #: caller (main._apply_language) having to carry a token dict
+        #: around just for this.
+        self._t = t
+        self.setStyleSheet(TH.nav_button_qss(t, rtl=self._rtl))
         # the module's OWN colour for this theme — the sidebar rail reads as
         # a spectrum, and the glow/plaque follow it (previously the plaque
         # used the module colour while the glow used the generic app accent,
@@ -1995,6 +2010,20 @@ class NavButton(QPushButton):
         self.setProperty("selected", on)
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def set_rtl(self, rtl: bool):
+        """Mirrors the QSS text-align/padding AND the painted plaque's
+        anchor. A theme switch alone would leave both stale — QSS is
+        cached in the stylesheet string from the last apply_theme call,
+        and the plaque's box is computed fresh every paint but from
+        self._rtl, not from isRightToLeft() — which is why this exists
+        instead of relying on Qt's automatic layout-direction inheritance
+        from the sidebar."""
+        if rtl == self._rtl:
+            return
+        self._rtl = rtl
+        self.setStyleSheet(TH.nav_button_qss(self._t, rtl=self._rtl))
+        self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -2040,7 +2069,14 @@ class NavButton(QPushButton):
         """
         selected = bool(self.property("selected"))
         y = (self.height() - self._PLAQUE) / 2.0
-        box = QRectF(self._PLAQUE_X, y, self._PLAQUE, self._PLAQUE)
+        # RTL anchors the well from the right edge — the mirror image of
+        # the LTR box, not a different inset — so the plaque sits under
+        # the label's now-right-aligned text exactly as it does on the
+        # left in LTR (see nav_button_qss's matching text-align/padding
+        # flip).
+        x = (self.width() - self._PLAQUE_X - self._PLAQUE if self._rtl
+             else self._PLAQUE_X)
+        box = QRectF(x, y, self._PLAQUE, self._PLAQUE)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         # THE SAME NEUTRAL WELL THE CARDS PAINT (see IconPlaque). This used
@@ -3685,6 +3721,7 @@ class StatusRail(QFrame):
         self._t = t
         self._is_admin = is_admin
         self._engine_ok = engine_ok
+        self._lang = "en"
 
         lay = QHBoxLayout(self)
         # TH.RAIL_INSET, not a SPACE step: SPACE measures the gap BETWEEN
@@ -3716,7 +3753,7 @@ class StatusRail(QFrame):
         self._version.setFlat(True)
         self._version.setCursor(Qt.CursorShape.PointingHandCursor)
         self._version.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._version.setToolTip("Check for updates")
+        self._version.setToolTip(I18N.tr("footer.version_tooltip", self._lang))
         self._version.clicked.connect(self.version_clicked.emit)
         lay.addWidget(self._version, 1)
 
@@ -3779,6 +3816,11 @@ class StatusRail(QFrame):
             else Qt.CursorShape.ArrowCursor)
 
     # -- theming -------------------------------------------------------
+    def _theme_toggle_label(self) -> str:
+        key = ("footer.theme_toggle_to_light" if self._t["name"] == "dark"
+               else "footer.theme_toggle_to_dark")
+        return I18N.tr(key, self._lang)
+
     def apply_theme(self, t: dict):
         self._t = t
         self.setStyleSheet(TH.status_rail_qss(t))
@@ -3793,14 +3835,24 @@ class StatusRail(QFrame):
         if font is not None:
             self._theme_btn.setFont(font)
         self._theme_btn.setText(glyph or fallback)
-        theme_label = ("Switch to light theme" if t["name"] == "dark"
-                       else "Switch to dark theme")
+        theme_label = self._theme_toggle_label()
         self._theme_btn.setToolTip(theme_label)
         # Re-announced per theme, like the maximize button: the control
         # names the theme it switches TO, so a fixed name would be wrong
         # in one of the two states.
         self._theme_btn.setAccessibleName(theme_label)
         self._sync_state()
+
+    def retranslate(self, lang: str):
+        """Re-reads the SAME two tooltips apply_theme already computes,
+        under the new language — called on a language switch, which
+        changes no colour and so does not otherwise touch this widget.
+        Elevation-status text (_sync_state) is not retranslated here; see
+        i18n.py's note on why that one is deferred."""
+        self._lang = lang
+        self._theme_btn.setToolTip(self._theme_toggle_label())
+        self._theme_btn.setAccessibleName(self._theme_toggle_label())
+        self._version.setToolTip(I18N.tr("footer.version_tooltip", lang))
 
 
 # ============================================================
@@ -4196,7 +4248,7 @@ class ConfirmDialog(PulseDialog):
     last, and Accepted has exactly one meaning again.
     """
 
-    def __init__(self, parent: QWidget, item: dict, t: dict):
+    def __init__(self, parent: QWidget, item: dict, t: dict, lang: str = "en"):
         super().__init__(parent)
         danger = bool(item.get("danger"))
         accent = t["err"] if danger else t["accent"]
@@ -4204,6 +4256,10 @@ class ConfirmDialog(PulseDialog):
 
         lay = dialog_body(panel, "sm")
 
+        # item['title']/item['desc'] stay English — they come from
+        # menu_structure.py's card catalog, out of scope with the rest of
+        # it (see i18n.py). Only the dialog's OWN fixed chrome below
+        # (the danger sentence, Cancel/Proceed) translates.
         head = QLabel(f"{item['icon']}  {item['title']}")
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         # Wrap, like every other dialog heading in the app. Without it the
@@ -4222,18 +4278,18 @@ class ConfirmDialog(PulseDialog):
         lay.addWidget(body)
 
         if danger:
-            warn = QLabel("⚠️  This action changes your system and may be hard to undo.")
+            warn = QLabel(I18N.tr("dialog.danger_warning", lang))
             warn.setWordWrap(True)
             warn.setStyleSheet(
                 f"color: {t['err']}; font-size: {TH.TYPE['caption']}px; font-weight: 500;"
                 "background: transparent; border: none;")
             lay.addWidget(warn)
 
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", lang))
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
 
-        go = QPushButton("Proceed")
+        go = QPushButton(I18N.tr("dialog.proceed", lang))
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
 
@@ -12042,25 +12098,29 @@ class SettingsView(QWidget):
     import_requested = Signal()
     update_check_requested = Signal()
 
-    #: (mode, label, hint). The hint matters most for System, which is the
-    #: only one whose answer can change while the app is open.
+    language_requested = Signal(str)
+
+    #: (mode, label key, hint key). The hint matters most for System, which
+    #: is the only one whose answer can change while the app is open. Keys,
+    #: not literal text, so a language switch can retranslate the row
+    #: without touching what `theme_modes()`/`theme_hint()` identify a mode
+    #: BY — those stay the English identifiers ("dark"/"light"/"system")
+    #: every other module-level constant in this app already uses.
     THEME_CHOICES = (
-        ("dark", "Dark",
-         "Pulse's own dark palette, whatever Windows is set to."),
-        ("light", "Light",
-         "Pulse's own light palette, whatever Windows is set to."),
-        ("system", "System",
-         "Follow Windows' own light/dark setting, and change when it does."),
+        ("dark", "settings.theme.dark", "settings.theme.dark_hint"),
+        ("light", "settings.theme.light", "settings.theme.light_hint"),
+        ("system", "settings.theme.system", "settings.theme.system_hint"),
     )
 
     GROUPS = ("General", "System Protection", "Configuration Management",
               "Updates")
 
-    def __init__(self, t: dict, is_admin: bool = False,
+    def __init__(self, t: dict, is_admin: bool = False, lang: str = "en",
                  parent: QWidget | None = None):
         super().__init__(parent)
         self._t = t
         self._is_admin = is_admin
+        self._lang = lang if lang in I18N.LANGUAGES else "en"
         self._mode = "dark"
         #: None until the probe answers — which is NOT the same as "no
         #: checkpoints", and the summary line says so.
@@ -12077,11 +12137,9 @@ class SettingsView(QWidget):
 
         head = QVBoxLayout()
         head.setSpacing(TH.SPACE["xxs"])
-        self._title = QLabel("Settings")
+        self._title = QLabel()
         head.addWidget(self._title)
-        self._tagline = QLabel(
-            "How Pulse looks, how this PC is protected, and how its setup "
-            "travels to the next machine.")
+        self._tagline = QLabel()
         self._tagline.setWordWrap(True)
         head.addWidget(self._tagline)
         lay.addLayout(head)
@@ -12098,7 +12156,11 @@ class SettingsView(QWidget):
         lay.addWidget(self._scroll, 1)
 
         self._cards: list[QFrame] = []
+        #: Parallel to _group_titles: the i18n key each title was built
+        #: from, so _retranslate can revisit them by index without a
+        #: second lookup table.
         self._group_titles: list[QLabel] = []
+        self._group_title_keys: list[str] = []
         self._captions: list[QLabel] = []
         self._build_general()
         self._build_protection()
@@ -12109,65 +12171,87 @@ class SettingsView(QWidget):
         self.apply_theme(t)
         self._sync_theme_buttons()
         self._sync_restore_summary()
+        self._retranslate()
+        self.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft if I18N.is_rtl(self._lang)
+            else Qt.LayoutDirection.LeftToRight)
 
     # -- group scaffolding ---------------------------------------------
-    def _group(self, title: str) -> QVBoxLayout:
+    def _group(self, title_key: str) -> QVBoxLayout:
         """One titled card. Uses the report sub-card surface rather than a
         new one: this page and the Health Report are both "grouped panels
         of read-and-act rows", and a second look for the same object is
-        how a UI starts disagreeing with itself."""
+        how a UI starts disagreeing with itself.
+
+        Takes an i18n KEY rather than literal text — the label starts
+        empty and _retranslate fills it in, which is what lets a language
+        switch revisit every group title by walking _group_titles /
+        _group_title_keys together instead of rebuilding the page."""
         card = QFrame()
         inner = QVBoxLayout(card)
         inner.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
                                  TH.SPACE["lg"], TH.SPACE["md"])
         inner.setSpacing(TH.SPACE["sm"])
-        label = QLabel(title)
+        label = QLabel()
         inner.addWidget(label)
         self._group_titles.append(label)
+        self._group_title_keys.append(title_key)
         self._cards.append(card)
         self._host_lay.addWidget(card)
         return inner
 
-    def _caption(self, text: str) -> QLabel:
-        label = QLabel(text)
+    def _caption(self) -> QLabel:
+        label = QLabel()
         label.setWordWrap(True)
         self._captions.append(label)
         return label
 
     # -- General --------------------------------------------------------
     def _build_general(self):
-        inner = self._group("General")
+        inner = self._group("settings.group.general")
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["sm"])
         self._theme_buttons: dict[str, QPushButton] = {}
-        for mode, label, hint in self.THEME_CHOICES:
-            btn = QPushButton(label)
+        for mode, _label_key, _hint_key in self.THEME_CHOICES:
+            btn = QPushButton()
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFixedHeight(TH.CONTROL_H)
-            btn.setToolTip(hint)
             btn.clicked.connect(
                 lambda _checked=False, m=mode: self.choose_theme_mode(m))
             self._theme_buttons[mode] = btn
             row.addWidget(btn)
         row.addStretch()
         inner.addLayout(row)
-        self._theme_hint = self._caption("")
+        self._theme_hint = self._caption()
         inner.addWidget(self._theme_hint)
+
+        self._language_label = self._caption()
+        inner.addWidget(self._language_label)
+        lang_row = QHBoxLayout()
+        lang_row.setSpacing(TH.SPACE["sm"])
+        self._language_buttons: dict[str, QPushButton] = {}
+        for lang in I18N.LANGUAGES:
+            btn = QPushButton()
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(TH.CONTROL_H)
+            btn.clicked.connect(
+                lambda _checked=False, lg=lang: self.choose_language(lg))
+            self._language_buttons[lang] = btn
+            lang_row.addWidget(btn)
+        lang_row.addStretch()
+        inner.addLayout(lang_row)
 
     # -- System Protection ----------------------------------------------
     def _build_protection(self):
-        inner = self._group("System Protection")
-        self._restore_summary_label = self._caption("")
+        inner = self._group("settings.group.protection")
+        self._restore_summary_label = self._caption()
         inner.addWidget(self._restore_summary_label)
 
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["sm"])
-        self._restore_btn = QPushButton("Create Restore Point")
+        self._restore_btn = QPushButton()
         self._restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._restore_btn.setFixedHeight(TH.CONTROL_H)
-        self._restore_btn.setToolTip(
-            "Takes a System Restore checkpoint now, so today's changes can "
-            "be rolled back as a set.")
         self._restore_btn.clicked.connect(self.restore_point_requested.emit)
         row.addWidget(self._restore_btn)
         row.addStretch()
@@ -12175,40 +12259,27 @@ class SettingsView(QWidget):
 
         # SAID BEFORE THE CLICK, not after the failure: an unelevated
         # session can still press this, and Pulse will offer to relaunch —
-        # but the user should know that is coming.
-        self._restore_note = self._caption(
-            "Pulse takes one automatically before the first system change "
-            "of a session."
-            if self._is_admin else
-            "Taking a checkpoint needs Administrator — Pulse will ask to "
-            "relaunch when you click.")
+        # but the user should know that is coming. Text set in
+        # _retranslate (self._is_admin picks one of two fixed variants).
+        self._restore_note = self._caption()
         inner.addWidget(self._restore_note)
 
     # -- Configuration Management ---------------------------------------
     def _build_configuration(self):
-        inner = self._group("Configuration Management")
-        inner.addWidget(self._caption(
-            "Write this PC's applied tweaks and catalogued apps to a "
-            "profile, then apply it on another machine. A profile is an "
-            "ordinary Pulse playbook, so it can only run operations this "
-            "app already offers."))
+        inner = self._group("settings.group.configuration")
+        self._configuration_caption = self._caption()
+        inner.addWidget(self._configuration_caption)
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["sm"])
-        self._export_btn = QPushButton("Export Setup…")
+        self._export_btn = QPushButton()
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._export_btn.setFixedHeight(TH.CONTROL_H)
-        self._export_btn.setToolTip(
-            "Reads which catalogued apps are installed, then writes a "
-            ".pulse.json profile.")
         self._export_btn.clicked.connect(self.export_requested.emit)
         row.addWidget(self._export_btn)
         # "Import" alone reads like loading a file. This one APPLIES.
-        self._import_btn = QPushButton("Import & Apply…")
+        self._import_btn = QPushButton()
         self._import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._import_btn.setFixedHeight(TH.CONTROL_H)
-        self._import_btn.setToolTip(
-            "Runs a profile on this PC: applies its tweaks and installs "
-            "its apps, one step at a time, starting with a restore point.")
         self._import_btn.clicked.connect(self.import_requested.emit)
         row.addWidget(self._import_btn)
         row.addStretch()
@@ -12221,17 +12292,19 @@ class SettingsView(QWidget):
         it. main.py calls set_update_state at the exact three points it
         already calls update_badge.set_state, and reuses UpdateBadge.TEXTS
         so the two surfaces cannot drift into different wording for the
-        same state."""
-        inner = self._group("Updates")
-        self._update_caption = self._caption(UpdateBadge.TEXTS["idle"])
+        same state. UpdateBadge.TEXTS is not itself bilingual yet (see
+        i18n.py's own note on this) — set_update_state's text is left out
+        of _retranslate for that reason."""
+        inner = self._group("settings.group.updates")
+        self._update_caption = self._caption()
+        self._update_caption.setText(UpdateBadge.TEXTS["idle"])
         inner.addWidget(self._update_caption)
 
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["sm"])
-        self._update_btn = QPushButton("Check for Updates")
+        self._update_btn = QPushButton()
         self._update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_btn.setFixedHeight(TH.CONTROL_H)
-        self._update_btn.setToolTip("Checks GitHub for a newer Pulse release.")
         self._update_btn.clicked.connect(self.update_check_requested.emit)
         row.addWidget(self._update_btn)
         row.addStretch()
@@ -12243,15 +12316,15 @@ class SettingsView(QWidget):
 
     # -- theme choice ----------------------------------------------------
     def theme_modes(self) -> tuple:
-        return tuple(mode for mode, _label, _hint in self.THEME_CHOICES)
+        return tuple(mode for mode, _label_key, _hint_key in self.THEME_CHOICES)
 
     def current_mode(self) -> str:
         return self._mode
 
     def theme_hint(self, mode: str) -> str:
-        for candidate, _label, hint in self.THEME_CHOICES:
+        for candidate, _label_key, hint_key in self.THEME_CHOICES:
             if candidate == mode:
-                return hint
+                return I18N.tr(hint_key, self._lang)
         return ""
 
     def choose_theme_mode(self, mode: str):
@@ -12270,6 +12343,74 @@ class SettingsView(QWidget):
             btn.setStyleSheet(
                 TH.catalog_tab_qss(self._t, accent, mode == self._mode))
         self._theme_hint.setText(self.theme_hint(self._mode))
+
+    # -- language choice ---------------------------------------------------
+    def current_language(self) -> str:
+        return self._lang
+
+    def choose_language(self, lang: str):
+        """The user picked one. ASKS ONLY — same shape as
+        choose_theme_mode: main.py persists the choice and this view is
+        told the answer through set_language."""
+        self.language_requested.emit(lang)
+
+    def set_language(self, lang: str):
+        self._lang = lang if lang in I18N.LANGUAGES else "en"
+        self.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft if I18N.is_rtl(self._lang)
+            else Qt.LayoutDirection.LeftToRight)
+        self._retranslate()
+        self._sync_language_buttons()
+
+    def _sync_language_buttons(self):
+        accent = self._t["accent"]
+        for lang, btn in self._language_buttons.items():
+            btn.setStyleSheet(
+                TH.catalog_tab_qss(self._t, accent, lang == self._lang))
+
+    def _retranslate(self):
+        """The one place every translatable label/button on this page gets
+        its text — called from __init__ and from set_language, so
+        construction and a live language switch cannot drift into
+        rendering two different sets of strings."""
+        tr = I18N.tr
+        lang = self._lang
+
+        self._title.setText(tr("settings.title", lang))
+        self._tagline.setText(tr("settings.tagline", lang))
+
+        for label, key in zip(self._group_titles, self._group_title_keys):
+            label.setText(tr(key, lang))
+
+        for mode, label_key, hint_key in self.THEME_CHOICES:
+            self._theme_buttons[mode].setText(tr(label_key, lang))
+            self._theme_buttons[mode].setToolTip(tr(hint_key, lang))
+        self._theme_hint.setText(self.theme_hint(self._mode))
+
+        self._language_label.setText(tr("settings.language", lang))
+        for candidate, btn in self._language_buttons.items():
+            btn.setText(tr(f"settings.language.{candidate}", lang))
+
+        self._restore_btn.setText(tr("settings.restore.button", lang))
+        self._restore_btn.setToolTip(tr("settings.restore.button_tooltip", lang))
+        self._restore_note.setText(
+            tr("settings.restore.note_admin", lang) if self._is_admin
+            else tr("settings.restore.note_needs_admin", lang))
+        # restore_summary_label is data-driven (Windows' own checkpoint
+        # dates/descriptions/counts) and stays English in this pass — see
+        # _sync_restore_summary.
+
+        self._configuration_caption.setText(
+            tr("settings.configuration.caption", lang))
+        self._export_btn.setText(tr("settings.export.button", lang))
+        self._export_btn.setToolTip(tr("settings.export.button_tooltip", lang))
+        self._import_btn.setText(tr("settings.import.button", lang))
+        self._import_btn.setToolTip(tr("settings.import.button_tooltip", lang))
+
+        self._update_btn.setText(tr("settings.updates.button", lang))
+        self._update_btn.setToolTip(tr("settings.updates.button_tooltip", lang))
+        # _update_caption's own text is UpdateBadge.TEXTS-driven, not
+        # retranslated here — see _build_updates.
 
     # -- restore points --------------------------------------------------
     def set_restore_points(self, report: dict | None):
@@ -12344,6 +12485,7 @@ class SettingsView(QWidget):
                        self._update_btn):
             button.setStyleSheet(TH.action_button_qss(t, accent))
         self._sync_theme_buttons()
+        self._sync_language_buttons()
 
 
 # ============================================================

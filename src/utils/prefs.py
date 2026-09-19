@@ -99,6 +99,24 @@ def set_theme_mode(mode: str):
 
 
 # ============================================================
+#  LANGUAGE
+# ============================================================
+#: What may be stored under "ui/language". A manual choice, not "follow
+#: Windows" — see frontend.i18n, which reads no OS API at all — so unlike
+#: THEME_MODES there is no third "system" value to resolve.
+LANGUAGES = ("en", "ar")
+
+
+def language(default: str = "en") -> str:
+    value = str(_settings().value("ui/language", default))
+    return value if value in LANGUAGES else default
+
+
+def set_language(lang: str):
+    _settings().setValue("ui/language", lang)
+
+
+# ============================================================
 #  WINDOW GEOMETRY
 # ============================================================
 def window_geometry() -> QByteArray | None:

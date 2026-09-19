@@ -60,6 +60,7 @@ from utils.helpers import (  # noqa: E402
     ToastManager, has_battery,
 )
 from frontend import theme as TH  # noqa: E402
+from frontend import i18n  # noqa: E402
 from frontend.animations import (  # noqa: E402
     CASCADE_BUDGET_MS, CASCADE_MS, EASE_INOUT, PAGE_FADE_MS, CascadeAnimator,
     PageFader,
@@ -1786,6 +1787,14 @@ class PulseApp(QMainWindow):
         # test observe it).
         self.theme.mode_changed.connect(lambda mode: prefs.set_theme_mode(mode))
 
+        #: Display language (v10.15) — a manual EN/AR choice, not "follow
+        #: Windows" (see frontend.i18n's own note on that distinction), so
+        #: unlike theme there is no ThemeManager-shaped object to own it:
+        #: it is a plain attribute, set through _on_language_chosen and
+        #: persisted there directly rather than via a signal, since there
+        #: is only ever one writer.
+        self._language = prefs.language("en")
+
         #: ONE read-only reader at a time — restore points, catalog
         #: inventory. Separate from the applied-state probe because it
         #: answers a different question on a different cadence, and joined
@@ -2086,12 +2095,14 @@ class PulseApp(QMainWindow):
 
         # The settings surface is the last page in the stack rather than a
         # module, so open_category's `index + 1` arithmetic is untouched.
-        self.settings_view = SettingsView(t, is_admin=self.is_admin)
+        self.settings_view = SettingsView(t, is_admin=self.is_admin,
+                                          lang=self._language)
         self.settings_view.theme_mode_requested.connect(self._on_theme_mode_chosen)
         self.settings_view.restore_point_requested.connect(self._create_restore_point)
         self.settings_view.export_requested.connect(self._export_setup)
         self.settings_view.import_requested.connect(self._import_setup)
         self.settings_view.update_check_requested.connect(self._on_footer_clicked)
+        self.settings_view.language_requested.connect(self._on_language_chosen)
         self.settings_view.set_theme_mode(self.theme.mode)
         self.stack.addWidget(self.settings_view)
         content.addWidget(self.stack, 1)
@@ -2219,6 +2230,55 @@ class PulseApp(QMainWindow):
         if mode != self.theme.mode:
             self._crossfade(lambda: self.theme.set_mode(mode))
         self.settings_view.set_theme_mode(self.theme.mode)
+
+    def _on_language_chosen(self, lang: str):
+        """The settings page's language picker.
+
+        No cross-fade: unlike a theme switch this repaints no colours, so
+        the transition machinery _toggle_theme_animated/_on_theme_mode_
+        chosen exists for does not apply here — labels and layout
+        direction just update in place. The view is told the result
+        rather than assuming it, mirroring _on_theme_mode_chosen.
+        """
+        self._language = lang
+        prefs.set_language(lang)
+        self._apply_language(lang)
+        self.settings_view.set_language(lang)
+
+    def _apply_language(self, lang: str):
+        """Retranslates the sidebar's OWN chrome — the search doorway, the
+        section label, the Settings entry and the footer's tooltips — and
+        flips the sidebar's layout direction.
+
+        The four module buttons' TEXT stays English on purpose: each one
+        is also its own page's header, and that page's tagline, filter and
+        every card are still English (see i18n.py's own note on this
+        boundary) — translating only the sidebar button would read as
+        broken, not as a foundation. Their LAYOUT still mirrors with
+        everything else, because direction and translation are different
+        questions: a half-mirrored rail would look more broken than a
+        fully-mirrored one still carrying some English labels.
+        """
+        rtl = i18n.is_rtl(lang)
+        direction = (Qt.LayoutDirection.RightToLeft if rtl
+                     else Qt.LayoutDirection.LeftToRight)
+        self._sidebar.setLayoutDirection(direction)
+
+        search_text = i18n.tr("sidebar.search", lang)
+        self._search_btn.setText(
+            search_text if self._search_fluent
+            else f"{self._search_glyph}  {search_text}")
+        self._search_btn.setToolTip(i18n.tr("sidebar.search_tooltip", lang))
+        self._section.setText(i18n.tr("sidebar.section", lang))
+        self._settings_btn.setText(i18n.tr("sidebar.settings", lang))
+
+        for btn in (*self._nav_buttons, self._settings_btn):
+            btn.set_rtl(rtl)
+
+        # UpdateBadge carries no retranslate of its own: its state words
+        # and every tooltip it shows are decided in _check_for_updates /
+        # _on_update_checked, deferred alongside them (see i18n.py).
+        self.status_rail.retranslate(lang)
 
     def _crossfade(self, apply_change):
         """Run `apply_change` under a 160ms cross-fade: a snapshot of the
@@ -3369,7 +3429,7 @@ class PulseApp(QMainWindow):
             # -WhatIf for it and the engine honours it — so the simulation
             # path is still one caller away rather than removed.
             if self._exec_dialog(
-                    ConfirmDialog(self, item, self.theme.t)
+                    ConfirmDialog(self, item, self.theme.t, lang=self._language)
             ) != QDialog.DialogCode.Accepted:
                 return
 
