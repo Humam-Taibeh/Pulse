@@ -86,6 +86,11 @@ _PROGRAMMATIC = {
     # scan behind it is run by widgets.LeftoversDialog's own PowerShellTask
     # so the user sees every item before agreeing to remove any of them.
     "LeftoversScan",
+    # v10.14 Settings surface. Export Setup asks the engine which
+    # catalogued apps are installed before it writes a profile; it is a
+    # read-only task reached from that page rather than from a card, like
+    # GetTweakState and the scans above it.
+    "CatalogInventory",
 }
 
 
@@ -465,7 +470,7 @@ class TestAppIcons:
                 wrong.append(f"{app_id}: full-colour artwork not flagged colour")
         assert not wrong, "mark classification is wrong:\n  " + "\n  ".join(wrong)
 
-    def test_no_mark_needs_a_white_tile_on_the_dark_theme(self):
+    def test_no_mark_needs_a_white_tile_on_the_dark_theme(self, qapp):
         """THE WHITE SQUARES, pinned as the measurement that made them a
         defect rather than a matter of taste.
 

@@ -1060,7 +1060,7 @@ CATEGORIES = [
                  "glyph": "restore", "task": "ResetTweaks", "timeout": 300, "confirm": True},
                 {"icon": "🔧", "title": "Restore Services",
                  "desc": "Re-enable Windows services disabled by the optimizer.",
-                 "glyph": "services", "task": "RestoreServices", "timeout": 300},
+                 "glyph": "gear", "task": "RestoreServices", "timeout": 300},
             ]},
         ],
     },

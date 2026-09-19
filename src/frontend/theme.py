@@ -908,7 +908,12 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # the hibernation toggle beside it
     'chart':         ("\uEB05", "\U0001f4c8"),    # Drive Space Report (pie)
     'analyze':       ("\uE9F9", "\U0001f4c9"),    # Storage Analyzer (bar breakdown)
-    'services':      ("\uE713", "\U0001f6e0\ufe0f"),  # Restore Services (gears)
+    'gear':          ("\uE713", "\U0001f6e0\ufe0f"),  # Microsoft's own single-gear
+                                                  # "Settings" glyph \u2014 shared by the
+                                                  # Restore Services card and the
+                                                  # Settings nav entry, which is why
+                                                  # the key names the shape, not
+                                                  # either caller.
     'layers':        ("\uE81E", "\U0001f5c2\ufe0f"),  # Remove Windows.old — the previous
                                                   # install stacked under this one
     # --- privacy / info / safety ---
@@ -1586,29 +1591,126 @@ def tokens(mode: str) -> dict:
 # ============================================================
 #  THEME MANAGER — live switching, no restart
 # ============================================================
+def system_scheme() -> str:
+    """Windows' own light/dark PREFERENCE, as one of this module's modes.
+
+    THE ONE PLACE THE FRONTEND ASKS THE OS ANYTHING ABOUT APPEARANCE, and
+    what it asks for is a PREFERENCE, never a colour. Every token still
+    comes from _DARK / _LIGHT below, so the app owns its palette exactly as
+    it did before "system" existed — see tests/test_system_theme_events.py,
+    which pins that distinction rather than the mere absence of the call.
+
+    Imported locally so that single call site is greppable and cannot
+    spread: a module-level import invites the next reader to reach for
+    QGuiApplication somewhere else in the file.
+
+    Falls back to "dark" — the app's own default — when there is no
+    QGuiApplication yet (a bare ThemeManager in a test) or when Qt reports
+    Unknown, which is what a platform with no preference returns.
+    """
+    from PySide6.QtGui import QGuiApplication
+
+    app = QGuiApplication.instance()
+    if app is None:
+        return "dark"
+    try:
+        scheme = app.styleHints().colorScheme()
+    except (AttributeError, RuntimeError):
+        return "dark"      # Qt older than 6.5, or a hints object torn down
+    return "light" if scheme == Qt.ColorScheme.Light else "dark"
+
+
 class ThemeManager(QObject):
     """Single app-wide instance. Widgets connect to `changed` and re-apply
-    their QSS from the new token dict; painted widgets just repaint."""
+    their QSS from the new token dict; painted widgets just repaint.
+
+    THREE MODES OVER TWO PALETTES (v10.14). "dark" and "light" are explicit
+    choices and are absolute — a user who picked light is never moved by
+    anything the OS does. "system" is equally a choice, but a standing one:
+    it resolves through system_scheme() on every read and re-emits
+    `changed` when Windows' own preference changes, so the app follows
+    without a restart.
+
+    TWO SIGNALS, BECAUSE THERE ARE TWO FACTS. `changed` carries the token
+    dict and fires only when the RESOLVED palette actually differs, so no
+    widget re-skins for a switch it cannot see (dark -> system on a dark
+    machine repaints nothing). `mode_changed` carries the CHOICE, and is
+    what preferences persist — storing the resolved answer instead would
+    turn "follow Windows" into "light" the first time a light Windows
+    resolved it.
+    """
 
     changed = Signal(dict)
+    mode_changed = Signal(str)
+
+    #: Every value `mode` may take. Mirrored by utils.prefs.THEME_MODES,
+    #: which is what stores it between launches.
+    MODES = ("dark", "light", "system")
 
     def __init__(self, mode: str = "dark", parent: QObject | None = None):
         super().__init__(parent)
-        self._mode = mode if mode in _MODES else "dark"
+        self._mode = mode if mode in self.MODES else "dark"
+        self._watch_system()
 
     # -- state ------------------------------------------------
     @property
+    def mode(self) -> str:
+        """The user's CHOICE — "system" stays "system" after it resolves."""
+        return self._mode
+
+    @property
+    def resolved(self) -> str:
+        """Which of the two palettes `mode` currently means."""
+        return system_scheme() if self._mode == "system" else self._mode
+
+    @property
     def t(self) -> dict:
-        return _MODES[self._mode]
+        return _MODES[self.resolved]
 
     def set_mode(self, mode: str):
-        if mode in _MODES and mode != self._mode:
-            self._mode = mode
+        if mode not in self.MODES or mode == self._mode:
+            return
+        before = self.t
+        self._mode = mode
+        self.mode_changed.emit(self._mode)
+        # Identity, not equality: _MODES holds exactly two dicts, so this
+        # asks "did the palette change" rather than comparing 80 tokens.
+        if self.t is not before:
             self.changed.emit(self.t)
 
     def toggle(self) -> dict:
-        self.set_mode("light" if self._mode == "dark" else "dark")
+        """Flip to the opposite of what is on screen NOW.
+
+        From "system" that pins an explicit choice, which is the honest
+        reading of a manual toggle: the user is overriding the OS, and a
+        toggle that left the mode on "system" would be undone the next
+        time Windows changed its mind.
+        """
+        self.set_mode("light" if self.resolved == "dark" else "dark")
         return self.t
+
+    # -- following the OS -------------------------------------
+    def _watch_system(self):
+        """Subscribe once, for the lifetime of the manager.
+
+        Connected unconditionally rather than on entering "system" mode:
+        the subscription costs nothing while the handler is a no-op, and
+        connecting/disconnecting per mode change is the kind of bookkeeping
+        that leaves a stale connection behind exactly once.
+        """
+        from PySide6.QtGui import QGuiApplication
+
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+        try:
+            app.styleHints().colorSchemeChanged.connect(self._on_system_scheme)
+        except (AttributeError, RuntimeError):
+            pass    # Qt older than 6.5 — "system" then resolves to dark
+
+    def _on_system_scheme(self, _scheme=None):
+        if self._mode == "system":
+            self.changed.emit(self.t)
 
 
 # ============================================================

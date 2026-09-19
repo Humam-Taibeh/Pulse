@@ -214,6 +214,122 @@ def load_playbooks() -> tuple[list[Playbook], list[str]]:
 
 
 # ============================================================
+#  SETUP PROFILES — one machine, written as a playbook  (v10.14)
+# ============================================================
+#  A PROFILE IS A PLAYBOOK. The Settings page's "Export Setup" writes this
+#  machine's configuration to a file and "Import & Apply" runs it on
+#  another one — which is a recipe over the task catalog, which is exactly
+#  what a playbook already is. So there is no second schema, no second
+#  validator and no second runner: the file it writes is a playbook
+#  document, parse_playbook checks it, and PlaybookRunner applies it with
+#  the admin gating, dry-run and step reporting that already exist.
+#
+#  THE SUFFIX IS A CONVENTION, NOT A FORMAT. ".pulse.json" says "a playbook
+#  Pulse wrote about a machine"; dropping one into a `playbooks` folder
+#  loads it like any other. That also means an exported profile can never
+#  reach anything the GUI could not already do — the validator refuses any
+#  task not in the live catalog.
+SETUP_SUFFIX = ".pulse.json"
+
+#: Opens every exported profile, for the reason the shipped playbooks give
+#: it: everything after it is undoable.
+SETUP_FIRST_STEP = "CreateRestorePoint"
+
+
+def build_setup_profile(tweak_state: dict, app_ids, machine: str = "") -> dict:
+    """This machine's configuration as a playbook document.
+
+    `tweak_state` is the backend's applied-state map (GetTweakState — keys
+    are task names, values "applied" / "mixed" / "default" / None) and
+    `app_ids` the catalogued apps found installed (CatalogInventory).
+
+    ONLY "applied" TRAVELS. A tweak reported "mixed" is half-formed on THIS
+    machine — some values match, some do not — and re-applying that state
+    elsewhere would be exporting a mess as though it were a decision.
+    "default" is the absence of a choice, and a profile that carried it
+    would have to un-apply things on the target, which is not what "set my
+    new machine up like this one" means.
+
+    EVERY STEP IS OPTIONAL EXCEPT THE CHECKPOINT. A profile runs unattended
+    on a machine the author is not looking at, where one unavailable app or
+    one Windows build without a given tweak must not halt the rest.
+    """
+    catalog = _catalog()
+    steps: list[dict] = []
+
+    if SETUP_FIRST_STEP in catalog:
+        steps.append({
+            "task": SETUP_FIRST_STEP,
+            "note": "Always first — everything after this is undoable.",
+        })
+
+    # dict.fromkeys: de-duplicated, order preserved, so the file reads in
+    # catalog order rather than in whatever order the scan answered.
+    ids = [str(app_id).strip() for app_id in dict.fromkeys(app_ids or ())
+           if str(app_id).strip()]
+    if ids and "InstallCatalogApps" in catalog:
+        steps.append({
+            "task": "InstallCatalogApps",
+            "note": f"The {len(ids)} catalogued app(s) this PC had installed.",
+            "app_ids": ids,
+            "optional": True,
+        })
+
+    for task in sorted(tweak_state or {}):
+        if str(tweak_state.get(task)) != "applied":
+            continue
+        item = catalog.get(task)
+        if item is None:
+            continue        # a probe key with no card — nothing to run
+        steps.append({
+            "task": task,
+            "note": item.get("title", task),
+            "optional": True,
+        })
+
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    label = f" — {machine}" if machine else ""
+    return {
+        "id": f"pulse-setup-{time.strftime('%Y%m%d-%H%M%S')}",
+        "name": f"Pulse Setup{label}",
+        "icon": "🧩",
+        "description": (
+            f"Exported from {machine or 'a Pulse machine'} on {stamp}: "
+            f"{len(ids)} catalogued app(s) and "
+            f"{sum(1 for s in steps if s['task'] not in (SETUP_FIRST_STEP, 'InstallCatalogApps'))} "
+            "applied tweak(s)."),
+        "steps": steps,
+    }
+
+
+def write_setup_profile(path: str, document: dict) -> Playbook:
+    """Validate `document`, then write it. Returns the parsed playbook.
+
+    VALIDATED BEFORE IT IS WRITTEN, not after it is read back. A file this
+    app's own loader would reject is a file the user finds out about on the
+    machine they were setting up, which is the worst possible moment — so
+    an export that cannot produce a runnable profile fails here instead,
+    with the same message the importer would have given.
+    """
+    playbook = parse_playbook(document, source=path)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return playbook
+
+
+def read_setup_profile(path: str) -> Playbook:
+    """Load one exported profile. Raises PlaybookError with a readable
+    message — the importer shows it verbatim."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise PlaybookError(f"{os.path.basename(path)}: {exc}") from exc
+    return parse_playbook(raw, source=path)
+
+
+# ============================================================
 #  SEQUENTIAL RUNNER
 # ============================================================
 @dataclass

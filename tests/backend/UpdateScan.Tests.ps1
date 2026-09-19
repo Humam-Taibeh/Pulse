@@ -282,6 +282,81 @@ Describe "Startup safety tier (Get-StartupRecommendation)" {
     }
 }
 
+# ============================================================
+#  WHICH CATALOGUED APPS ARE ALREADY HERE  (v10.14)
+#
+#  Export Setup writes a profile naming the apps a new machine should be
+#  given, so it needs IDENTITY ("is Git here?") rather than versions -
+#  which is why Get-PulseCatalogInventory reads the ~0.9s `winget list`
+#  index instead of the ~14s upgrade scan. Every case below mocks that
+#  index; nothing here calls winget.
+# ============================================================
+Describe "Get-PulseCatalogInventory" {
+
+    BeforeAll {
+        $script:WingetWas = $global:WingetAvailable
+        $script:FirstId   = [string]($Apps_CatalogAll[0][0])
+        $script:FirstName = [string]($Apps_CatalogAll[0][1])
+    }
+
+    AfterAll { $global:WingetAvailable = $script:WingetWas }
+
+    BeforeEach { $global:WingetAvailable = $true }
+
+    It "reports a catalogued app that winget lists, with its version" {
+        Mock Get-WingetPackageIndex {
+            $index = @{}
+            $index[$script:FirstId] = [PSCustomObject]@{
+                Id = $script:FirstId; Name = $script:FirstName; CurrentVersion = '1.2.3' }
+            return $index
+        }
+        $report = Get-PulseCatalogInventory
+        $hit = @($report.installed | Where-Object { $_.id -eq $script:FirstId })
+        @($hit).Count     | Should -Be 1
+        $hit[0].version   | Should -Be '1.2.3'
+        $report.missing   | Should -Not -Contain $script:FirstId
+    }
+
+    It "matches ids case-insensitively - winget's casing is not the catalog's" {
+        Mock Get-WingetPackageIndex {
+            $index = @{}
+            $index[$script:FirstId.ToUpperInvariant()] = [PSCustomObject]@{ CurrentVersion = '9' }
+            return $index
+        }
+        @(Get-PulseCatalogInventory).installed.id | Should -Contain $script:FirstId
+    }
+
+    It "accounts for every catalogued app, installed or not" {
+        Mock Get-WingetPackageIndex { return @{} }
+        $report = Get-PulseCatalogInventory
+        $report.catalogCount       | Should -Be @($Apps_CatalogAll).Count
+        $report.count              | Should -Be 0
+        @($report.missing).Count   | Should -Be @($Apps_CatalogAll).Count
+    }
+
+    It "never reports an app the catalog does not carry" {
+        # The export deploys what it names through InstallCatalogApps, so a
+        # profile naming a package outside the catalog would be a step the
+        # GUI could not reach by any other route.
+        Mock Get-WingetPackageIndex {
+            $index = @{}
+            $index['Some.ThingNotInTheCatalog'] = [PSCustomObject]@{ CurrentVersion = '1' }
+            return $index
+        }
+        @(Get-PulseCatalogInventory).installed.id | Should -Not -Contain 'Some.ThingNotInTheCatalog'
+    }
+
+    It "says winget was unavailable rather than reporting an empty machine" {
+        # "Nothing is installed" and "I could not look" produce very
+        # different profiles, and only one of them should install nothing.
+        Mock Get-WingetPackageIndex { return @{} }
+        $global:WingetAvailable = $false
+        $report = Get-PulseCatalogInventory
+        $report.wingetAvailable | Should -BeFalse
+        $report.count           | Should -Be 0
+    }
+}
+
 Describe "GUI streaming channels (00-Foundation.ps1)" {
 
     It "emits ITEM and STAGE on their own sentinels" {

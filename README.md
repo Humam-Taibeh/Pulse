@@ -16,7 +16,7 @@
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![Release](https://img.shields.io/github/v/release/Humam-Taibeh/Pulse?label=release&color=blueviolet&logo=github)](https://github.com/Humam-Taibeh/Pulse/releases/latest)
-[![Tests](https://img.shields.io/badge/tests-1%2C503%20pytest%20%2B%20352%20Pester-success)](#-testing--continuous-integration)
+[![Tests](https://img.shields.io/badge/tests-1%2C566%20pytest%20%2B%20357%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml)
 [![Release build](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml/badge.svg)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
@@ -100,6 +100,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 
 ### 🛡️ Privacy
 - Bloatware removal, telemetry shutdown, Advertising ID and Activity History disablement — three granular, individually probeable actions. The old composite "Apply ALL Privacy Settings" card is gone: bundling is the job of the **Playbooks** below, which compose named steps a user can see, reorder and drop
+- The purge's 48-row catalog carries **quick-select pills** — *Select All Installed* and *Select All Stubs*, which are different decisions (an app registered on this PC versus a Start-menu tile Windows has not downloaded yet) — plus a **debounced filter** by name or package ID. Neither pill can touch the optional Xbox tier, and both are scoped to what the filter is actually showing
 
 ### 📊 Reporting & Automation
 - **Health & Drift Report** — read-only snapshot of applied-tweak drift, drives, restore-point status, startup load and system facts, exportable as a **self-contained HTML deliverable** (inline styles, no scripts, opens offline years later) or as diffable JSON
@@ -111,9 +112,10 @@ The execution engine is built for **observability and control**, not fire-and-fo
 
 ### 🎛️ Experience
 - **A static obsidian canvas** — one two-stop gradient (`#101216` → `#090A0B`), and nothing else. v10.5 froze the ambient field; v10.6 deleted it, along with its OpenGL renderer, its capability probe, its frame governor and the occlusion system that existed to make a moving background affordable. An idle window now paints nothing at all
-- **Dual themes** (Premium Dark / Clean Light) with semantic per-module accent tokens that resolve differently per theme, so light mode clears its contrast floors
+- **Three theme modes** — Premium Dark, Clean Light, and **System Sync**, which follows Windows' own light/dark setting and changes with it while the app is open. What is read from Windows is the *preference*, never a colour: every token still comes from Pulse's own two palettes, whose semantic per-module accents resolve differently per theme so light mode clears its contrast floors
 - **`Ctrl+K` command palette** over the whole catalog, plus a full keyboard layer (grid navigation, module jumps, filter, shortcut sheet)
-- **Durable preferences** — theme, window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
+- **A Settings surface** — grouped the way Windows 11 groups its own: appearance, system protection (the newest restore point, and a button to take one), and configuration management. *Export Setup* writes this PC's applied tweaks and catalogued apps to a `.pulse.json` profile and *Import & Apply* runs one on another machine — a profile **is** a playbook, so it is validated against the live catalog and can never name an operation the GUI could not already run
+- **Durable preferences** — the theme CHOICE (including "follow Windows"), window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
 - **Self-updater** ([utils/updater.py](src/utils/updater.py)) with SHA-256 verification and a silent-on-failure network policy, wired into the GUI via a background check on launch plus the sidebar footer's version label ("Check for updates" on click). Live from v10.4 onward: `tools/build_release.ps1` emits `SHA256SUMS` beside the installer, which is what the updater verifies a download against — see [Safety Model](#-safety-model).
 
 ---
@@ -128,13 +130,13 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | GPU layer | **OpenGL 3.3 Core** via `QOpenGLWidget` | Full-screen-triangle shader; capability-probed at startup |
 | Win32 integration | **`ctypes`** (no extra dependencies) | `WM_NCCALCSIZE` hit-testing, DWM attributes, Job Objects, registry/kernel32 system facts |
 | Concurrency | **`QThread` + Signals** | Qt widgets are touched from the GUI thread only |
-| Engine | **PowerShell 5.1+** | 19 numbered modules dot-sourced into one shared script scope |
+| Engine | **PowerShell 5.1+** | 20 numbered modules dot-sourced into one shared script scope |
 | Package manager | **`winget`** (lazy-bootstrapped) | Chocolatey fallback inside the software engine |
 | Persistence | **`QSettings`** → `HKCU\Software\HumamTaibeh\Pulse` | No file format to corrupt; every getter degrades to a default |
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` on — the manifest requests `requireAdministrator`, so every launch elevates (v10.7). See [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (1,503) + **Pester 5+** (352) | 80 tests marked `native` need a real window station |
+| Tests | **pytest 8** (1,566) + **Pester 5+** (357) | 80 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -251,9 +253,9 @@ Pulse/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
 │   └── fetch_app_icons.py           # Build-time vendor icon fetcher
 │
-├── tests/                           # 1,503 collected pytest tests
+├── tests/                           # 1,566 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
-│   ├── backend/                     # 352 Pester tests (safety, startup, leftovers, hardening, …)
+│   ├── backend/                     # 357 Pester tests (safety, startup, leftovers, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
 │
 └── .github/workflows/
@@ -507,10 +509,10 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 1,503-test regression suite |
+| `python -m pytest tests` | The full 1,566-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
-| `Invoke-Pester -Path tests\backend` | The 352-test Pester suite (backup/restore, startup, leftovers, hardening) |
+| `Invoke-Pester -Path tests\backend` | The 357-test Pester suite (backup/restore, startup, leftovers, hardening) |
 | `Invoke-ScriptAnalyzer -Path src\backend -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` | Lint the engine — must report **zero** findings |
 | `pyinstaller main.spec` | Build `dist\PULSE\` |
 | `.\tools\build_release.ps1` | Build bundle + installer + `SHA256SUMS` |
@@ -611,8 +613,8 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 1,503 collected tests
-Invoke-Pester -Path tests\backend  # 352 tests
+python -m pytest tests -v          # 1,566 collected tests
+Invoke-Pester -Path tests\backend  # 357 tests
 ```
 
 The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **Around 100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless. The figure is not counted by hand — every hand-counted number in this file had drifted by the time anyone re-read it — it is what `pytest --collect-only -m native` reports, which was 99 of 1,309 when this line was written. Re-run that rather than trusting this sentence.
@@ -704,6 +706,8 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] PATH Doctor can fix the conflict it finds — "Fix Shadowed Tools" promotes the copy you pick by REORDERING the PATH, never removing an entry, and refuses the one case reordering cannot reach instead of pretending to fix it *(v10.12.0)*
 - [x] Leftovers Cleaner — startup entries, scheduled tasks, dead app folders and right-click entries left behind by uninstalled software, flagged only when their target is provably absent, purged behind a restore point with every item backed up and restorable in one click *(v10.13.0)*
 - [x] Startup Manager lists third-party sign-in and boot scheduled tasks, and reports the boot delay Windows actually measured instead of an estimate wherever the Diagnostics-Performance log is readable *(v10.13.0)*
+- [x] A Settings surface with System Sync theming, a restore-point panel, and setup profiles that export this PC's tweaks and apps as a validated playbook *(v10.14.0)*
+- [x] The bloatware purge gained quick-select pills and a live filter, and every module header reports how much of it is already applied *(v10.14.0)*
 
 **Planned**
 

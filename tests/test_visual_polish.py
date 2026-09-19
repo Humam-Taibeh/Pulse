@@ -1108,6 +1108,40 @@ def test_the_nav_bevel_is_the_modes_own_weight(mode, qapp):
         f"{mode}: the nav bevel is still paint_bevel_frame's default pair")
 
 
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_a_resting_nav_label_clears_aa_on_the_sidebar(mode):
+    """Locks in, by measurement rather than by reading the source, that a
+    resting nav row's label always resolves its colour from the theme
+    token dict rather than a value carried over from whatever palette was
+    current when the row was built.
+
+    nav_button_qss's idle rule sets `background-color: transparent`, so
+    the real surface a resting label sits on is the sidebar frame itself
+    (chrome_qss's `#sidebar` rule, filled with t['panel']) — not the card
+    colour the badge/status-chip suites measure against. This is the
+    STATIC half of the guarantee: the QSS this function hands back for the
+    CURRENT mode always clears AA. It does not by itself prove a live
+    widget picks up a NEW mode's QSS after construction — that dynamic
+    half is pinned separately in
+    test_settings_view.py::test_the_settings_button_is_reskinned_on_a_theme_switch,
+    the test written against the actual bug (a stale, un-reskinned
+    Settings button) this one is standing guard against ever reintroducing
+    by way of a bad literal colour instead.
+    """
+    t = TH.tokens(mode)
+    qss = TH.nav_button_qss(t)
+    # (?<!-) excludes "background-color:", whose own trailing "color:" the
+    # naive pattern (already used, safely, by the badge suite's simpler QSS)
+    # matches first here — nav_button_qss's idle rule sets
+    # "background-color: transparent;" before the label's real "color:".
+    fg = _rgb(re.search(r"(?<!-)color:\s*([^;]+);", qss).group(1).strip())
+    bg = _rgb(t["panel"])
+    ratio = _ratio(fg, bg)
+    assert ratio >= _AA, (
+        f"{mode}: a resting nav label measures {ratio:.2f}:1 against the "
+        "sidebar panel — under AA for 13px label text")
+
+
 # ============================================================
 #  10. THE HEALTH ROW'S SEVERITY CHANNEL
 # ============================================================

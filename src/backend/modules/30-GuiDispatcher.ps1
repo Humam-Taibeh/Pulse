@@ -288,6 +288,21 @@ function Invoke-GuiTask {
                 Write-Output "##PULSE##SUCCESS|State probe complete."
                 break
             }
+            "CatalogInventory" {
+                # READ-ONLY and unelevated, like GetTweakState beside it,
+                # and reachable from no card: the Settings page's Export
+                # Setup asks for it directly so an exported profile can
+                # name the catalogued apps this machine already has. See
+                # _PROGRAMMATIC in tests/test_contract.py.
+                $Report = Get-PulseCatalogInventory
+                Write-GuiData -Data $Report
+                if (-not $Report.wingetAvailable) {
+                    Write-Output "##PULSE##SUCCESS|winget is unavailable here, so no installed catalogued apps could be listed."
+                } else {
+                    Write-Output "##PULSE##SUCCESS|$($Report.count) of $($Report.catalogCount) catalogued app(s) are installed on this PC."
+                }
+                break
+            }
             "HealthReport" {
                 # Read-only health + configuration-drift snapshot
                 # (12-HealthReport.ps1), emitted as one DATA document the

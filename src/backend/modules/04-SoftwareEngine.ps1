@@ -446,6 +446,65 @@ function Get-WingetPackageIndex {
     return $Index
 }
 
+function Get-PulseCatalogInventory {
+    <#
+    .SYNOPSIS
+        Which CATALOG apps are already on this machine. Read-only.
+
+    .DESCRIPTION
+        The Settings page's "Export Setup" asks for this so an exported
+        profile can name the apps a new machine should be given.
+
+        BUILT ON Get-WingetPackageIndex, NOT ON Invoke-DeepUpdateScan. The
+        export needs IDENTITY ("is Git here?"), not versions, and the deep
+        scan pays ~14s for network manifests it would then throw away. One
+        `winget list` against the local source cache answers this in ~0.9s.
+
+        Matched by winget Id, case-insensitively: that is what the catalog
+        stores and exactly what InstallCatalogApps takes back on -AppIds, so
+        an exported profile round-trips through the same identity the
+        deploy uses.
+
+        A machine without winget reports wingetAvailable = $false and an
+        empty list rather than an empty machine - "nothing is installed"
+        and "I could not look" are different answers, and only one of them
+        should produce a profile that installs nothing.
+    #>
+    $Index = Get-WingetPackageIndex
+    # Case-folded once, rather than scanning every key per catalog entry:
+    # the catalog is ~43 rows and the index is every package winget can
+    # see, which is the pairing that makes a nested loop quadratic.
+    $Lookup = @{}
+    foreach ($Key in $Index.Keys) {
+        $Lookup[([string]$Key).ToLowerInvariant()] = $Index[$Key]
+    }
+
+    $Installed = @()
+    $Missing = @()
+    foreach ($App in $Apps_CatalogAll) {
+        $Id = [string]$App[0]
+        $Match = $Lookup[$Id.ToLowerInvariant()]
+        if ($Match) {
+            $Installed += [PSCustomObject]@{
+                id      = $Id
+                name    = [string]$App[1]
+                version = [string]$Match.CurrentVersion
+            }
+        } else {
+            $Missing += $Id
+        }
+    }
+
+    return [PSCustomObject]@{
+        generatedAt     = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        wingetAvailable = [bool]$global:WingetAvailable
+        count           = @($Installed).Count
+        catalogCount    = @($Apps_CatalogAll).Count
+        installed       = @($Installed)
+        missing         = @($Missing)
+    }
+}
+
 function Test-RealUpgradeAvailable {
     <# True when an `Available` column value represents a genuine pending
        upgrade. winget prints a literal "Unknown" for packages whose

@@ -15,6 +15,133 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.14.0] — 2026-09-12
+
+### Added — a Settings surface
+
+- **The one page in Pulse that is not an operation.** Everything else is a
+  grid of cards that dispatch a named task; this holds preferences, which
+  belong to the app rather than to the machine, plus the two operations
+  that genuinely belong beside them. Its nav entry is pinned past the
+  module list's stretch, immediately above the session footer — the
+  Fluent/Windows-11 placement for a Settings destination — and deliberately
+  stays out of `_nav_buttons`: that list's index *is* the module index
+  everywhere else in the shell, and a fifth entry that is not a module
+  would have shifted all of it.
+- **Caught before it shipped: the nav entry's own theming.** `_apply_theme`'s
+  live-switch sweep re-skins every `_nav_buttons` row, the footer and the
+  titlebar — and because the Settings button is deliberately excluded from
+  `_nav_buttons`, it was accidentally excluded from the sweep too. A
+  session that changed theme after launch would see every other row
+  repaint while "Settings" kept rendering the palette it was built with,
+  which on a dark→light switch reads as illegibly faint text on the new
+  background — the exact symptom a light-mode contrast bug would produce,
+  from a different cause. Fixed by adding it to the sweep explicitly, with
+  a reskin-on-switch test and a measured contrast floor on the resting
+  label so a literal colour regression here fails the build too.
+- **It asks; the shell runs.** The page owns no worker thread and spawns
+  nothing: it emits what the user chose and `main.py` answers, so the live
+  console, the single-task queue and the elevation pre-check stay in one
+  place. *Create Restore Point* is dispatched through the ordinary
+  pipeline, card and all, rather than getting a private quieter copy of an
+  operation the rest of the app runs loudly.
+- **System Protection** reports the newest checkpoint — when it was taken,
+  what it was called, and how many exist — and distinguishes four states
+  that are genuinely different: unread ("checking…", because claiming
+  there are none before the probe answers is reporting a measurement
+  nobody took), none yet, protection switched off, and a real list. An
+  unelevated session is told a checkpoint needs Administrator *before* it
+  clicks.
+- **Configuration Management** writes this PC's applied tweaks and
+  catalogued apps to a `.pulse.json` profile, and applies one on another
+  machine.
+
+### Added — setup profiles, which are playbooks
+
+- **No second format, validator or runner.** An exported profile is a
+  playbook document over the live task catalog: `parse_playbook` checks it
+  and `PlaybookRunner` applies it with the admin gate, the step-by-step
+  reporting and the stop button every playbook already has. The suffix is
+  a naming convention, not a format — drop one into a `playbooks` folder
+  and it loads like any other. It also means a profile can never name an
+  operation the GUI could not already run, and a hand-edited file cannot
+  smuggle in a GUI-local `@` action.
+- **Only "applied" travels.** A tweak reported *mixed* is half-formed on
+  the machine it came from, and re-applying that elsewhere would export a
+  mess as though it were a decision; *default* is the absence of a choice,
+  and carrying it would mean un-applying things on the target. Every step
+  except the opening restore point is `optional`, because a profile runs
+  unattended on a machine nobody is watching and one unavailable app must
+  not halt the rest.
+- **Validated before it is written.** A file this app's own loader would
+  reject is one the user discovers on the machine they were setting up,
+  which is the worst possible moment.
+- **New read-only engine task, `CatalogInventory`.** Answers "which
+  catalogued apps are on this PC" from one `winget list` against the local
+  source cache (~0.9s) rather than the update scan's authoritative network
+  pass (~14s): the export needs identity, not versions. A machine without
+  winget reports that it could not look, rather than reporting an empty
+  machine.
+
+### Added — Dark / Light / System Sync
+
+- **A third theme mode that follows Windows**, and re-resolves when
+  Windows changes rather than going stale until restart. What is read from
+  the OS is a *preference* — light or dark — never a colour: every token
+  still comes from Pulse's own two palettes, so the single-accent decision
+  v10.7 settled on is untouched.
+- **The choice is persisted, not what it resolved to.** Storing the
+  palette on screen was the same thing as storing the choice while there
+  were only two modes; with "system" it is not, and the first light
+  Windows to resolve it would have written back "light" and quietly
+  stopped following anything.
+- **An explicit choice is still absolute.** Someone who picked light is
+  never moved because Windows was, and the rail's toggle now pins an
+  explicit mode when pressed from System — a toggle Windows could undo at
+  any moment is not a toggle.
+- `tests/test_system_theme_events.py` previously pinned that the frontend
+  read *no* system colour at all, and named what taking the other road
+  would cost. It now pins the new contract instead: the OS preference is
+  read in exactly one function in `theme.py`, no system colour is sampled
+  anywhere, and system mode re-emits on change.
+
+### Added — batch actions and a filter in the Bloatware purge
+
+- **Three pills instead of one.** "Select All Bloatware" was a single
+  control over two different decisions — an app *registered* on this
+  machine, and a Start-menu tile Windows has not downloaded yet. *Select
+  All Installed* and *Select All Stubs* say which they mean; *Deselect
+  All* stays global, because turning everything off is never the dangerous
+  direction. Neither pill can touch the optional Xbox tier, which is the
+  safety rule the old control already carried.
+- **A live, debounced filter by name or package ID** — both, because they
+  are not substrings of each other (`KLiteCodec` versus "K-Lite Codec
+  Pack"). Two surfaces in this app removed text filters on the rule that a
+  field earns its row by the size of what it narrows; 48 entries across
+  four sections earn one, and the question this list is asked ("does Pulse
+  remove *this*?") is a lookup rather than a browse. The other half of
+  that removal is honoured too: the field never takes focus on open, so
+  the dialog still opens with the keyboard on the list.
+- **The counter reports both numbers while filtering** — the selection is
+  global and the list is not, so "12 selected" above four visible rows
+  reads as a bug until the badge says how many are shown. An empty
+  filtered list says whether the matches exist but are folded away behind
+  the absent-packages toggle, rather than just "no results".
+
+### Added — an applied ratio on every module header
+
+- `12 OF 24 APPLIED`, beside the operation count it qualifies. The cards
+  have carried per-card APPLIED / MODIFIED / DEFAULT chips since v1.0, but
+  nothing answered the question a technician opens a module with: how much
+  of this is already done? Counted over the module's cards rather than the
+  visible ones — a ratio that moved when you filtered would be reporting
+  the filter — and fed by the same reconciliation the badges use, so the
+  header and the chips cannot disagree. Routines report timing rather than
+  state and are excluded, so a module of reports shows no chip instead of
+  "0 OF 0".
+
+---
+
 ## [10.13.0] — 2026-09-11
 
 ### Added — the Leftovers Cleaner

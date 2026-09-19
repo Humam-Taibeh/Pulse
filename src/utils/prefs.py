@@ -81,9 +81,17 @@ def _settings() -> QSettings:
 # ============================================================
 #  THEME
 # ============================================================
+#: What may be stored under "ui/theme". "system" (v10.14) is a CHOICE like
+#: the other two, not a resolved value: it means "follow Windows", and what
+#: it resolves to changes while the app is running. Persisting the choice
+#: rather than its current answer is what stops a light-mode Windows
+#: silently rewriting the preference to "light".
+THEME_MODES = ("dark", "light", "system")
+
+
 def theme_mode(default: str = "dark") -> str:
     mode = str(_settings().value("ui/theme", default))
-    return mode if mode in ("dark", "light") else default
+    return mode if mode in THEME_MODES else default
 
 
 def set_theme_mode(mode: str):

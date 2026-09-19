@@ -39,7 +39,8 @@ from PySide6.QtGui import (
     QFont, QIcon, QKeySequence, QPalette, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect,
+    QApplication, QComboBox, QDialog, QFileDialog, QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
     QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -77,7 +78,9 @@ from frontend.widgets import (  # noqa: E402
     BloatwarePurgeDialog,
     ElevatePromptDialog, GlassCard, HealthReportDialog, HealthTile,
     HubDialog, LeftoversDialog,
-    NavButton,
+    # SettingsView rides beside NavButton rather than in alphabetical
+    # order: the page and the rail entry that opens it are one feature.
+    NavButton, SettingsView,
     NavPill, NoticeDialog, OfficeWizardDialog, PathConflictDialog,
     PlaybookDialog,
     PowerHealthDialog,
@@ -88,6 +91,7 @@ from frontend.widgets import (  # noqa: E402
     ToolInstallWizardDialog, UpdateBadge, UpdateCenterDialog,
     reanchor_dialog, refit_dialog,
 )
+from frontend import playbooks  # noqa: E402
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
 
 # ============================================================
@@ -1069,6 +1073,22 @@ class CategoryPage(QWidget):
         self._count_chip = QLabel()
         self._count_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head.addWidget(self._count_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # -- the applied ratio (v10.14) ---------------------------------
+        # "12 OF 24 APPLIED", beside the count it qualifies. The cards have
+        # carried per-card APPLIED / MODIFIED / DEFAULT chips since v1.0,
+        # but nothing answered the question a technician actually opens a
+        # module with: how much of this is already done?
+        #
+        # Fed by the same reconciliation the badges are
+        # (main._refresh_card_badges -> refresh_filter -> here), so the
+        # header and the chips on the cards cannot disagree — which is
+        # precisely what a second count computed from the probe would
+        # eventually do.
+        self._applied_chip = QLabel()
+        self._applied_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._applied_chip.hide()
+        head.addWidget(self._applied_chip, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addLayout(head)
 
         # -- card grid ----------------------------------------
@@ -1254,6 +1274,13 @@ class CategoryPage(QWidget):
         margins = self._grid.contentsMargins()
         return host.width() - margins.left() - margins.right() if host else 0
 
+    #: The card states that mean "this operation has a readable setting" —
+    #: exactly GlassCard._STATE_BADGES minus "due", which is a routine's
+    #: timing rather than a configuration. The denominator of the applied
+    #: ratio, so a module of reports and routines shows no chip at all
+    #: instead of "0 OF 0 APPLIED".
+    PROBE_STATES = ("applied", "mixed", "default")
+
     def _sync_count_chip(self):
         total = category_operations(self.category)
         filtering = bool(self._filter.currentData())
@@ -1265,6 +1292,29 @@ class CategoryPage(QWidget):
         self._count_chip.setStyleSheet(TH.count_chip_qss(
             self._t, TH.resolve_accent(self._t, self.category["accent"]),
             filtered=filtering))
+        self._sync_applied_chip()
+
+    def _sync_applied_chip(self):
+        """How much of this module is already in effect.
+
+        Counted over ALL the module's cards, not the visible ones: the
+        status filter narrows what you are looking at, and a ratio that
+        moved when you filtered would be reporting the filter rather than
+        the machine.
+        """
+        probed = [card for card in self.cards if card.state() in self.PROBE_STATES]
+        if not probed:
+            self._applied_chip.hide()
+            return
+        applied = [card for card in probed if card.state() == "applied"]
+        self._applied_chip.setText(f"{len(applied)} OF {len(probed)} APPLIED")
+        self._applied_chip.setToolTip(
+            f"{len(probed)} operation(s) in this module report a readable "
+            f"setting; {len(applied)} are currently applied. Routines and "
+            "reports have no such state and are not counted.")
+        self._applied_chip.setStyleSheet(TH.stat_chip_qss(
+            self._t, "ok" if len(applied) == len(probed) else "neutral"))
+        self._applied_chip.show()
 
     def _relayout(self, cols: int):
         # A sparse page also rebuilds when its shared column WIDTH changes,
@@ -1724,8 +1774,28 @@ class PulseApp(QMainWindow):
         # so switching to light had to be redone on every launch).
         self.theme = TH.ThemeManager(prefs.theme_mode("dark"), self)
         self.theme.changed.connect(self._apply_theme)
-        self.theme.changed.connect(
-            lambda t: prefs.set_theme_mode(t["name"]))
+        # THE CHOICE IS PERSISTED, NOT WHAT IT RESOLVED TO (v10.14). This
+        # used to store `t["name"]` — the palette on screen — which was the
+        # same thing as the choice while there were only two modes. With
+        # "system" it is not: the first time a light Windows resolved it,
+        # "follow Windows" would have been written back as "light" and the
+        # setting would have quietly stopped following anything.
+        #
+        # Through a lambda rather than connected directly, so the module
+        # attribute is looked up when it fires (which is also what lets a
+        # test observe it).
+        self.theme.mode_changed.connect(lambda mode: prefs.set_theme_mode(mode))
+
+        #: ONE read-only reader at a time — restore points, catalog
+        #: inventory. Separate from the applied-state probe because it
+        #: answers a different question on a different cadence, and joined
+        #: alongside it in _settle_background_threads.
+        self._reader_thread: QThread | None = None
+        self._reader_worker: PowerShellTask | None = None
+        #: The last restore-point report, cached for the session: the page
+        #: re-reads on demand and after a checkpoint is taken, not on every
+        #: visit (Get-ComputerRestorePoint is slow).
+        self._restore_report: dict | None = None
 
         self.cascade = CascadeAnimator(self)
         self.fader = PageFader(self)
@@ -1924,16 +1994,38 @@ class PulseApp(QMainWindow):
             self._nav_buttons.append(btn)
             side.addWidget(btn)
 
-        # v1.0 RC: the rail ends at the modules. A "RECENT" panel used to
-        # sit here — three re-run rows added in v10 to fill the empty
-        # space below the nav. It was answering the wrong question: the
-        # rail's job is "where do I go", and a second, differently-styled
-        # list of accented rows directly beneath four nav buttons read as
-        # a fifth-through-seventh module far more often than it read as
-        # history. Every operation it offered is one click away in its
-        # module or one keystroke away in Ctrl+K, so removing it costs no
-        # reach and buys the nav an uncontested column.
+        # v1.0 RC: the rail ends at the modules, then stretches. A "RECENT"
+        # panel used to sit here — three re-run rows added in v10 to fill
+        # the empty space below the nav. It was answering the wrong
+        # question: the rail's job is "where do I go", and a second,
+        # differently-styled list of accented rows directly beneath four
+        # nav buttons read as a fifth-through-seventh module far more often
+        # than it read as history. Every operation it offered is one click
+        # away in its module or one keystroke away in Ctrl+K, so removing
+        # it costs no reach and buys the nav an uncontested column.
         side.addStretch()
+
+        # -- settings, pinned to the footer and not one of the modules ---
+        # Deliberately NOT in _nav_buttons: that list's INDEX is the module
+        # index everywhere else in this file (open_category, _select_nav,
+        # the focus-ring tests), and a fifth entry that is not a module
+        # would quietly shift all of it.
+        #
+        # Lives PAST the stretch, immediately above the footer, rather than
+        # under the modules — the Fluent/Windows-11 pattern of a Settings
+        # entry pinned to the very bottom of the rail, separated from
+        # "where do I go" by the same gap that used to hold the RECENT
+        # panel. It must land here and not between update_badge and
+        # status_rail: tests/test_update_badge.py pins that the badge sits
+        # directly above the rail with nothing between them.
+        #
+        # The empty accent key resolves to the app's own accent (see
+        # theme.resolve_accent) — Settings has no module colour because it
+        # is not a module.
+        self._settings_btn = NavButton("gear", "Settings", "", t)
+        self._settings_btn.clicked.connect(
+            lambda _checked=False: self.open_settings())
+        side.addWidget(self._settings_btn)
 
         # -- sidebar footer: ONE STATUS RAIL (v15) --------------
         # What used to be here: a full-width amber "Run as Administrator"
@@ -1991,6 +2083,16 @@ class PulseApp(QMainWindow):
             page.task_requested.connect(self.request_task)
             self.pages.append(page)
             self.stack.addWidget(page)
+
+        # The settings surface is the last page in the stack rather than a
+        # module, so open_category's `index + 1` arithmetic is untouched.
+        self.settings_view = SettingsView(t, is_admin=self.is_admin)
+        self.settings_view.theme_mode_requested.connect(self._on_theme_mode_chosen)
+        self.settings_view.restore_point_requested.connect(self._create_restore_point)
+        self.settings_view.export_requested.connect(self._export_setup)
+        self.settings_view.import_requested.connect(self._import_setup)
+        self.settings_view.set_theme_mode(self.theme.mode)
+        self.stack.addWidget(self.settings_view)
         content.addWidget(self.stack, 1)
 
         # -- Activity drawer (v7): auto-collapsing live output ----
@@ -2057,6 +2159,7 @@ class PulseApp(QMainWindow):
         self.update_badge.apply_theme(t)
         self.status_rail.apply_theme(t)
         self.titlebar.apply_theme(t)
+        self._settings_btn.apply_theme(t)
         for btn in self._nav_buttons:
             btn.apply_theme(t)
         # THE PAGES ARE RE-SKINNED LAZILY, and the dashboard with them.
@@ -2079,9 +2182,11 @@ class PulseApp(QMainWindow):
         self._set_status(self._status_state, self.status_text.fullText())
 
     def _themed_views(self):
-        """The dashboard and every category page — the five heavy views the
-        stack pages between, and the only ones eligible for deferral."""
-        return [self.welcome, *self.pages]
+        """The dashboard, every category page and the settings surface —
+        the heavy views the stack pages between, and the only ones eligible
+        for deferral. A view missing from this list would sit in the old
+        palette until it was rebuilt."""
+        return [self.welcome, *self.pages, self.settings_view]
 
     @staticmethod
     def _apply_view_theme(view, t: dict):
@@ -2099,10 +2204,26 @@ class PulseApp(QMainWindow):
             view._pending_theme = t
 
     def _toggle_theme_animated(self):
-        """Theme switch with a 220ms cross-fade: a snapshot of the old look
-        sits on top and dissolves into the freshly re-skinned UI. One
-        transient overlay + opacity effect — steady state stays effect-free
-        per the animations.py doctrine."""
+        """The rail's toggle: flip to the opposite of what is on screen."""
+        self._crossfade(self.theme.toggle)
+
+    def _on_theme_mode_chosen(self, mode: str):
+        """The settings page's three-way choice.
+
+        Routed through the same cross-fade as the rail's toggle, because a
+        theme change is a theme change however it was asked for — and the
+        view is told the result rather than assuming it, so a refused or
+        unchanged mode cannot leave the pills lying.
+        """
+        if mode != self.theme.mode:
+            self._crossfade(lambda: self.theme.set_mode(mode))
+        self.settings_view.set_theme_mode(self.theme.mode)
+
+    def _crossfade(self, apply_change):
+        """Run `apply_change` under a 160ms cross-fade: a snapshot of the
+        old look sits on top and dissolves into the freshly re-skinned UI.
+        One transient overlay + opacity effect — steady state stays
+        effect-free per the animations.py doctrine."""
         snap = self._shell.grab()
         overlay = QLabel(self._shell)
         overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -2111,7 +2232,7 @@ class PulseApp(QMainWindow):
         overlay.show()
         overlay.raise_()
 
-        self.theme.toggle()  # re-skins everything underneath, synchronously
+        apply_change()  # re-skins everything underneath, synchronously
 
         effect = QGraphicsOpacityEffect(overlay)
         overlay.setGraphicsEffect(effect)
@@ -2206,6 +2327,26 @@ class PulseApp(QMainWindow):
     def _select_nav(self, index: int | None):
         for i, btn in enumerate(self._nav_buttons):
             btn.set_selected(i == index)
+        # Settings is a destination but not a module, so it is cleared here
+        # and lit by open_settings — exactly one rail entry may ever look
+        # like the place you are.
+        self._settings_btn.set_selected(False)
+
+    def open_settings(self):
+        """Open the preferences surface.
+
+        No cascade and no `_revealed` bookkeeping: those exist to give a
+        module's card GRID a first-impression entrance, and this page is
+        three grouped panels. It re-reads the restore points on the way in
+        only if it has never read them — see _refresh_restore_points.
+        """
+        self._select_nav(None)
+        self._settings_btn.set_selected(True)
+        self.titlebar.set_brand_visible(True)
+        if self.stack.currentWidget() is not self.settings_view:
+            self.cascade.stop()
+            self.stack.setCurrentWidget(self.settings_view)
+        self._refresh_restore_points()
 
     # ============================================================
     #  APPLIED-STATE PROBE (read-only, background)
@@ -2335,6 +2476,11 @@ class PulseApp(QMainWindow):
         self.welcome.set_pending_actions(due, recurring)
         for page in self.pages:
             page.refresh_filter()
+        # A checkpoint taken from the settings page changes what that page
+        # reports, and this runs after every task completes — so the panel
+        # is refreshed exactly when it is both stale AND on screen.
+        if self.stack.currentWidget() is self.settings_view:
+            self._refresh_restore_points(force=True)
 
     def _on_tweak_state(self, result: TaskResult):
         state = result.data if isinstance(result.data, dict) else None
@@ -2574,6 +2720,163 @@ class PulseApp(QMainWindow):
     # ============================================================
     #  PLAYBOOKS (v10.3)
     # ============================================================
+    # ============================================================
+    #  READ-ONLY READERS (settings surface)
+    # ============================================================
+    def _run_reader(self, task: str, on_result, on_failed=None,
+                    timeout: int = 120):
+        """Run a READ-ONLY task off the single-task pipeline.
+
+        The applied-state probe's shape, for the probe's reason: these read
+        and never write, so they must not occupy the "one task at a time"
+        slot, block a real operation, or narrate themselves in the live
+        console. One at a time, because the two callers are a page opening
+        and a button press — neither benefits from overlapping reads, and a
+        single slot is what _settle_background_threads can join.
+        """
+        if self._shutting_down or not self.ps1_path:
+            return False
+        if self._reader_thread is not None:
+            return False
+        thread = QThread(self)
+        worker = PowerShellTask(self.ps1_path, task, timeout=timeout)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(on_result)
+        if on_failed is not None:
+            worker.failed.connect(on_failed)
+        for signal in (worker.finished, worker.failed, worker.cancelled):
+            signal.connect(thread.quit)
+        thread.finished.connect(self._on_reader_thread_finished)
+        self._reader_thread, self._reader_worker = thread, worker
+        thread.start()
+        return True
+
+    def _on_reader_thread_finished(self):
+        if self._reader_worker is not None:
+            self._reader_worker.deleteLater()
+            self._reader_worker = None
+        if self._reader_thread is not None:
+            self._reader_thread.deleteLater()
+            self._reader_thread = None
+
+    # ============================================================
+    #  SETTINGS SURFACE (v10.14)
+    # ============================================================
+    def _refresh_restore_points(self, force: bool = False):
+        """Read this PC's checkpoints, once per session unless forced.
+
+        Get-ComputerRestorePoint is slow and the answer only changes when a
+        checkpoint is taken, so the page does not pay for it on every
+        visit — it pays on the first, and again after anything creates one.
+        """
+        if self._restore_report is not None and not force:
+            self.settings_view.set_restore_points(self._restore_report)
+            return
+        self._run_reader("RestorePoints", self._on_restore_points,
+                         on_failed=self._on_restore_points_failed, timeout=180)
+
+    def _on_restore_points(self, result: TaskResult):
+        report = result.data if isinstance(result.data, dict) else None
+        if report is None:
+            self._on_restore_points_failed("")
+            return
+        self._restore_report = report
+        self.settings_view.set_restore_points(report)
+
+    def _on_restore_points_failed(self, _message: str = ""):
+        # Reported as "protection could not be read" rather than left
+        # saying "checking…" forever, which would be a spinner that never
+        # resolves.
+        report = {"available": False, "enabled": False, "count": 0, "points": []}
+        self._restore_report = report
+        self.settings_view.set_restore_points(report)
+
+    def _create_restore_point(self):
+        """Through the ordinary pipeline, card and all.
+
+        request_task owns the elevation pre-check, the confirm sheet and
+        the live console; reaching past it would give this one button a
+        private, quieter version of an operation the rest of the app runs
+        loudly.
+        """
+        item, _accent = find_action_anywhere("CreateRestorePoint")
+        if item is None:
+            self.toasts.show("error", "This build has no Create Restore Point "
+                                      "action to run.", 5000)
+            return
+        self.request_task(dict(item))
+
+    def _export_setup(self):
+        """Write this PC's configuration to a portable profile.
+
+        THE APP LIST IS READ FIRST, and that read is why this is not
+        instant: "what did this machine have installed" is a question only
+        the engine can answer (CatalogInventory, one `winget list`). The
+        tweak state is already in hand from the applied-state probe.
+        """
+        if self._reader_thread is not None:
+            self.toasts.show("info", "Still reading this PC — try again in a "
+                                     "moment.", 3000)
+            return
+        started = self._run_reader(
+            "CatalogInventory", self._on_export_inventory,
+            on_failed=self._on_export_inventory_failed, timeout=300)
+        if started:
+            self.toasts.show("info", "Reading which catalogued apps are "
+                                     "installed…", 3000)
+        else:
+            # No engine: the tweaks alone are still a profile worth having.
+            self._write_setup_profile([])
+
+    def _on_export_inventory(self, result: TaskResult):
+        data = result.data if isinstance(result.data, dict) else {}
+        installed = [str(row.get("id") or "")
+                     for row in (data.get("installed") or [])
+                     if isinstance(row, dict)]
+        self._write_setup_profile([app_id for app_id in installed if app_id])
+
+    def _on_export_inventory_failed(self, _message: str = ""):
+        self._write_setup_profile([])
+
+    def _write_setup_profile(self, app_ids: list):
+        document = playbooks.build_setup_profile(
+            self._tweak_state, app_ids, machine=os.environ.get("COMPUTERNAME", ""))
+        suggested = os.path.join(resources.desktop_dir(),
+                                 f"pulse-setup{playbooks.SETUP_SUFFIX}")
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "Export Setup", suggested,
+            f"Pulse setup (*{playbooks.SETUP_SUFFIX});;All files (*)")
+        if not path:
+            return
+        try:
+            written = playbooks.write_setup_profile(path, document)
+        except (playbooks.PlaybookError, OSError) as exc:
+            self.toasts.show("error", f"Could not write the profile: {exc}", 8000)
+            return
+        self.toasts.show(
+            "ok", f"Exported {len(written)} step(s) to "
+                  f"{os.path.basename(path)}.", 5000)
+
+    def _import_setup(self):
+        """Load a profile and run it — as a playbook, because it is one.
+
+        No separate importer: read_setup_profile validates against the live
+        catalog and _start_playbook applies it with the admin gate, the
+        step-by-step reporting and the stop button every playbook gets.
+        """
+        path, _selected = QFileDialog.getOpenFileName(
+            self, "Import & Apply Setup", "",
+            f"Pulse setup (*{playbooks.SETUP_SUFFIX});;Playbooks (*.json)")
+        if not path:
+            return
+        try:
+            playbook = playbooks.read_setup_profile(path)
+        except playbooks.PlaybookError as exc:
+            self.toasts.show("error", str(exc), 9000)
+            return
+        self._start_playbook(playbook, dry_run=False)
+
     def _open_playbooks(self):
         """Browse -> preview/run -> watch, all in one dialog.
 
@@ -3969,6 +4272,10 @@ class PulseApp(QMainWindow):
         """
         for worker, thread in ((self._worker, self._thread),
                                (self._probe_worker, self._probe_thread),
+                               # v10.14: the settings surface's read-only
+                               # reader. Read-only and invisible is exactly
+                               # what made the other two easy to forget.
+                               (self._reader_worker, self._reader_thread),
                                (self._update_check_worker,
                                 self._update_check_thread)):
             if thread is None:

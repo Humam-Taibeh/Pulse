@@ -11427,6 +11427,9 @@ class BloatRow(QFrame):
         self.detected = bool(entry.get("Detected"))
         self.optional = bool(entry.get("Optional"))
         self._name = str(entry.get("Name") or self.entry_id)
+        #: The display name, publicly, because the dialog's filter reads it
+        #: alongside entry_id — see BloatwarePurgeDialog._row_matches.
+        self.name = self._name
         #: Which sense of "here" applies. Defaulted from `Detected` rather
         #: than assumed present, so a payload from an older backend still
         #: renders a coherent row instead of a blank badge.
@@ -12011,6 +12014,308 @@ class LeftoversDialog(PulseDialog):
 
 
 # ============================================================
+#  SETTINGS — preferences, protection, and this PC as a file
+# ============================================================
+class SettingsView(QWidget):
+    """The one surface in Pulse that is not an operation.
+
+    Every other page is a grid of cards that dispatch named tasks. This one
+    holds PREFERENCES — which belong to the app rather than to the machine
+    — and the two operations that genuinely belong beside them: taking a
+    checkpoint, and carrying a machine's configuration to another one.
+
+    IT ASKS; main.py RUNS. The page owns no worker thread and spawns
+    nothing. It emits what the user chose and the shell answers, which is
+    what keeps the live console, the single-task queue and the elevation
+    pre-check in one place instead of two. tests/test_settings_view.py
+    pins that it stays that way.
+
+    GROUPED, in the Windows 11 shape: titled groups of related rows rather
+    than a flat column of controls, because "how it looks", "how it is
+    protected" and "how it is copied to another PC" are three different
+    errands that happen to share a page.
+    """
+
+    theme_mode_requested = Signal(str)
+    restore_point_requested = Signal()
+    export_requested = Signal()
+    import_requested = Signal()
+
+    #: (mode, label, hint). The hint matters most for System, which is the
+    #: only one whose answer can change while the app is open.
+    THEME_CHOICES = (
+        ("dark", "Dark",
+         "Pulse's own dark palette, whatever Windows is set to."),
+        ("light", "Light",
+         "Pulse's own light palette, whatever Windows is set to."),
+        ("system", "System",
+         "Follow Windows' own light/dark setting, and change when it does."),
+    )
+
+    GROUPS = ("General", "System Protection", "Configuration Management")
+
+    def __init__(self, t: dict, is_admin: bool = False,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self._t = t
+        self._is_admin = is_admin
+        self._mode = "dark"
+        #: None until the probe answers — which is NOT the same as "no
+        #: checkpoints", and the summary line says so.
+        self._report: dict | None = None
+        #: The deferred re-skin contract every heavy view carries: a page
+        #: the stack is not showing records what it is owed and settles up
+        #: in its own showEvent (see main._apply_view_theme).
+        self._pending_theme: dict | None = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(TH.SPACE["sm"], TH.SPACE["sm"],
+                               TH.SPACE["sm"], TH.SPACE["sm"])
+        lay.setSpacing(TH.SPACE["lg"])
+
+        head = QVBoxLayout()
+        head.setSpacing(TH.SPACE["xxs"])
+        self._title = QLabel("Settings")
+        head.addWidget(self._title)
+        self._tagline = QLabel(
+            "How Pulse looks, how this PC is protected, and how its setup "
+            "travels to the next machine.")
+        self._tagline.setWordWrap(True)
+        head.addWidget(self._tagline)
+        lay.addLayout(head)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        host = QWidget()
+        host.setStyleSheet("background: transparent;")
+        self._host_lay = QVBoxLayout(host)
+        self._host_lay.setContentsMargins(0, 0, 0, 0)
+        self._host_lay.setSpacing(TH.SPACE["lg"])
+        self._scroll.setWidget(host)
+        lay.addWidget(self._scroll, 1)
+
+        self._cards: list[QFrame] = []
+        self._group_titles: list[QLabel] = []
+        self._captions: list[QLabel] = []
+        self._build_general()
+        self._build_protection()
+        self._build_configuration()
+        self._host_lay.addStretch()
+
+        self.apply_theme(t)
+        self._sync_theme_buttons()
+        self._sync_restore_summary()
+
+    # -- group scaffolding ---------------------------------------------
+    def _group(self, title: str) -> QVBoxLayout:
+        """One titled card. Uses the report sub-card surface rather than a
+        new one: this page and the Health Report are both "grouped panels
+        of read-and-act rows", and a second look for the same object is
+        how a UI starts disagreeing with itself."""
+        card = QFrame()
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(TH.SPACE["lg"], TH.SPACE["md"],
+                                 TH.SPACE["lg"], TH.SPACE["md"])
+        inner.setSpacing(TH.SPACE["sm"])
+        label = QLabel(title)
+        inner.addWidget(label)
+        self._group_titles.append(label)
+        self._cards.append(card)
+        self._host_lay.addWidget(card)
+        return inner
+
+    def _caption(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        self._captions.append(label)
+        return label
+
+    # -- General --------------------------------------------------------
+    def _build_general(self):
+        inner = self._group("General")
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["sm"])
+        self._theme_buttons: dict[str, QPushButton] = {}
+        for mode, label, hint in self.THEME_CHOICES:
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(TH.CONTROL_H)
+            btn.setToolTip(hint)
+            btn.clicked.connect(
+                lambda _checked=False, m=mode: self.choose_theme_mode(m))
+            self._theme_buttons[mode] = btn
+            row.addWidget(btn)
+        row.addStretch()
+        inner.addLayout(row)
+        self._theme_hint = self._caption("")
+        inner.addWidget(self._theme_hint)
+
+    # -- System Protection ----------------------------------------------
+    def _build_protection(self):
+        inner = self._group("System Protection")
+        self._restore_summary_label = self._caption("")
+        inner.addWidget(self._restore_summary_label)
+
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["sm"])
+        self._restore_btn = QPushButton("Create Restore Point")
+        self._restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._restore_btn.setFixedHeight(TH.CONTROL_H)
+        self._restore_btn.setToolTip(
+            "Takes a System Restore checkpoint now, so today's changes can "
+            "be rolled back as a set.")
+        self._restore_btn.clicked.connect(self.restore_point_requested.emit)
+        row.addWidget(self._restore_btn)
+        row.addStretch()
+        inner.addLayout(row)
+
+        # SAID BEFORE THE CLICK, not after the failure: an unelevated
+        # session can still press this, and Pulse will offer to relaunch —
+        # but the user should know that is coming.
+        self._restore_note = self._caption(
+            "Pulse takes one automatically before the first system change "
+            "of a session."
+            if self._is_admin else
+            "Taking a checkpoint needs Administrator — Pulse will ask to "
+            "relaunch when you click.")
+        inner.addWidget(self._restore_note)
+
+    # -- Configuration Management ---------------------------------------
+    def _build_configuration(self):
+        inner = self._group("Configuration Management")
+        inner.addWidget(self._caption(
+            "Write this PC's applied tweaks and catalogued apps to a "
+            "profile, then apply it on another machine. A profile is an "
+            "ordinary Pulse playbook, so it can only run operations this "
+            "app already offers."))
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["sm"])
+        self._export_btn = QPushButton("Export Setup…")
+        self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_btn.setFixedHeight(TH.CONTROL_H)
+        self._export_btn.setToolTip(
+            "Reads which catalogued apps are installed, then writes a "
+            ".pulse.json profile.")
+        self._export_btn.clicked.connect(self.export_requested.emit)
+        row.addWidget(self._export_btn)
+        # "Import" alone reads like loading a file. This one APPLIES.
+        self._import_btn = QPushButton("Import & Apply…")
+        self._import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._import_btn.setFixedHeight(TH.CONTROL_H)
+        self._import_btn.setToolTip(
+            "Runs a profile on this PC: applies its tweaks and installs "
+            "its apps, one step at a time, starting with a restore point.")
+        self._import_btn.clicked.connect(self.import_requested.emit)
+        row.addWidget(self._import_btn)
+        row.addStretch()
+        inner.addLayout(row)
+
+    # -- theme choice ----------------------------------------------------
+    def theme_modes(self) -> tuple:
+        return tuple(mode for mode, _label, _hint in self.THEME_CHOICES)
+
+    def current_mode(self) -> str:
+        return self._mode
+
+    def theme_hint(self, mode: str) -> str:
+        for candidate, _label, hint in self.THEME_CHOICES:
+            if candidate == mode:
+                return hint
+        return ""
+
+    def choose_theme_mode(self, mode: str):
+        """The user picked one. ASKS ONLY — main owns the ThemeManager, so
+        one place decides what the app looks like and one place persists
+        it; the view is told the answer through set_theme_mode."""
+        self.theme_mode_requested.emit(mode)
+
+    def set_theme_mode(self, mode: str):
+        self._mode = mode if mode in self.theme_modes() else "dark"
+        self._sync_theme_buttons()
+
+    def _sync_theme_buttons(self):
+        accent = self._t["accent"]
+        for mode, btn in self._theme_buttons.items():
+            btn.setStyleSheet(
+                TH.catalog_tab_qss(self._t, accent, mode == self._mode))
+        self._theme_hint.setText(self.theme_hint(self._mode))
+
+    # -- restore points --------------------------------------------------
+    def set_restore_points(self, report: dict | None):
+        self._report = report if isinstance(report, dict) else None
+        self._sync_restore_summary()
+
+    def restore_summary(self) -> str:
+        return self._restore_summary_label.text()
+
+    def restore_note(self) -> str:
+        return self._restore_note.text()
+
+    def _sync_restore_summary(self):
+        """Four states, and they are four different situations.
+
+        UNREAD is not "none": before the probe answers, claiming this PC
+        has no checkpoints would be reporting a measurement nobody took.
+        UNAVAILABLE is not "none" either — a machine with protection
+        switched off cannot take one at all, which the button above does
+        not fix.
+        """
+        report = self._report
+        if report is None:
+            self._restore_summary_label.setText(
+                "Checking this PC's restore points…")
+            return
+        if not report.get("available"):
+            self._restore_summary_label.setText(
+                "System Restore appears to be turned off for this PC, so no "
+                "checkpoints can be taken. Turn on protection for the system "
+                "drive in Windows to enable it.")
+            return
+        points = [p for p in (report.get("points") or []) if isinstance(p, dict)]
+        if not points:
+            self._restore_summary_label.setText(
+                "No restore points on this PC yet. Pulse takes one before "
+                "the first system change of a session.")
+            return
+        newest = points[0]
+        created = str(newest.get("created") or "date unknown")
+        description = str(newest.get("description") or "checkpoint")
+        total = int(report.get("count") or len(points))
+        age = newest.get("ageDays")
+        age_text = f", {float(age):.1f} day(s) ago" if age not in (None, "") else ""
+        self._restore_summary_label.setText(
+            f"Newest checkpoint: {created} — “{description}”{age_text}. "
+            f"{total} checkpoint(s) on this PC.")
+
+    # -- theming ---------------------------------------------------------
+    def flush_pending_theme(self):
+        if self._pending_theme is not None:
+            pending, self._pending_theme = self._pending_theme, None
+            self.apply_theme(pending)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.flush_pending_theme()
+
+    def apply_theme(self, t: dict):
+        self._t = t
+        accent = t["accent"]
+        self._title.setStyleSheet(TH.label_qss(t, "title"))
+        self._tagline.setStyleSheet(TH.label_qss(t, "tagline"))
+        self._scroll.setStyleSheet(TH.scroll_area_qss(t))
+        for card in self._cards:
+            card.setStyleSheet(TH.report_subcard_qss(t, accent))
+        for label in self._group_titles:
+            label.setStyleSheet(TH.report_subcard_title_qss(t))
+        for label in self._captions:
+            label.setStyleSheet(TH.label_qss(t, "caption"))
+        for button in (self._restore_btn, self._export_btn, self._import_btn):
+            button.setStyleSheet(TH.action_button_qss(t, accent))
+        self._sync_theme_buttons()
+
+
+# ============================================================
 #  BLOATWARE PURGE — scan, classify, remove permanently
 # ============================================================
 class BloatwarePurgeDialog(PulseDialog):
@@ -12050,6 +12355,16 @@ class BloatwarePurgeDialog(PulseDialog):
         ("gaming", "Xbox and gaming (optional)", True),
     ]
 
+    #: What each quick-select pill ticks, by `Presence` (see BloatRow).
+    #: Split because they are different decisions: something registered on
+    #: this machine, versus a tile or a staged package that has never run.
+    INSTALLED_TIERS = ("installed",)
+    STUB_TIERS = ("pinned", "staged")
+
+    #: Filter coalescing window. Long enough that a fast typist re-filters
+    #: once rather than per character, short enough to feel immediate.
+    SEARCH_DEBOUNCE_MS = 120
+
     def __init__(self, parent: QWidget, ps1_path: str, t: dict):
         super().__init__(parent)
         self._t = t
@@ -12062,6 +12377,9 @@ class BloatwarePurgeDialog(PulseDialog):
         self._sections: list[tuple[QLabel, list, int]] = []
         self._thread: QThread | None = None
         self._worker: PowerShellTask | None = None
+        #: The live filter, case-folded. Written by _sync_visibility, which
+        #: is the only reader of the field itself.
+        self._query = ""
 
         accent = t["accent"]
         panel = _dialog_chrome(self, t, accent, responsive=True)
@@ -12230,13 +12548,36 @@ class BloatwarePurgeDialog(PulseDialog):
 
         bar = QHBoxLayout()
         bar.setSpacing(TH.SPACE["lg"])
-        self._all_btn = QPushButton("Select All Bloatware")
+        # THREE PILLS, EACH NAMING THE TIER IT TICKS (v10.14). "Select All
+        # Bloatware" was one control over two different decisions: an app
+        # REGISTERED on this machine, and a Start-menu tile Windows has not
+        # downloaded yet. Someone clearing promotional tiles off a fresh
+        # install and someone removing software they actually use are not
+        # doing the same thing, and one pill could not say which it meant.
+        #
+        # SCOPED TO WHAT IS ON SCREEN — the rule SoftwareCatalogDialog
+        # states for the same reason: with the filter below active, a pill
+        # that silently ticked hidden rows would be a trap. Deselect All
+        # stays global, because turning everything off is never the
+        # dangerous direction.
+        self._all_btn = QPushButton("Select All Installed")
         self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._all_btn.setToolTip(
-            "Ticks every DETECTED package outside the optional Xbox section.")
+            "Ticks every package REGISTERED on this PC that is currently "
+            "shown, outside the optional Xbox section.")
         self._all_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
-        self._all_btn.clicked.connect(lambda: self._select_all(True))
+        self._all_btn.clicked.connect(
+            lambda: self._select_presence(self.INSTALLED_TIERS))
         bar.addWidget(self._all_btn)
+        self._stubs_btn = QPushButton("Select All Stubs")
+        self._stubs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stubs_btn.setToolTip(
+            "Ticks the Start-menu tiles and staged packages currently shown "
+            "— the ones that come back after a Windows feature update.")
+        self._stubs_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
+        self._stubs_btn.clicked.connect(
+            lambda: self._select_presence(self.STUB_TIERS))
+        bar.addWidget(self._stubs_btn)
         self._none_btn = QPushButton("Deselect All")
         self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._none_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
@@ -12264,6 +12605,49 @@ class BloatwarePurgeDialog(PulseDialog):
         self._count.setStyleSheet(TH.label_qss(t, "caption"))
         bar.addWidget(self._count)
         lay.addLayout(bar)
+
+        # -- the filter field, and THIS list is where one earns its row ---
+        # SoftwareCatalogDialog removed its own filter on the rule that a
+        # field earns its row by the size of what it narrows: fifteen
+        # grouped rows behind a counted chip strip do not need one. This
+        # catalog is 48 entries across four sections, and the question it
+        # is asked is "does Pulse remove <this app>?" — a lookup, not a
+        # browse.
+        #
+        # IT DOES NOT TAKE FOCUS ON OPEN, which was the other half of why
+        # that field went: the dialog must open with the keyboard on the
+        # LIST, so Space still ticks the row under the cursor. ClickFocus,
+        # never auto-focus.
+        field = QFrame()
+        field.setFixedHeight(TH.CONTROL_H)
+        field.setStyleSheet(TH.palette_field_qss(t))
+        field_lay = QHBoxLayout(field)
+        field_lay.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["sm"], 0)
+        field_lay.setSpacing(TH.SPACE["sm"])
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Filter by name or package ID…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setFrame(False)
+        self._search.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        # DEBOUNCED: each keystroke re-runs visibility across ~48 rows and
+        # their section headers, and a list that lags a character behind
+        # the field reads as a stutter rather than as a filter.
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(self.SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(self._sync_visibility)
+        self._search.textChanged.connect(
+            lambda _text: self._search_debounce.start())
+        field_lay.addWidget(self._search, 1)
+        lay.addWidget(field)
+
+        # Says why a filtered list is empty, and whether the answer is
+        # hiding behind the absent-packages toggle.
+        self._no_match = QLabel("")
+        self._no_match.setWordWrap(True)
+        self._no_match.setStyleSheet(TH.label_qss(t, "caption"))
+        self._no_match.hide()
+        lay.addWidget(self._no_match)
 
         self._scroll = FitScroll()
         self._scroll.setStyleSheet(TH.scroll_area_qss(t))
@@ -12428,6 +12812,10 @@ class BloatwarePurgeDialog(PulseDialog):
         clean machine got the switch forced on and disabled.
         """
         show_all = self._show_absent.isChecked()
+        # ONE SOURCE FOR THE QUERY, read here rather than stored on every
+        # keystroke: the debounce timer and a direct call (a toggle, a
+        # re-render) then cannot disagree about what is being filtered.
+        self._query = self._search.text().strip().lower()
         clean = not self._any_detected() and not show_all
         # THE FOOTER FOLLOWS THE PAGE. "Safe Purge" is disabled on a clean
         # machine either way, and a disabled destructive button under
@@ -12439,12 +12827,51 @@ class BloatwarePurgeDialog(PulseDialog):
         if clean:
             self._stack.setCurrentWidget(self._clean_page)
             return
-        for header, rows, present in self._sections:
+        for header, rows, _present in self._sections:
+            shown = 0
             for row in rows:
-                row.setVisible(show_all or row.detected)
-            header.setVisible(show_all or present > 0)
+                visible = (show_all or row.detected) and self._row_matches(row)
+                row.setVisible(visible)
+                shown += visible
+            # The header follows its OWN rows now rather than the section's
+            # detected count: with a filter on, a heading over nothing is
+            # exactly the floating-header defect the count rule fixed.
+            header.setVisible(bool(shown))
+        self._sync_no_match(show_all)
+        self._sync_count()
         self._stack.setCurrentWidget(self._results_page)
         self._scroll.refresh()
+
+    def _row_matches(self, row) -> bool:
+        """Does `row` match the filter? Name OR package id.
+
+        Both, because they are not substrings of each other: the id is what
+        a forum thread, a winget command or a support script names
+        ("KLiteCodec"), and the display name is what the Start menu shows
+        ("K-Lite Codec Pack").
+        """
+        if not self._query:
+            return True
+        return (self._query in row.name.lower()
+                or self._query in row.entry_id.lower())
+
+    def _sync_no_match(self, show_all: bool):
+        """Explain an empty filtered list, including when the matches are
+        real but folded away — "no results" while the answer sits behind a
+        toggle is the unhelpful half of a filter."""
+        if not self._query or any(r.isVisible() for r in self._rows.values()):
+            self._no_match.hide()
+            return
+        hidden = 0 if show_all else sum(
+            1 for row in self._rows.values()
+            if not row.detected and self._row_matches(row))
+        text = f"Nothing installed matches “{self._search.text().strip()}”."
+        if hidden:
+            text += (f"  {hidden} catalogued package(s) match but are not on "
+                     "this PC — tick “Show packages that aren't installed” "
+                     "to see them.")
+        self._no_match.setText(text)
+        self._no_match.show()
 
     def _any_detected(self) -> bool:
         return any(row.detected for row in self._rows.values())
@@ -12469,9 +12896,42 @@ class BloatwarePurgeDialog(PulseDialog):
             row.set_checked(on)
         self._sync_count()
 
+    def _select_presence(self, tiers: tuple):
+        """Tick the VISIBLE rows whose presence is in `tiers`.
+
+        Optional is excluded here for the reason _select_all excludes it:
+        no bulk control in this dialog may decide the Xbox stack. Absent
+        rows cannot be ticked at all — their checkbox is disabled — so a
+        pill can never select something that is not on the machine.
+        """
+        optional_groups = {key for key, _title, opt in self.SECTIONS if opt}
+        for row in self._rows.values():
+            if row.group in optional_groups or not row.isVisible():
+                continue
+            if row.presence in tiers:
+                row.set_checked(True)
+        self._sync_count()
+
     def _sync_count(self):
         chosen = [r for r in self._rows.values() if r.is_selected()]
-        self._count.setText(f"{len(chosen)} selected")
+        shown = sum(1 for r in self._rows.values() if r.isVisible())
+        # THE DENOMINATOR IS WHAT THE LIST WOULD SHOW WITHOUT THE FILTER,
+        # not every row in the catalog. With absent packages folded away,
+        # counting them made the badge read "1 of 6" under a subtitle
+        # saying "5 catalogued package(s) found" — two numbers for one
+        # list, leaving the reader to work out that the sixth is hidden by
+        # a toggle rather than by what they typed.
+        show_all = self._show_absent.isChecked()
+        eligible = sum(1 for r in self._rows.values() if show_all or r.detected)
+        # BOTH NUMBERS WHILE A FILTER IS ON. The selection is global and
+        # the list is not, so "12 selected" above four visible rows reads
+        # as a bug until the badge says how many are on screen.
+        self._count.setText(
+            f"{len(chosen)} selected  ·  {shown} of {eligible} shown"
+            if self._query else f"{len(chosen)} selected")
+        self._count.setStyleSheet(
+            TH.micro_chip_qss(self._t, "accent") if chosen
+            else TH.label_qss(self._t, "caption"))
         self._purge_btn.setEnabled(bool(chosen))
         self._purge_btn.setText(
             "Safe Purge" if not chosen else f"Safe Purge ({len(chosen)})")
