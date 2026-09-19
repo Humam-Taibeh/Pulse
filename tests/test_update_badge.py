@@ -467,13 +467,22 @@ def test_i_the_sidebar_footer_is_off_the_text_floor(mode):
 
 
 def test_i_the_footer_no_longer_reports_update_status():
-    """Exactly one surface owns the answer. Two would drift."""
+    """ONE METHOD DECIDES THE ANSWER; every surface that shows it is driven
+    from here, so two surfaces can share a vocabulary without drifting
+    into two answers. v10.15 added a second synced surface (the Settings
+    page's Updates section) rather than replacing the badge with it — the
+    invariant this pins is not "exactly one surface", it is "no surface
+    computes or reports the answer except through this method's own
+    set_state / set_update_state calls"."""
     import frontend.main as main_mod
     source = inspect.getsource(main_mod.PulseApp._on_update_checked)
     assert "_side_footer.setText" not in source, (
         "the footer is reporting update status again — that job belongs to "
         "the UpdateBadge, which is legible at rest")
     assert "update_badge.set_state" in source
+    assert "settings_view.set_update_state" in source, (
+        "the Settings page's Updates section fell out of sync with this "
+        "method — it must be told the same answer at the same call sites")
 
 
 def test_i_both_entry_points_share_one_handler():
@@ -490,3 +499,39 @@ def test_i_both_entry_points_share_one_handler():
     assert "self.update_badge.clicked.connect(self._on_footer_clicked)" in source
     assert ("self.status_rail.version_clicked.connect(self._on_footer_clicked)"
             in source)
+
+
+def test_j_settings_agrees_with_the_badge_after_a_real_check(window, qapp):
+    """The actual proof of test_i_the_footer_no_longer_reports_update_
+    status's static claim: drive the real result handler with a real
+    Update and see both surfaces land on the same word, rather than only
+    checking that both call sites are present in source.
+
+    `_update_check_silent = True` keeps this off the modal-dialog path
+    (`_open_pending_update` -> SelfUpdateDialog.exec()), which is the
+    manual-check branch and not what is under test here — see
+    test_close_guard.py for why a stray exec() during teardown is the
+    dangerous version of this call."""
+    from utils import updater
+
+    fake = updater.Update(
+        version="99.0.0", tag="v99.0.0", notes="Test release notes.",
+        url="https://example.invalid/PULSE_Setup_v99.0.0.exe",
+        size=1024, sums_url="https://example.invalid/SHA256SUMS",
+        asset_name="PULSE_Setup_v99.0.0.exe", prerelease=False)
+    window._update_check_silent = True
+    try:
+        window._on_update_checked(fake)
+        qapp.processEvents()
+        assert (window.update_badge.text()
+                == window.settings_view._update_caption.text()
+                == UpdateBadge.TEXTS["available"])
+
+        window._on_update_checked(None)
+        qapp.processEvents()
+        assert (window.update_badge.text()
+                == window.settings_view._update_caption.text()
+                == UpdateBadge.TEXTS["current"])
+    finally:
+        window._on_update_checked(None)
+        qapp.processEvents()

@@ -12040,6 +12040,7 @@ class SettingsView(QWidget):
     restore_point_requested = Signal()
     export_requested = Signal()
     import_requested = Signal()
+    update_check_requested = Signal()
 
     #: (mode, label, hint). The hint matters most for System, which is the
     #: only one whose answer can change while the app is open.
@@ -12052,7 +12053,8 @@ class SettingsView(QWidget):
          "Follow Windows' own light/dark setting, and change when it does."),
     )
 
-    GROUPS = ("General", "System Protection", "Configuration Management")
+    GROUPS = ("General", "System Protection", "Configuration Management",
+              "Updates")
 
     def __init__(self, t: dict, is_admin: bool = False,
                  parent: QWidget | None = None):
@@ -12101,6 +12103,7 @@ class SettingsView(QWidget):
         self._build_general()
         self._build_protection()
         self._build_configuration()
+        self._build_updates()
         self._host_lay.addStretch()
 
         self.apply_theme(t)
@@ -12211,6 +12214,33 @@ class SettingsView(QWidget):
         row.addStretch()
         inner.addLayout(row)
 
+    # -- Updates ----------------------------------------------------------
+    def _build_updates(self):
+        """A second, synced surface onto the SAME update-check pipeline the
+        sidebar footer's UpdateBadge already drives — not a private copy of
+        it. main.py calls set_update_state at the exact three points it
+        already calls update_badge.set_state, and reuses UpdateBadge.TEXTS
+        so the two surfaces cannot drift into different wording for the
+        same state."""
+        inner = self._group("Updates")
+        self._update_caption = self._caption(UpdateBadge.TEXTS["idle"])
+        inner.addWidget(self._update_caption)
+
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["sm"])
+        self._update_btn = QPushButton("Check for Updates")
+        self._update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_btn.setFixedHeight(TH.CONTROL_H)
+        self._update_btn.setToolTip("Checks GitHub for a newer Pulse release.")
+        self._update_btn.clicked.connect(self.update_check_requested.emit)
+        row.addWidget(self._update_btn)
+        row.addStretch()
+        inner.addLayout(row)
+
+    def set_update_state(self, state: str, tooltip: str = ""):
+        self._update_caption.setText(UpdateBadge.TEXTS.get(state, state.upper()))
+        self._update_caption.setToolTip(tooltip)
+
     # -- theme choice ----------------------------------------------------
     def theme_modes(self) -> tuple:
         return tuple(mode for mode, _label, _hint in self.THEME_CHOICES)
@@ -12310,7 +12340,8 @@ class SettingsView(QWidget):
             label.setStyleSheet(TH.report_subcard_title_qss(t))
         for label in self._captions:
             label.setStyleSheet(TH.label_qss(t, "caption"))
-        for button in (self._restore_btn, self._export_btn, self._import_btn):
+        for button in (self._restore_btn, self._export_btn, self._import_btn,
+                       self._update_btn):
             button.setStyleSheet(TH.action_button_qss(t, accent))
         self._sync_theme_buttons()
 

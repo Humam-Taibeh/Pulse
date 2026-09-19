@@ -2091,6 +2091,7 @@ class PulseApp(QMainWindow):
         self.settings_view.restore_point_requested.connect(self._create_restore_point)
         self.settings_view.export_requested.connect(self._export_setup)
         self.settings_view.import_requested.connect(self._import_setup)
+        self.settings_view.update_check_requested.connect(self._on_footer_clicked)
         self.settings_view.set_theme_mode(self.theme.mode)
         self.stack.addWidget(self.settings_view)
         content.addWidget(self.stack, 1)
@@ -2563,6 +2564,7 @@ class PulseApp(QMainWindow):
         # user asked for reports that it is running.
         self.update_badge.set_state("checking", "Checking for updates…",
                                     loud=not silent)
+        self.settings_view.set_update_state("checking", "Checking for updates…")
         thread = QThread(self)
         worker = SelfUpdateCheckWorker(version.VERSION, version.CHANNEL)
         worker.moveToThread(thread)
@@ -2609,6 +2611,9 @@ class PulseApp(QMainWindow):
             self.update_badge.set_state(
                 "current", f"Pulse v{version.VERSION} is the latest release. "
                            "Click to check again.")
+            self.settings_view.set_update_state(
+                "current", f"Pulse v{version.VERSION} is the latest release. "
+                           "Click to check again.")
             if not silent:
                 self.toasts.show(
                     "success", f"You're up to date — v{version.VERSION}.", 3500)
@@ -2623,6 +2628,9 @@ class PulseApp(QMainWindow):
         # emphatic on hover. It is now a toned, plated, AA-at-rest chip
         # sitting on top of that line — see theme.update_badge_qss.
         self.update_badge.set_state(
+            "available", f"Pulse v{update.version} is available — "
+                         "click to install.")
+        self.settings_view.set_update_state(
             "available", f"Pulse v{update.version} is available — "
                          "click to install.")
         if silent:

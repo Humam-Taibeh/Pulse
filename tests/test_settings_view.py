@@ -43,13 +43,14 @@ def settings(window, qapp):
 
 class TestTheGroupedPage:
 
-    def test_it_offers_the_three_declared_groups(self, settings, qapp):
+    def test_it_offers_the_four_declared_groups(self, settings, qapp):
         """Windows 11's own settings shape: titled groups of related rows,
         not a flat column of controls."""
         from PySide6.QtWidgets import QLabel
 
         titles = {label.text() for label in settings.findChildren(QLabel)}
-        for group in ("General", "System Protection", "Configuration Management"):
+        for group in ("General", "System Protection",
+                       "Configuration Management", "Updates"):
             assert group in titles, f"no {group!r} group on the settings page"
 
     def test_it_owns_no_worker_thread(self, settings):
@@ -59,6 +60,20 @@ class TestTheGroupedPage:
 
         assert not settings.findChildren(QThread)
         assert not [v for v in vars(settings).values() if isinstance(v, QThread)]
+
+    def test_every_group_shares_identical_card_and_title_qss(self, settings):
+        """Cheap insurance against a new group (Updates, or whatever comes
+        next) quietly drifting from the padding/elevation the others
+        already settled on — every card on this page is the SAME object
+        (see _group), so a styling difference between them would mean one
+        of them stopped going through it."""
+        accent = settings._t["accent"]
+        expected_card = TH.report_subcard_qss(settings._t, accent)
+        expected_title = TH.report_subcard_title_qss(settings._t)
+        for card in settings._cards:
+            assert card.styleSheet() == expected_card
+        for label in settings._group_titles:
+            assert label.styleSheet() == expected_title
 
 
 class TestTheThemeChoice:
@@ -164,6 +179,35 @@ class TestConfigurationManagement:
         text = (settings._import_btn.text() + " "
                 + settings._import_btn.toolTip()).lower()
         assert "apply" in text or "run" in text
+
+
+class TestTheUpdatesSection:
+    """A second, synced surface onto the SAME update-check pipeline the
+    sidebar footer's UpdateBadge already drives — not a private copy of
+    it. See tests/test_update_badge.py for the window-level proof that
+    main.py keeps both surfaces in agreement; these two are the page's own
+    contract in isolation."""
+
+    def test_the_button_asks_main_not_a_private_worker(self, settings, qapp):
+        """Same shape as every other action on this page (see
+        TestTheGroupedPage.test_it_owns_no_worker_thread for the page-wide
+        "no worker thread" guarantee this relies on): a click can only
+        ever ASK, never itself perform the check."""
+        fired: list[bool] = []
+        settings.update_check_requested.connect(lambda: fired.append(True))
+        settings._update_btn.click()
+        qapp.processEvents()
+        assert fired == [True]
+
+    def test_set_update_state_reflects_every_state(self, settings):
+        """Reuses UpdateBadge.TEXTS rather than declaring its own
+        vocabulary, so the chrome badge and this section cannot drift into
+        different words for the same state."""
+        from frontend.widgets import UpdateBadge
+
+        for state, text in UpdateBadge.TEXTS.items():
+            settings.set_update_state(state)
+            assert settings._update_caption.text() == text
 
 
 # ============================================================
