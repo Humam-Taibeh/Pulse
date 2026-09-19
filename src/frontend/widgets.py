@@ -1950,6 +1950,19 @@ class NavButton(QPushButton):
         # "&&" or the button renders "Maintenance _Repair". The icon is now
         # PAINTED (a plaque), so only the title is button text.
         super().__init__(title.replace("&", "&&"))
+        # PINNED TO LTR AT THE QT LEVEL, ALWAYS — set_rtl (not inherited
+        # layoutDirection) is the one source of truth for this button's own
+        # mirroring, in both its QSS and its painted plaque. The sidebar
+        # this button lives in DOES flip to RTL for Arabic (so its search
+        # box's icon+text and the footer's own layout mirror automatically
+        # through Qt's normal inheritance) — a button that inherited that
+        # too would have Qt auto-mirror `text-align: right` a SECOND time
+        # on top of nav_button_qss's own manual flip, landing the text back
+        # at physically-left while _paint_plaque's raw pixel math (which
+        # Qt's cascade cannot touch) had already moved the plaque right —
+        # text and icon fighting over the same space. Measured on this
+        # exact button before this line existed.
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self._glyph_key = glyph_key
         # v10: the module's accent KEY, not a frozen hex — re-resolved on
         # every theme switch inside apply_theme (see theme.resolve_accent).
