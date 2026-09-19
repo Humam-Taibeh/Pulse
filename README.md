@@ -16,7 +16,7 @@
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![Release](https://img.shields.io/github/v/release/Humam-Taibeh/Pulse?label=release&color=blueviolet&logo=github)](https://github.com/Humam-Taibeh/Pulse/releases/latest)
-[![Tests](https://img.shields.io/badge/tests-1%2C566%20pytest%20%2B%20357%20Pester-success)](#-testing--continuous-integration)
+[![Tests](https://img.shields.io/badge/tests-1%2C592%20pytest%20%2B%20357%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml)
 [![Release build](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml/badge.svg)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
@@ -114,8 +114,9 @@ The execution engine is built for **observability and control**, not fire-and-fo
 - **A static obsidian canvas** — one two-stop gradient (`#101216` → `#090A0B`), and nothing else. v10.5 froze the ambient field; v10.6 deleted it, along with its OpenGL renderer, its capability probe, its frame governor and the occlusion system that existed to make a moving background affordable. An idle window now paints nothing at all
 - **Three theme modes** — Premium Dark, Clean Light, and **System Sync**, which follows Windows' own light/dark setting and changes with it while the app is open. What is read from Windows is the *preference*, never a colour: every token still comes from Pulse's own two palettes, whose semantic per-module accents resolve differently per theme so light mode clears its contrast floors
 - **`Ctrl+K` command palette** over the whole catalog, plus a full keyboard layer (grid navigation, module jumps, filter, shortcut sheet)
-- **A Settings surface** — grouped the way Windows 11 groups its own: appearance, system protection (the newest restore point, and a button to take one), and configuration management. *Export Setup* writes this PC's applied tweaks and catalogued apps to a `.pulse.json` profile and *Import & Apply* runs one on another machine — a profile **is** a playbook, so it is validated against the live catalog and can never name an operation the GUI could not already run
-- **Durable preferences** — the theme CHOICE (including "follow Windows"), window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
+- **A Settings surface** — grouped the way Windows 11 groups its own: appearance, system protection (the newest restore point, and a button to take one), configuration management, and updates (a second, synced view onto the same self-updater check the sidebar badge already drives — one source of truth, two places to read it). *Export Setup* writes this PC's applied tweaks and catalogued apps to a `.pulse.json` profile and *Import & Apply* runs one on another machine — a profile **is** a playbook, so it is validated against the live catalog and can never name an operation the GUI could not already run. Pinned to the very bottom of the sidebar, past the module list, matching the Fluent/Windows-11 placement for a Settings destination
+- **English / العربية display language** — a manual choice under Settings → General, scoped to the surfaces a user reaches before choosing what to do (Settings itself, the sidebar's own chrome, shared dialog chrome), not a full-app translation yet. Choosing Arabic mirrors the shell's layout direction independently of what has been translated so far — RTL is a layout question, not a translation one — with [frontend/i18n.py](src/frontend/i18n.py) naming exactly what still reads in English and why
+- **Durable preferences** — the theme CHOICE (including "follow Windows"), the display language, window geometry and drawer state survive restarts; per-task history powers each card's *"Ran 3d ago · ~2m"* caption and its `ACTION DUE` badge
 - **Self-updater** ([utils/updater.py](src/utils/updater.py)) with SHA-256 verification and a silent-on-failure network policy, wired into the GUI via a background check on launch plus the sidebar footer's version label ("Check for updates" on click). Live from v10.4 onward: `tools/build_release.ps1` emits `SHA256SUMS` beside the installer, which is what the updater verifies a download against — see [Safety Model](#-safety-model).
 
 ---
@@ -136,7 +137,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` on — the manifest requests `requireAdministrator`, so every launch elevates (v10.7). See [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (1,566) + **Pester 5+** (357) | 80 tests marked `native` need a real window station |
+| Tests | **pytest 8** (1,592) + **Pester 5+** (357) | 80 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -253,7 +254,7 @@ Pulse/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
 │   └── fetch_app_icons.py           # Build-time vendor icon fetcher
 │
-├── tests/                           # 1,566 collected pytest tests
+├── tests/                           # 1,592 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
 │   ├── backend/                     # 357 Pester tests (safety, startup, leftovers, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
@@ -509,7 +510,7 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 1,566-test regression suite |
+| `python -m pytest tests` | The full 1,592-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
 | `Invoke-Pester -Path tests\backend` | The 357-test Pester suite (backup/restore, startup, leftovers, hardening) |
@@ -613,7 +614,7 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 1,566 collected tests
+python -m pytest tests -v          # 1,592 collected tests
 Invoke-Pester -Path tests\backend  # 357 tests
 ```
 
@@ -708,6 +709,8 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] Startup Manager lists third-party sign-in and boot scheduled tasks, and reports the boot delay Windows actually measured instead of an estimate wherever the Diagnostics-Performance log is readable *(v10.13.0)*
 - [x] A Settings surface with System Sync theming, a restore-point panel, and setup profiles that export this PC's tweaks and apps as a validated playbook *(v10.14.0)*
 - [x] The bloatware purge gained quick-select pills and a live filter, and every module header reports how much of it is already applied *(v10.14.0)*
+- [x] Settings gained an Updates section synced to the sidebar badge's own update-check pipeline, and the Settings nav entry — found frozen at its launch-time theme — now re-skins live and sits pinned to the very bottom of the sidebar *(v10.15.0)*
+- [x] An English/Arabic display language with RTL layout mirroring, scoped to Settings, the sidebar's own chrome, and shared dialog chrome *(v10.15.0)*
 
 **Planned**
 
@@ -716,6 +719,7 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [ ] A *remaining*-time estimate on top of the state pill's elapsed clock, derived from the duration history
 - [ ] **Scheduled unattended maintenance** via Task Scheduler, summarized on the next launch
 - [ ] **Persistent runspace** — one long-lived PowerShell host fed queued tasks, eliminating the ~400 ms per-step module-load cost a playbook pays today
+- [ ] **The rest of the app in Arabic** — every per-module task-card title/description, the live console log, playbooks and the Health Report, plus `UpdateBadge`'s own state words, all still English after v10.15.0's foundation pass (see [frontend/i18n.py](src/frontend/i18n.py) for the exact boundary)
 
 ---
 

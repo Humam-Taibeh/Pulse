@@ -15,6 +15,84 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.15.0] — 2026-09-20
+
+### Added — Updates, one source of truth in two places
+
+- **Settings gained a fourth group, "Updates".** The update-check pipeline
+  was already fully centralised in `main.py` (`_on_footer_clicked` ->
+  `_check_for_updates` -> `_on_update_checked`); the sidebar's `UpdateBadge`
+  was its only on-screen answer. Settings now shows the same answer beside
+  it — `SettingsView.set_update_state` is called at the exact three points
+  `update_badge.set_state` already is, and reuses `UpdateBadge.TEXTS`
+  rather than declaring its own vocabulary, so the two surfaces cannot
+  drift into different words for the same state. The "Check for Updates"
+  button only *asks*, through the same `update_check_requested` ->
+  `_on_footer_clicked` wiring every other entry point already shares — the
+  page still owns no worker thread.
+- **A structural consistency test locks in the new group's card padding
+  and elevation** against the three that came before it, so a future
+  group cannot quietly drift from `_group()`'s shared surface.
+
+### Fixed — a Settings nav entry that never re-skinned
+
+- **The Settings button was themed once at construction and never
+  again.** `_apply_theme`'s live-switch sweep re-skinned every
+  `_nav_buttons` row, the footer and the titlebar, but the Settings
+  button — deliberately excluded from `_nav_buttons` so it doesn't shift
+  module indices — was accidentally excluded from the sweep too. A
+  session that changed theme after launch would see every other row
+  repaint while "Settings" kept rendering the palette it was built with,
+  which on a dark-to-light switch reads as illegibly faint text on the
+  new background. Fixed by adding it to the sweep explicitly, with a
+  reskin-on-switch test and a measured AA contrast floor on the resting
+  label so a literal colour regression here fails the build too. The
+  button is also now pinned past the module list's stretch, immediately
+  above the session footer — the Fluent/Windows-11 placement for a
+  Settings destination, rather than sitting directly under the modules.
+
+### Added — an English/Arabic display language, and RTL where it applies
+
+- **A manual choice, not "follow Windows".** `frontend.i18n` is a flat
+  `{key: {"en", "ar"}}` string table plus `tr()`/`is_rtl()`, reading no OS
+  locale API — unlike theme's System Sync, there is nothing here for the
+  frontend's exclusive-OS-read guard to cover. `utils.prefs` gained
+  `language()`/`set_language()`, the same shape as `theme_mode()`/
+  `set_theme_mode()`.
+- **Scoped to what a user reaches before choosing what to do**, not a
+  full-app translation: the whole Settings page (including a new language
+  row in General, English / العربية), the sidebar's own chrome (the
+  search doorway, the "MODULES" label, the Settings entry, the footer's
+  theme-toggle and version tooltips), and `ConfirmDialog`'s fixed chrome
+  (Cancel / Proceed / the danger sentence). `item['title']`/`item['desc']`
+  stay English, same boundary as the rest of `menu_structure.py`'s card
+  catalog; the restore-point summary line stays English too, since it is
+  Windows' own checkpoint dates and descriptions rather than static copy.
+- **The four module nav buttons deliberately keep their English labels.**
+  Each one is also its destination page's own header, and that page's
+  tagline, filter and every card are still English — translating only the
+  sidebar button would read as broken, not as a foundation. The four
+  names travel together with the rest of their page's content as one
+  future unit (see Roadmap).
+- **RTL is a layout direction, not a translation detail**, and the two
+  are handled as different questions: choosing Arabic mirrors the
+  sidebar's layout — including the four still-English module buttons,
+  because a half-mirrored rail reads as more broken than a fully-mirrored
+  one still carrying some English labels. Qt's automatic mirroring covers
+  QSS `text-align`/padding and standard layouts, but not
+  `NavButton._paint_plaque`'s raw `QPainter` box, which is why
+  `NavButton.set_rtl` exists — it moves both the QSS and the painted
+  anchor from one flag, verified by a pixel test that proves the plaque
+  actually moves rather than merely that the method runs without raising.
+- **Not translated yet, and said so rather than left to be discovered:**
+  every per-module task-card title and description, the live PowerShell
+  console log, playbooks, the Health Report, and `UpdateBadge`'s own
+  state words (which stay in lockstep with Settings' Updates section by
+  staying English in both places at once). Tracked as follow-up work
+  rather than attempted here.
+
+---
+
 ## [10.14.0] — 2026-09-12
 
 ### Added — a Settings surface
