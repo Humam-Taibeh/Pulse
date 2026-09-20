@@ -514,14 +514,10 @@ WEIGHT = {
 CHIP_TONE_WHISPER = 0.08
 
 #: The padding every micro status pill in the app shares, as (vertical,
-#: horizontal). Named because THREE things have to agree on it and two of
-#: them are not QSS: state_chip_qss and update_badge_qss both claim to be
-#: "the same object one surface apart" (update_badge_qss says so in as many
-#: words), and widgets.UpdatePill measures its own fixed width from the
-#: horizontal value. They did not agree — the chip ran 2px vertical and the
-#: pill 3px, so the documented invariant had been false since the pill
-#: shipped, and the pill's width constant carried the horizontal figure as
-#: a bare `8` that nothing tied back to the sheet.
+#: horizontal). Named because it has to agree with state_chip_qss's own
+#: pill geometry — they are "the same object one surface apart" — and
+#: didn't, for a while: the chip ran 2px vertical against this value's
+#: 3px, so the documented invariant had been false since it shipped.
 #:
 #: v13 settles it at 3/9. Vertical 3 because 2 gave an 18px chip around a
 #: 9px cap-height label — a tag squeezed onto its text rather than a pill
@@ -1379,8 +1375,8 @@ _DARK = {
 
     # status — was GitHub-dark grade; v12.1 takes it a step quieter still.
     # These are the tones that appear on a tinted chip of their OWN hue
-    # (state_chip_qss, update_badge_qss), where saturation is what makes a
-    # badge shout. Draining it there costs nothing and buys the most.
+    # (state_chip_qss), where saturation is what makes a badge shout.
+    # Draining it there costs nothing and buys the most.
     "ok":          "#6fb273",
     "warn":        "#c09e63",
     "err":         "#de695f",
@@ -1993,11 +1989,10 @@ def card_meta_pill_qss(t: dict, accent: str = "") -> str:
     """
 
 
-#: Type and geometry for a micro status pill, written once. Both callers
-#: (state_chip_qss, update_badge_qss) compose this rather than restating it,
-#: which is what makes "the same object one surface apart" a fact rather
-#: than a comment — see CHIP_PAD_V for what happened while it was only a
-#: comment.
+#: Type and geometry for a micro status pill, written once and composed
+#: by state_chip_qss rather than restated per verdict — see CHIP_PAD_V
+#: for what happened elsewhere while a shared geometry was only a
+#: comment instead of a constant.
 #:
 #: The 1px tracking is load-bearing at this size and not decoration: 9px
 #: all-caps set solid reads as a grey smear, and opening it up is the
@@ -2252,27 +2247,18 @@ RAIL_INSET = (CONTROL_H - RAIL_BUTTON) // 2 - 1
 
 
 def status_rail_qss(t: dict) -> str:
-    """THE SIDEBAR'S BOTTOM STATUS RAIL (v15) — one container holding the
-    three things that describe the SESSION rather than the work: what
-    theme is on, what version is running (and the way to check for a newer
-    one), and whether this process holds an Administrator token.
+    """THE SIDEBAR'S BOTTOM STATUS RAIL — one container holding the ONE
+    thing that describes the SESSION rather than the work: whether this
+    process holds an Administrator token.
 
-    It replaces three separately-styled footer surfaces that had
-    accumulated one per feature:
-
-        elevate_button_qss   a full-width amber CTA, or
-        admin_status_qss     a full-width green chip in its place,
-        sidebar_version_qss  a full-width ghost text button under it,
-
-    plus a fourth control that was not even in the sidebar — the theme
-    toggle, which sat in the title bar and needed a hole punched through
-    the HTCAPTION drag strip to stay clickable (the `_over_theme_button`
-    carve-out in main.nativeEvent, now deleted along with it).
-
-    Four controls, four visual languages, three of them full-width and
-    stacked, for a total of about 110px of rail spent saying things the
-    user glances at once a session. As one 36px row they cost a third of
-    that and finally read as what they are: chrome, not choices.
+    v15 consolidated four controls (a theme toggle that had lived in the
+    title bar, an elevation CTA/chip, a version/"check for updates" line,
+    and the update badge) into one 36px row. v16 goes further and removes
+    the theme toggle and the version line from chrome entirely — both now
+    live exclusively in Settings — on the reasoning that a control for
+    something touched once a session, if ever, does not earn a permanent
+    seat in the busiest real estate in the window. What is left is
+    session state a technician genuinely glances at repeatedly.
 
     The container itself is deliberately quiet — the plaque well's neutral
     fill and the chrome hairline, no accent anywhere. Colour in this row
@@ -2285,22 +2271,6 @@ def status_rail_qss(t: dict) -> str:
             border: 1px solid {t['panel_line']};
             border-radius: {RADIUS['plaque']}px;
         }}
-    """
-
-
-def rail_button_qss(t: dict) -> str:
-    """A neutral icon-only control inside the status rail (the theme
-    toggle). Ghost at rest so the rail reads as one surface; the shared
-    neutral hover pill on the pointer, exactly like every other row-shaped
-    thing in the app (see the note on `row_hover`)."""
-    return f"""
-        QPushButton {{
-            background: transparent; border: none;
-            border-radius: {inner_radius(RADIUS['plaque'], 2)}px;
-            color: {t['text_muted']}; font-size: {TYPE['label']}px;
-        }}
-        QPushButton:hover {{ background: {t['row_hover']}; color: {t['text']}; }}
-        QPushButton:pressed {{ background: {alpha(t['accent'], 0.18)}; color: {t['text']}; }}
     """
 
 
@@ -2344,13 +2314,6 @@ def rail_state_qss(t: dict, elevated: bool) -> str:
             color: {tone};
         }}
     """
-
-
-def rail_divider_qss(t: dict) -> str:
-    """The 1px vertical hairline between the rail's cells. Same token as
-    every other separator in the app (see hairline_qss, its horizontal
-    twin) — painted as a background so a 1px-wide frame renders it."""
-    return f"background: {t['panel_line']}; border: none;"
 
 
 def titlebar_button_qss(t: dict, hover: str) -> str:
@@ -2854,107 +2817,6 @@ def state_pill_qss(t: dict) -> str:
             background: {alpha(t['warn'], 0.10)};
             border: 1px solid {alpha(t['warn'], 0.45)}; }}
     """
-
-
-#: Alpha of the tone hairline on the update badge, per interaction state.
-#:
-#: THE PLATE NEVER MOVES BETWEEN THESE. Hover and press are carried by the
-#: ring alone, so the pill's text contrast is a CONSTANT rather than a
-#: function of where the pointer is — which is the whole point of the
-#: component: the contrast floor had to hold in STEADY STATE, not only
-#: once something lit it up.
-#:
-#: The first draft deepened the plate on hover instead, and measured:
-#:
-#:      own-hue tint 0.12 ... 4.55:1 worst (light/accent)  <- 0.05 margin
-#:      own-hue tint 0.13 ... 4.49:1 worst (light/warn)    <- under AA
-#:
-#: which is exactly the badge-tint trap state_chip_qss documents, arrived
-#: at from the other direction. A ring has no such cost: it is not the
-#: surface the text sits on, so it can go to full saturation for free.
-UPDATE_BADGE_RING = {
-    "rest":       0.45,   # resting hairline — the StatePill weight
-    "actionable": 0.60,   # 'available' at rest: hotter, because it is a CTA
-    "hover":      0.80,   # pointer is over the pill
-    "press":      1.00,   # full tone — the click acknowledged on the way down
-}
-
-#: Which status token each pill state wears. Amber for 'available' rather
-#: than the brand violet: measured on this plate, accent2 lands at 4.67:1
-#: in dark — a pass with 0.17 to spare — while warn holds 5.35:1, and the
-#: app already spends amber on "this needs your attention" (state_chip_qss
-#: 'due'/'mixed'). Red stays reserved for failure.
-UPDATE_BADGE_TONES = {"checking": "accent", "current": "ok", "available": "warn"}
-
-
-def update_badge_qss(t: dict) -> str:
-    """The self-updater's badge in the SIDEBAR FOOTER (widgets.UpdateBadge)
-    — CHECKING / UP TO DATE / UPDATE READY.
-
-    One string per theme switch: states are dynamic-property flips, the
-    same repolish mechanic StatePill and NavButton use, so a transition
-    never rebuilds QSS and nothing here is driven by a timer.
-
-    v14 MOVED IT OFF THE ACTIVITY RAIL, and the move is a decluttering
-    decision rather than a styling one. The rail's job is reporting the
-    RUNNING TASK, and it was carrying seven controls to do it; the sidebar
-    footer was already the manual "check for updates" trigger, so the
-    answer and the control now live in one place instead of two that have
-    to be kept in sync. The badge sits directly above that footer and is
-    shown ONLY when it has something actionable to say — an update ready,
-    or a check the user asked for that is still running. "Up to date" is
-    reported by a toast and then gets out of the way, because a chip that
-    permanently says nothing is happening is chrome.
-
-    THE FILL IS AN OPAQUE PLATE AT THE CARD TIER carrying a whisper of its
-    own tone — the state_chip_qss recipe, for the same two reasons. The
-    ratio is one of them; the other is that an opaque plate makes the badge
-    read identically wherever it lands, so it reports its own state and
-    nothing about the panel beneath it.
-
-    Measured, text on its own plate:
-
-        state      tone      dark      light
-        checking   accent    5.53:1    4.84:1
-        current    ok        5.71:1    4.85:1
-        available  warn      5.76:1    4.81:1
-        idle       muted     8.86:1    8.28:1
-
-    All six clear AA AT REST, which is the requirement this component
-    exists to meet: it replaced a footer line that carried the same status
-    at the `caption` role (10px/500 on text_faint, the app's quietest step)
-    and only lifted to a legible weight once hovered.
-    """
-    # Geometry is state_chip_qss's, to the pixel, because both compose the
-    # SAME string (_CHIP_TYPE) rather than restating it — which is how it
-    # came to be untrue: this pill ran 3px of vertical padding against the
-    # chip's 2px for as long as it has existed. These are the same kind of
-    # object one surface apart, and the rail cannot afford a wider one
-    # anyway (see UpdatePill's width note).
-    base = _CHIP_TYPE
-    # Resting/neutral: no tone to whisper, so the plate is the card tier
-    # flat, lifted off the rail by the panel line alone — the same
-    # construction state_chip_qss gives its neutral DEFAULT verdict.
-    out = [f"""
-        QPushButton#updateBadge {{ {base}
-            color: {t['text_muted']};
-            background: {t['card']};
-            border: 1px solid {t['panel_line']}; }}
-    """]
-    for state, key in UPDATE_BADGE_TONES.items():
-        color = t[key]
-        plate = blend(t['card'], alpha(color, CHIP_TONE_WHISPER))
-        rest = UPDATE_BADGE_RING["actionable" if state == "available" else "rest"]
-        for pseudo, ring in (("", rest),
-                             (":hover", UPDATE_BADGE_RING["hover"]),
-                             (":pressed", UPDATE_BADGE_RING["press"])):
-            out.append(f"""
-        QPushButton#updateBadge[state="{state}"]{pseudo} {{ {base}
-            color: {color};
-            background: {plate};
-            border: 1px solid {alpha(color, ring)}; }}
-            """)
-    return "".join(out)
 
 
 def checkbox_qss(t: dict, accent: str) -> str:
@@ -4072,79 +3934,6 @@ def label_qss(t: dict, role: str) -> str:
     size, weight, color_key, extra = _LABEL_ROLES[role]
     return (f"color: {t[color_key]}; font-size: {size}; font-weight: {weight};"
             f"background: transparent; border: none; {extra}")
-
-
-def sidebar_version_qss(t: dict) -> str:
-    """The identity line at the centre of the status rail, which is ALSO
-    the self-updater's manual "check for updates" button (reported through
-    StatusRail.version_clicked to main.PulseApp._on_footer_clicked).
-
-    v15 moved it INTO the rail rather than leaving it as a full-width
-    button beneath one; the styling did not have to change, which is the
-    useful part of the story — it was already a quiet ghost control, and a
-    quiet ghost control is exactly what a status bar cell wants.
-
-    Its size, weight and tracking are DERIVED from the `caption` label role
-    it replaced, not retyped, so the line that closes the rail looks
-    exactly as quiet as it always did — a control announcing itself here
-    would re-weight a zone deliberately kept calm. (The COLOUR is no longer
-    taken from that role; see the v12.1 note below.)
-
-    But it is clickable, and it shipped with no hover or press state at
-    all: the affordance was invisible, discoverable only by clicking the
-    version number on a hunch. Hover therefore lifts the text the FULL way
-    (to `text`) over an accent wash and hairline, and press pushes both
-    further while dimming the text, so the click is acknowledged on the
-    way down.
-
-    The first attempt lifted the WASH only one step, to `card_hover`, whose
-    7.5% alpha is all but invisible against the rail — it technically had a
-    hover state and still failed the thing a hover state is for.
-    Discoverability is the requirement, so the contrast has to be legible,
-    not merely present.
-
-    The rest state paints NOTHING — but it reserves the border as
-    `1px solid transparent`, so the hairline appearing on hover cannot
-    reflow the footer by two pixels the moment the pointer arrives.
-
-    v12.1 LIFTS THE REST COLOUR OFF THE FLOOR, and hands its status job
-    away. This line used to carry the updater's answer too ("… · Update
-    available"), appended to its own text — the app's most actionable
-    notification, rendered at the `caption` role: 10px, weight 500, on
-    text_faint, the quietest step in the ramp. Measured on the sidebar
-    panel that is 5.37:1 dark / 5.13:1 light — legible on paper and
-    invisible in practice, and it only became emphatic once the pointer
-    arrived. Update status now lives in the Activity rail's UpdatePill
-    (update_badge_qss), which is toned, plated and AA at rest.
-
-    What stays here is identity — and a control, still: clicking it is
-    the rail's manual "check for updates". A CONTROL MUST NOT SIT ON THE
-    TEXT FLOOR, so the resting colour is derived from the `status` role
-    (text_muted, 7.94:1 light / 9.11:1 dark) while keeping the caption
-    role's size, weight and tracking: the line reads exactly as quiet as
-    it always did, at a weight you can actually resolve.
-    """
-    size, weight, _floor_key, extra = _LABEL_ROLES["caption"]
-    return f"""
-        QPushButton {{
-            background: transparent;
-            border: 1px solid transparent;
-            color: {t['text_muted']};
-            font-size: {size}; font-weight: {weight}; {extra}
-            padding: 7px 4px;
-            border-radius: {RADIUS['control']}px;
-        }}
-        QPushButton:hover {{
-            color: {t['text']};
-            background: {alpha(t['accent'], 0.11)};
-            border: 1px solid {alpha(t['accent'], 0.30)};
-        }}
-        QPushButton:pressed {{
-            color: {t['text_muted']};
-            background: {alpha(t['accent'], 0.20)};
-            border: 1px solid {alpha(t['accent'], 0.44)};
-        }}
-    """
 
 
 # NOTE: apply_blur_behind() (SetWindowCompositionAttribute /

@@ -89,7 +89,7 @@ from frontend.widgets import (  # noqa: E402
     ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
     SoftwareCatalogDialog,
     StartupManagerDialog, StatusRail, StorageAnalyzerDialog, TitleBar,
-    ToolInstallWizardDialog, UpdateBadge, UpdateCenterDialog,
+    ToolInstallWizardDialog, UpdateCenterDialog,
     reanchor_dialog, refit_dialog,
 )
 from frontend import playbooks  # noqa: E402
@@ -2024,9 +2024,8 @@ class PulseApp(QMainWindow):
         # under the modules — the Fluent/Windows-11 pattern of a Settings
         # entry pinned to the very bottom of the rail, separated from
         # "where do I go" by the same gap that used to hold the RECENT
-        # panel. It must land here and not between update_badge and
-        # status_rail: tests/test_update_badge.py pins that the badge sits
-        # directly above the rail with nothing between them.
+        # panel. It must land directly above status_rail: with the update
+        # badge gone (v16), the rail is the only thing left in the footer.
         #
         # The empty accent key resolves to the app's own accent (see
         # theme.resolve_accent) — Settings has no module colour because it
@@ -2036,34 +2035,21 @@ class PulseApp(QMainWindow):
             lambda _checked=False: self.open_settings())
         side.addWidget(self._settings_btn)
 
-        # -- sidebar footer: ONE STATUS RAIL (v15) --------------
-        # What used to be here: a full-width amber "Run as Administrator"
-        # call-to-action (or a full-width green "Administrator" chip in its
-        # place), the update badge, and a full-width ghost version button
-        # under both — three stacked surfaces in three visual registers,
-        # roughly 110px of rail, plus a fourth control (the theme toggle)
-        # that was not even in the sidebar.
-        #
-        # They are one 36px row now. The reasoning, and what the
-        # consolidation costs, is in widgets.StatusRail; the short version
-        # is that all four describe the SESSION rather than the work, and
-        # the app was rendering each of them as though it were an offer.
-        #
-        # The UpdateBadge stays a separate surface directly above the rail,
-        # and that is deliberate rather than an oversight: it is the one
-        # thing here that appears only when it has something actionable to
-        # report, so folding it into a permanent row would either make it
-        # permanent (it is not) or leave a hole in the row (it would).
-        self.update_badge = UpdateBadge(t)
-        self.update_badge.clicked.connect(self._on_footer_clicked)
-        side.addWidget(self.update_badge)
-
-        self.status_rail = StatusRail(t, APP_VERSION, APP_CHANNEL,
-                                      is_admin=self.is_admin,
+        # -- sidebar footer: ONE STATUS RAIL, ONE CONTROL (v16) ----------
+        # v15 consolidated four scattered controls (a title-bar theme
+        # toggle, an elevation CTA/chip, a version/"check for updates"
+        # line, and the update badge) into one 36px row. v16 goes further:
+        # the theme toggle and the version line are REMOVED from chrome
+        # entirely, not just consolidated — both now live exclusively in
+        # Settings (General's theme picker; the Updates group). The update
+        # badge is gone too, replaced by Settings' own synced Updates
+        # section (SettingsView._build_updates). What is left in the
+        # footer is the one thing that is genuinely SESSION state a
+        # technician glances at repeatedly rather than a choice made once:
+        # can this app do its job right now (StatusRail's elevation
+        # indicator).
+        self.status_rail = StatusRail(t, is_admin=self.is_admin,
                                       engine_ok=bool(self.ps1_path))
-        self.status_rail.theme_toggle_requested.connect(
-            self._toggle_theme_animated)
-        self.status_rail.version_clicked.connect(self._on_footer_clicked)
         self.status_rail.elevate_requested.connect(self._relaunch_as_admin)
         side.addWidget(self.status_rail)
         body.addWidget(self._sidebar)
@@ -2101,7 +2087,7 @@ class PulseApp(QMainWindow):
         self.settings_view.restore_point_requested.connect(self._create_restore_point)
         self.settings_view.export_requested.connect(self._export_setup)
         self.settings_view.import_requested.connect(self._import_setup)
-        self.settings_view.update_check_requested.connect(self._on_footer_clicked)
+        self.settings_view.update_check_requested.connect(self._on_update_check_requested)
         self.settings_view.language_requested.connect(self._on_language_chosen)
         self.settings_view.set_theme_mode(self.theme.mode)
         self.stack.addWidget(self.settings_view)
@@ -2168,7 +2154,6 @@ class PulseApp(QMainWindow):
             self._search_btn.setIcon(
                 TH.glyph_icon("search", TH.ICON["inline"], t["text_faint"]))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
-        self.update_badge.apply_theme(t)
         self.status_rail.apply_theme(t)
         self.titlebar.apply_theme(t)
         self._settings_btn.apply_theme(t)
@@ -2275,9 +2260,8 @@ class PulseApp(QMainWindow):
         for btn in (*self._nav_buttons, self._settings_btn):
             btn.set_rtl(rtl)
 
-        # UpdateBadge carries no retranslate of its own: its state words
-        # and every tooltip it shows are decided in _check_for_updates /
-        # _on_update_checked, deferred alongside them (see i18n.py).
+        # The elevation indicator is the only thing left in the footer
+        # (v16) and is fully bilingual — retranslate covers it.
         self.status_rail.retranslate(lang)
 
     def _crossfade(self, apply_change):
@@ -2568,14 +2552,16 @@ class PulseApp(QMainWindow):
             QTimer.singleShot(0, self._refresh_tweak_state)
 
     # ============================================================
-    #  SELF-UPDATE (v10.3) — two manual entry points (the sidebar
-    #  footer's identity line and the UpdateBadge above it, both landing
-    #  on _on_footer_clicked) plus one silent background check on launch.
-    #  This is updater.py's ONLY GUI call site: everything else
-    #  (download/verify progress, the SHA-256 hand-off) lives in
-    #  SelfUpdateDialog, which this only opens.
+    #  SELF-UPDATE (v10.3) — ONE manual entry point (Settings' "Check for
+    #  Updates" button, via update_check_requested) plus one silent
+    #  background check on launch. v16 removed the two chrome-level entry
+    #  points this used to have (the sidebar footer's identity line and
+    #  the UpdateBadge above it) — Settings is now the only place a user
+    #  reaches this from. This is updater.py's ONLY GUI call site:
+    #  everything else (download/verify progress, the SHA-256 hand-off)
+    #  lives in SelfUpdateDialog, which this only opens.
     # ============================================================
-    def _on_footer_clicked(self):
+    def _on_update_check_requested(self):
         if self._update_check_thread is not None:
             return   # a check is already in flight
         if self._pending_update is not None:
@@ -2589,10 +2575,10 @@ class PulseApp(QMainWindow):
         # needs saying so, and they are all the same shape: a QTimer armed
         # during __init__ (2500ms here, 600ms for the applied-state probe)
         # firing into a window the user closed in the meantime. This one
-        # touches update_badge on its first line and then starts a QThread,
-        # so unguarded it produced both halves of the failure: a printed
-        # `libshiboken: Internal C++ object (UpdateBadge) already deleted`,
-        # and a live thread on an object about to be destroyed.
+        # touches settings_view on its first line and then starts a
+        # QThread, so unguarded it produced both halves of the failure: a
+        # printed `libshiboken: Internal C++ object (SettingsView) already
+        # deleted`, and a live thread on an object about to be destroyed.
         if self._shutting_down or self._update_check_thread is not None:
             return
         # `silent` travels on self and the slot below is a BOUND METHOD.
@@ -2620,10 +2606,6 @@ class PulseApp(QMainWindow):
         # write here and the read in the slot happen on the GUI thread, so
         # the companion field cannot race or desync from its request.
         self._update_check_silent = silent
-        # A silent launch probe stays off screen (loud=False); a check the
-        # user asked for reports that it is running.
-        self.update_badge.set_state("checking", "Checking for updates…",
-                                    loud=not silent)
         self.settings_view.set_update_state("checking", "Checking for updates…")
         thread = QThread(self)
         worker = SelfUpdateCheckWorker(version.VERSION, version.CHANNEL)
@@ -2654,7 +2636,7 @@ class PulseApp(QMainWindow):
         urllib GET whose only brake is its own timeout (5s connect, 10s
         read), so it routinely outlives a window closed shortly after
         launch. Every line below then addresses a widget whose C++ side is
-        gone: measured, `libshiboken: Internal C++ object (UpdateBadge)
+        gone: measured, `libshiboken: Internal C++ object (SettingsView)
         already deleted`. It surfaces as a printed RuntimeError today
         because Qt delivers this on the GUI thread — on a worker thread the
         same shape aborts the process, which is exactly what the probe
@@ -2665,12 +2647,6 @@ class PulseApp(QMainWindow):
         silent = self._update_check_silent
         self._pending_update = update
         if update is None:
-            # 'current' never takes a permanent surface (see UpdateBadge) —
-            # this sets the state so the badge stops reporting a check, and
-            # the toast below carries the answer on the manual path.
-            self.update_badge.set_state(
-                "current", f"Pulse v{version.VERSION} is the latest release. "
-                           "Click to check again.")
             self.settings_view.set_update_state(
                 "current", f"Pulse v{version.VERSION} is the latest release. "
                            "Click to check again.")
@@ -2678,18 +2654,11 @@ class PulseApp(QMainWindow):
                 self.toasts.show(
                     "success", f"You're up to date — v{version.VERSION}.", 3500)
             return
-        # The badge says so even for a silent check — a toast alone
-        # disappears; the sidebar is where the answer stays findable.
-        #
-        # This used to be appended to the sidebar footer's own identity
-        # line ("… · Update available") at the `caption` role: 10px,
-        # weight 500, on text_faint. The app's most actionable
-        # notification was rendered in its faintest type and only became
-        # emphatic on hover. It is now a toned, plated, AA-at-rest chip
-        # sitting on top of that line — see theme.update_badge_qss.
-        self.update_badge.set_state(
-            "available", f"Pulse v{update.version} is available — "
-                         "click to install.")
+        # Settings says so even for a silent check — a toast alone
+        # disappears; Settings' Updates section is where the answer stays
+        # findable (v16 — previously this was the sidebar footer's own
+        # UpdateBadge, a toned AA-at-rest chip; that surface is gone and
+        # Settings is now the one place this state lives).
         self.settings_view.set_update_state(
             "available", f"Pulse v{update.version} is available — "
                          "click to install.")
@@ -2697,7 +2666,7 @@ class PulseApp(QMainWindow):
             self.toasts.show(
                 "info",
                 f"Pulse v{update.version} is available — click "
-                "UPDATE READY in the sidebar to install.", 6000)
+                "Check for Updates in Settings to install.", 6000)
         else:
             # Deferred one turn rather than opened inline. This slot runs
             # while worker.finished is still being delivered: thread.quit
@@ -3003,7 +2972,6 @@ class PulseApp(QMainWindow):
             lambda run: self._on_playbook_finished(run, dialog))
 
         self.activity.set_running(True)
-        self.update_badge.set_busy(True)
         self.console.clear_console()
         self.state_pill.set_state("running")
         self._set_status("busy", f"Playbook: {playbook.name} …")
@@ -3049,7 +3017,6 @@ class PulseApp(QMainWindow):
         self._set_status("ok" if kind != "error" else "err", "System Ready")
         self.state_pill.set_state("ok" if kind != "error" else "err")
         self.activity.set_running(False)
-        self.update_badge.set_busy(False)
         # A playbook changes several probed settings at once.
         QTimer.singleShot(400, self._refresh_tweak_state)
         self._refresh_task_history()
@@ -3460,9 +3427,6 @@ class PulseApp(QMainWindow):
         if card is not None:
             card.set_running(True)
         self.activity.set_running(True)   # expand the drawer for live output
-        # Not actionable mid-run: _open_update_dialog refuses to install
-        # while the engine is mutating the machine. See UpdateBadge.
-        self.update_badge.set_busy(True)
         verb = "Previewing" if dry_run else "Executing"
         self._set_status("busy", f"{verb}: {item['title']} …")
         self.state_pill.set_state("running")
@@ -3599,7 +3563,6 @@ class PulseApp(QMainWindow):
             self._running_card = None
         self.shimmer.stop()
         self.stop_btn.hide()
-        self.update_badge.set_busy(False)
         # Collapse the drawer after a brief hold so the final verdict stays
         # readable; a pinned drawer (or one still running) stays open.
         self.activity.set_running(False)

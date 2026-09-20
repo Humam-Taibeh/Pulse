@@ -213,28 +213,45 @@ STRINGS: dict[str, dict[str, str]] = {
         "ar": "يتحقق من GitHub بحثًا عن إصدار أحدث من Pulse.",
     },
 
-    # -- footer chrome: tooltips only (StatusRail / UpdateBadge) --------
-    # Two things in this corner are deliberately NOT in this table:
-    #   * UpdateBadge's own STATE WORDS (CHECKING… / UP TO DATE / UPDATE
-    #     READY) — a class-level constant shared verbatim with
-    #     SettingsView (see widgets.SettingsView.set_update_state)
-    #     precisely so the two surfaces cannot disagree; splitting it by
-    #     language is tracked follow-up, not squeezed into this pass.
-    #   * StatusRail's elevation-status name/detail (Engine missing /
-    #     Running as Administrator / Not elevated…) — six strings behind
-    #     a control most sessions never need to read twice, lower traffic
-    #     than everything else on this page; also follow-up.
-    "footer.theme_toggle_to_light": {
-        "en": "Switch to light theme",
-        "ar": "التبديل إلى الوضع الفاتح",
+    # -- footer chrome: the sidebar's one remaining control -----------
+    # v16 ("ultra-clean footer") removed the theme toggle, the update
+    # badge and the version/identity line from the sidebar footer
+    # entirely — all three live exclusively in Settings now (theme in
+    # General, updates in its own group; the version string is not
+    # shown anywhere in chrome any more, only in Settings' tagline
+    # context). The elevation-status indicator is the ONLY thing left
+    # in the footer, so — unlike the deferred UPDATE_STATE_TEXTS
+    # vocabulary (see widgets.py's own note on that one) — it earns a
+    # translation now rather than staying a documented gap.
+    "footer.elevation.engine_missing_name": {
+        "en": "Engine missing",
+        "ar": "المحرك غير موجود",
     },
-    "footer.theme_toggle_to_dark": {
-        "en": "Switch to dark theme",
-        "ar": "التبديل إلى الوضع الداكن",
+    "footer.elevation.engine_missing_detail": {
+        "en": "The PowerShell engine is missing — Pulse can report but "
+              "cannot run operations.",
+        "ar": "محرك PowerShell غير موجود — يمكن لـPulse الإبلاغ لكن لا "
+              "يمكنه تنفيذ العمليات.",
     },
-    "footer.version_tooltip": {
-        "en": "Check for updates",
-        "ar": "التحقق من التحديثات",
+    "footer.elevation.admin_name": {
+        "en": "Running as Administrator",
+        "ar": "يعمل بصلاحيات المسؤول",
+    },
+    "footer.elevation.admin_detail": {
+        "en": "Running as Administrator — every operation is available.",
+        "ar": "يعمل بصلاحيات المسؤول — كل العمليات متاحة.",
+    },
+    "footer.elevation.not_admin_name": {
+        "en": "Not elevated — relaunch as Administrator",
+        "ar": "غير مرتفع الصلاحيات — أعد التشغيل كمسؤول",
+    },
+    "footer.elevation.not_admin_detail": {
+        "en": "Not elevated. Some system-level operations need "
+              "Administrator rights — click to relaunch (a UAC prompt "
+              "will appear).",
+        "ar": "غير مرتفع الصلاحيات. بعض عمليات مستوى النظام تحتاج "
+              "صلاحيات المسؤول — انقر لإعادة التشغيل (ستظهر نافذة "
+              "UAC).",
     },
 
     # -- shared confirm-dialog chrome -------------------------------------

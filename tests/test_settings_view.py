@@ -182,10 +182,8 @@ class TestConfigurationManagement:
 
 
 class TestTheUpdatesSection:
-    """A second, synced surface onto the SAME update-check pipeline the
-    sidebar footer's UpdateBadge already drives — not a private copy of
-    it. See tests/test_update_badge.py for the window-level proof that
-    main.py keeps both surfaces in agreement; these two are the page's own
+    """Settings is the ONLY surface reporting update state (v16 removed
+    the sidebar footer's UpdateBadge entirely) — these pin the page's own
     contract in isolation."""
 
     def test_the_button_asks_main_not_a_private_worker(self, settings, qapp):
@@ -200,12 +198,9 @@ class TestTheUpdatesSection:
         assert fired == [True]
 
     def test_set_update_state_reflects_every_state(self, settings):
-        """Reuses UpdateBadge.TEXTS rather than declaring its own
-        vocabulary, so the chrome badge and this section cannot drift into
-        different words for the same state."""
-        from frontend.widgets import UpdateBadge
+        from frontend.widgets import UPDATE_STATE_TEXTS
 
-        for state, text in UpdateBadge.TEXTS.items():
+        for state, text in UPDATE_STATE_TEXTS.items():
             settings.set_update_state(state)
             assert settings._update_caption.text() == text
 
@@ -363,15 +358,15 @@ class TestTheSidebarEntry:
 
     def test_the_settings_button_is_reskinned_on_a_theme_switch(
             self, window, qapp):
-        """_apply_theme's sweep re-skins update_badge, status_rail,
-        titlebar and every _nav_buttons entry on a live switch —
-        _settings_btn sat outside _nav_buttons (by design, see the comment
-        at its construction) and outside the sweep too (not by design), so
-        it froze in whatever palette was current at launch. A dark-launched
-        session that later chose light mode would show every other row
-        repaint while "Settings" kept rendering dark mode's light-toned
-        text over the new light panel — faint, low-contrast, exactly the
-        "invisible in light mode" symptom this pins against."""
+        """_apply_theme's sweep re-skins status_rail, titlebar and every
+        _nav_buttons entry on a live switch — _settings_btn sat outside
+        _nav_buttons (by design, see the comment at its construction) and
+        outside the sweep too (not by design), so it froze in whatever
+        palette was current at launch. A dark-launched session that later
+        chose light mode would show every other row repaint while
+        "Settings" kept rendering dark mode's light-toned text over the
+        new light panel — faint, low-contrast, exactly the "invisible in
+        light mode" symptom this pins against."""
         before = window.theme.mode
         try:
             window.theme.set_mode("dark")
@@ -389,11 +384,10 @@ class TestTheSidebarEntry:
             self, window, qapp):
         """Windows-11/Fluent pattern: Settings pinned to the very bottom of
         the rail, separated from the module list by the stretch, but still
-        above the session footer (update badge + status rail) — not mixed
-        into it. Also protects test_update_badge.py's own invariant that
-        the badge sits with nothing between it and the rail, since a naive
-        "pin to the bottom" fix could have inserted Settings AFTER the
-        badge instead of before it.
+        above the session footer — not mixed into it. (v16 removed the
+        update badge from the footer entirely; status_rail's elevation
+        indicator is the only thing left there, so Settings only has to
+        sit directly above THAT now.)
 
         The stretch is a QSpacerItem, not a widget — side.itemAt(i).widget()
         returns None for it, so a widget-only index comparison cannot tell
@@ -412,17 +406,14 @@ class TestTheSidebarEntry:
         settings_index = next(
             i for i, item in enumerate(items)
             if item.widget() is window._settings_btn)
-        badge_index = next(
-            i for i, item in enumerate(items)
-            if item.widget() is window.update_badge)
         rail_index = next(
             i for i, item in enumerate(items)
             if item.widget() is window.status_rail)
 
         assert settings_index > spacer_index, (
             "Settings still sits above the stretch, among the module buttons")
-        assert settings_index < badge_index, (
+        assert settings_index < rail_index, (
             "Settings is not above the footer")
-        assert badge_index + 1 == rail_index, (
-            "the update badge is no longer directly above the status rail "
-            "it shares a handler with")
+        assert settings_index + 1 == rail_index, (
+            "something now sits between Settings and the footer's one "
+            "remaining control")

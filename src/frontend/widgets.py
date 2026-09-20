@@ -3681,37 +3681,27 @@ BreathingIcon = BrandMark
 
 
 # ============================================================
-#  STATUS RAIL — the sidebar's session footer (v15)
+#  STATUS RAIL — the sidebar's session footer (v16: elevation only)
 # ============================================================
 class StatusRail(QFrame):
-    """ONE ROW AT THE BOTTOM OF THE SIDEBAR carrying everything that
-    describes the SESSION rather than the work:
+    """ONE CONTROL AT THE BOTTOM OF THE SIDEBAR: the elevation/engine
+    state indicator, and nothing else.
 
         ┌─────────────────────────────────────┐
-        │  ☾   PULSE v10.6.0 · BETA       ⛨   │
+        │                 ⛨                   │
         └─────────────────────────────────────┘
-           theme      version / check     elevation
-           toggle     for updates         state
+                      elevation state
 
-    It is a consolidation, not a new feature. Every one of these controls
-    already existed; they were in four places, in four visual registers:
-
-      * the THEME TOGGLE lived in the title bar, as a caption-font button
-        that Windows would otherwise have swallowed — the HTCAPTION drag
-        strip had to have a client-side hole punched through it to keep
-        the button clickable (`PulseApp._over_theme_button`, deleted along
-        with the button itself).
-      * ELEVATION was a full-width amber call-to-action, or a full-width
-        green chip in its place, each with its own stylesheet.
-      * the VERSION LINE was a third full-width ghost button under those.
-      * and the UPDATE BADGE sat above all of it (it still does — it is
-        the one surface here that appears only when it has something to
-        say, so it cannot collapse into a permanent row).
-
-    Three stacked full-width surfaces plus a title-bar button is about
-    110px of rail and four different answers to "what does chrome look
-    like". As one 36px row it costs a third of that, and the sidebar's
-    footer finally reads as a status bar instead of a stack of offers.
+    v15 consolidated the theme toggle, the version/"check for updates"
+    line and elevation into one 36px row. v16 goes further: the theme
+    toggle and the version line are REMOVED from chrome entirely — both
+    now live exclusively in Settings (General's theme picker, and the
+    version string is no longer shown as persistent chrome anywhere) —
+    because a control for something a session touches once, if ever,
+    does not earn a permanent seat in the busiest real estate in the
+    window. What is left is the one thing that genuinely IS session
+    state a technician glances at repeatedly: can this app do its job
+    right now.
 
     THE ELEVATION CONTROL IS A STATE INDICATOR FIRST. The packaged app
     ships `requireAdministrator` (main.spec), so it is emerald and
@@ -3721,12 +3711,9 @@ class StatusRail(QFrame):
     a policy-restricted account denied the token.
     """
 
-    theme_toggle_requested = Signal()
     elevate_requested = Signal()
-    version_clicked = Signal()
 
-    def __init__(self, t: dict, version: str, channel: str,
-                 is_admin: bool, engine_ok: bool = True,
+    def __init__(self, t: dict, is_admin: bool, engine_ok: bool = True,
                  parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("statusRail")
@@ -3746,35 +3733,16 @@ class StatusRail(QFrame):
         lay.setContentsMargins(inset, inset, inset, inset)
         lay.setSpacing(TH.SPACE["xxs"])
 
-        self._theme_btn = QPushButton()
-        self._theme_btn.setFixedSize(TH.RAIL_BUTTON, TH.RAIL_BUTTON)
-        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Chrome, not content: the rail must never join a page's tab order
-        # or pull focus off a card grid — the same call every other piece
-        # of app chrome makes.
-        self._theme_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._theme_btn.clicked.connect(self.theme_toggle_requested.emit)
-        lay.addWidget(self._theme_btn)
-
-        self._divider = QFrame()
-        self._divider.setFixedWidth(1)
-        lay.addWidget(self._divider)
-
-        self._version = QPushButton(
-            f"PULSE  v{version}  ·  {channel.upper()}" if channel
-            else f"PULSE  v{version}")
-        self._version.setFlat(True)
-        self._version.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._version.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._version.setToolTip(I18N.tr("footer.version_tooltip", self._lang))
-        self._version.clicked.connect(self.version_clicked.emit)
-        lay.addWidget(self._version, 1)
-
+        # Centred rather than edge-anchored: with only one control left,
+        # a stretch on either side reads as a deliberately minimal footer
+        # rather than a full-width row that happens to be empty.
+        lay.addStretch()
         self._state_btn = QPushButton()
         self._state_btn.setFixedSize(TH.RAIL_BUTTON, TH.RAIL_BUTTON)
         self._state_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._state_btn.clicked.connect(self.elevate_requested.emit)
         lay.addWidget(self._state_btn)
+        lay.addStretch()
 
         self.apply_theme(t)
 
@@ -3793,6 +3761,8 @@ class StatusRail(QFrame):
 
     def _sync_state(self):
         t = self._t
+        tr = I18N.tr
+        lang = self._lang
         ok = self._is_admin and self._engine_ok
         self._state_btn.setStyleSheet(TH.rail_state_qss(t, ok))
         glyph, fallback = TH.glyph("shieldplain")
@@ -3809,17 +3779,14 @@ class StatusRail(QFrame):
         # label is the name; the sentence stays the description, which a
         # reader offers on request.
         if not self._engine_ok:
-            name = "Engine missing"
-            detail = ("The PowerShell engine is missing — Pulse can report "
-                      "but cannot run operations.")
+            name = tr("footer.elevation.engine_missing_name", lang)
+            detail = tr("footer.elevation.engine_missing_detail", lang)
         elif self._is_admin:
-            name = "Running as Administrator"
-            detail = "Running as Administrator — every operation is available."
+            name = tr("footer.elevation.admin_name", lang)
+            detail = tr("footer.elevation.admin_detail", lang)
         else:
-            name = "Not elevated — relaunch as Administrator"
-            detail = ("Not elevated. Some system-level operations need "
-                      "Administrator rights — click to relaunch (a UAC "
-                      "prompt will appear).")
+            name = tr("footer.elevation.not_admin_name", lang)
+            detail = tr("footer.elevation.not_admin_detail", lang)
         self._state_btn.setToolTip(detail)
         self._state_btn.setAccessibleName(name)
         self._state_btn.setAccessibleDescription(detail)
@@ -3829,43 +3796,17 @@ class StatusRail(QFrame):
             else Qt.CursorShape.ArrowCursor)
 
     # -- theming -------------------------------------------------------
-    def _theme_toggle_label(self) -> str:
-        key = ("footer.theme_toggle_to_light" if self._t["name"] == "dark"
-               else "footer.theme_toggle_to_dark")
-        return I18N.tr(key, self._lang)
-
     def apply_theme(self, t: dict):
         self._t = t
         self.setStyleSheet(TH.status_rail_qss(t))
-        self._theme_btn.setStyleSheet(TH.rail_button_qss(t))
-        self._divider.setStyleSheet(TH.rail_divider_qss(t))
-        self._version.setStyleSheet(TH.sidebar_version_qss(t))
-        # The toggle shows the theme it will switch TO, which is what the
-        # title-bar button it replaces did and what every OS control does.
-        key = "moon" if t["name"] == "dark" else "sun"
-        glyph, fallback = TH.glyph(key)
-        font = TH.icon_font(TH.ICON["micro"]) if glyph else None
-        if font is not None:
-            self._theme_btn.setFont(font)
-        self._theme_btn.setText(glyph or fallback)
-        theme_label = self._theme_toggle_label()
-        self._theme_btn.setToolTip(theme_label)
-        # Re-announced per theme, like the maximize button: the control
-        # names the theme it switches TO, so a fixed name would be wrong
-        # in one of the two states.
-        self._theme_btn.setAccessibleName(theme_label)
         self._sync_state()
 
     def retranslate(self, lang: str):
-        """Re-reads the SAME two tooltips apply_theme already computes,
-        under the new language — called on a language switch, which
-        changes no colour and so does not otherwise touch this widget.
-        Elevation-status text (_sync_state) is not retranslated here; see
-        i18n.py's note on why that one is deferred."""
+        """The elevation state's name/detail text — the only thing left
+        in this footer, so unlike v15 (which deferred it) it is fully
+        bilingual from the start of v16."""
         self._lang = lang
-        self._theme_btn.setToolTip(self._theme_toggle_label())
-        self._theme_btn.setAccessibleName(self._theme_toggle_label())
-        self._version.setToolTip(I18N.tr("footer.version_tooltip", lang))
+        self._sync_state()
 
 
 # ============================================================
@@ -7498,138 +7439,18 @@ class StatePill(QLabel):
         self.setText(f"{self.TEXTS['running']} · {minutes:02d}:{seconds:02d}")
 
 
-# ============================================================
-#  UPDATE BADGE — self-update status chip (sidebar footer)
-# ============================================================
-class UpdateBadge(QPushButton):
-    """CHECKING / UP TO DATE / UPDATE READY — the self-updater's status,
-    and its manual entry point.
-
-    A QPushButton because it is CLICKABLE in every state it shows in:
-    'available' opens the update dialog, anything else re-checks. Styled
-    entirely by theme.update_badge_qss through the dynamic `state`
-    property — the same repolish mechanic StatePill uses, so a transition
-    never rebuilds QSS and nothing here runs off a timer.
-
-    IT SHOWS ONLY WHEN IT HAS SOMETHING ACTIONABLE TO SAY. v14 moved this
-    off the Activity rail (where it was one of seven controls competing
-    with the running task the rail exists to report) and into the sidebar
-    footer, directly above the identity line that was already the manual
-    "check for updates" trigger — so the answer and the control are one
-    place instead of two that have to agree.
-
-    The visibility rule is the whole point of the move, and it is a rule
-    about WHAT IS WORTH A PERMANENT SURFACE:
-
-      * `available` — shown. This is the app's most actionable
-        notification and it must stay findable after its toast has gone.
-      * `checking`  — shown only for a check the USER asked for. A silent
-        launch check that pops a chip into the rail is the app talking
-        about itself for no reason.
-      * `current`   — hidden. "Nothing is wrong" is reported by a toast on
-        the manual path and by silence otherwise; a chip that permanently
-        says nothing is happening is chrome, which is exactly what this
-        pass is removing.
-
-    AND IT STANDS DOWN WHILE A TASK RUNS (set_busy, driven by
-    main.PulseApp._set_busy_ui). Not for width now that it has left the
-    rail, but because it is not actionable mid-run:
-    main._open_update_dialog already refuses to start an install while the
-    engine is mutating the machine (the _busy() guard) and tells the user
-    to wait. Suppressing it removes a control that could not have been
-    used anyway.
-    """
-
-    #: Terse on purpose. The badge is a full-width chip in a ~200px rail,
-    #: so it has room the rail never had — but the sentence-length version
-    #: of each answer still lives in the tooltip, which costs no layout.
-    TEXTS = {
-        "idle":      "—",
-        "checking":  "● CHECKING…",
-        "current":   "✓ UP TO DATE",
-        "available": "↑ UPDATE READY",
-    }
-
-    #: The states that earn a permanent surface — see the class docstring.
-    #: 'checking' is conditional on the check being user-initiated, which
-    #: set_state is told; 'current' never shows.
-    _VISIBLE_STATES = ("available", "checking")
-
-    #: Horizontal padding + the 1px ring, both from the QSS, plus 2px of
-    #: slack so the last glyph's letter-spacing cannot clip. Derived from
-    #: TH.CHIP_PAD_H rather than restating it, so a padding change in
-    #: theme.py cannot silently clip the badge.
-    _WIDTH_CHROME = 2 * TH.CHIP_PAD_H + 2 * 1 + 2
-
-    def __init__(self, t: dict, parent: QWidget | None = None):
-        super().__init__(self.TEXTS["checking"], parent)
-        self.setObjectName("updateBadge")
-        self.setProperty("state", "checking")
-        self.setFixedHeight(24)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Chrome, not content: the sidebar's footer controls must not join
-        # a page's arrow-key traversal or pull focus off it — the same call
-        # the identity line beneath it makes.
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._state = "idle"
-        self._loud = False       # this state has earned the surface
-        self._busy = False       # a task is running; stand down
-        self._sheen: tuple[int, float] | None = None
-        self.hide()
-        self.apply_theme(t)
-
-    def apply_theme(self, t: dict):
-        self.setStyleSheet(TH.update_badge_qss(t))
-        self._sheen = TH.chip_sheen(t)
-        self._lock_width()
-        self.update()
-
-    def paintEvent(self, e):
-        """The same frosted rim StatusChip wears, for the same reason: this
-        badge and a card's verdict badge are one object on two surfaces (see
-        update_badge_qss), so they have to catch light identically. Painted
-        rather than declared because a QSS border is one flat colour on all
-        four sides."""
-        super().paintEvent(e)
-        if self._sheen is None:
-            return
-        peak, depth = self._sheen
-        p = QPainter(self)
-        paint_top_sheen(p, self.rect(), TH.RADIUS["chip"], strength=1.0,
-                        peak=peak, depth=depth)
-        p.end()
-
-    def _lock_width(self):
-        """Pin the MINIMUM width to the widest label, so the three states
-        cannot jitter the sidebar's width. ensurePolished() first: the
-        font-size lives in the stylesheet, so fontMetrics() reports the
-        default UI font until the style has been applied."""
-        self.ensurePolished()
-        fm = self.fontMetrics()
-        widest = max(fm.horizontalAdvance(text) for text in self.TEXTS.values())
-        self.setMinimumWidth(widest + self._WIDTH_CHROME)
-
-    def set_state(self, state: str, tooltip: str = "", loud: bool = True):
-        """`loud=False` marks a check the user did not ask for — the silent
-        launch probe — so a 'checking' it produces stays off screen. The
-        answer it eventually reports is judged on its own merits."""
-        self.setText(self.TEXTS.get(state, state.upper()))
-        self.setProperty("state", state)
-        self.setToolTip(tooltip)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        self._state = state
-        self._loud = loud or state == "available"
-        self._sync_visibility()
-
-    def set_busy(self, busy: bool):
-        """Stand down while a task runs — see the class docstring."""
-        self._busy = busy
-        self._sync_visibility()
-
-    def _sync_visibility(self):
-        self.setVisible(self._state in self._VISIBLE_STATES
-                        and self._loud and not self._busy)
+#: CHECKING / UP TO DATE / UPDATE READY — the self-updater's state
+#: vocabulary. v16 removed the sidebar footer's own UpdateBadge widget
+#: (theme toggle, update badge and version line all moved into Settings
+#: exclusively, per the "ultra-clean footer" pass); SettingsView is now
+#: the SOLE reader of this table, kept as a bare module-level constant
+#: rather than reintroducing a class for one dict.
+UPDATE_STATE_TEXTS = {
+    "idle":      "—",
+    "checking":  "● CHECKING…",
+    "current":   "✓ UP TO DATE",
+    "available": "↑ UPDATE READY",
+}
 
 
 # ============================================================
@@ -7822,10 +7643,12 @@ class ActivityDrawer(QWidget):
         # What stays is what a COLLAPSED drawer can honestly report: the
         # system's own state, and the way in. Everything that describes the
         # OUTPUT moved into the body (below), where the output is; the
-        # update chip moved to the sidebar footer beside the control that
-        # triggers it (see UpdateBadge); the size grip went entirely, since
-        # the window owns a real Win32 sizing frame on every edge and
-        # corner (theme.enable_native_sizing_frame).
+        # update chip moved to the sidebar footer at v14, and from there
+        # into Settings exclusively at v16 (see SettingsView._build_updates
+        # — the sidebar footer carries no update surface at all now); the
+        # size grip went entirely, since the window owns a real Win32
+        # sizing frame on every edge and corner
+        # (theme.enable_native_sizing_frame).
         self._rail = QFrame()
         self._rail.setObjectName("activityRail")
         self._rail.setFixedHeight(44)
@@ -12300,17 +12123,16 @@ class SettingsView(QWidget):
 
     # -- Updates ----------------------------------------------------------
     def _build_updates(self):
-        """A second, synced surface onto the SAME update-check pipeline the
-        sidebar footer's UpdateBadge already drives — not a private copy of
-        it. main.py calls set_update_state at the exact three points it
-        already calls update_badge.set_state, and reuses UpdateBadge.TEXTS
-        so the two surfaces cannot drift into different wording for the
-        same state. UpdateBadge.TEXTS is not itself bilingual yet (see
-        i18n.py's own note on this) — set_update_state's text is left out
-        of _retranslate for that reason."""
+        """Settings is now the ONLY surface reporting update state — the
+        sidebar footer's UpdateBadge was removed entirely (v16, "ultra-
+        clean footer"). main.py's update-check pipeline is unchanged; it
+        calls set_update_state at the same points it used to also call
+        update_badge.set_state. UPDATE_STATE_TEXTS is not itself bilingual
+        yet (see i18n.py's own note on this) — set_update_state's text is
+        left out of _retranslate for that reason."""
         inner = self._group("settings.group.updates")
         self._update_caption = self._caption()
-        self._update_caption.setText(UpdateBadge.TEXTS["idle"])
+        self._update_caption.setText(UPDATE_STATE_TEXTS["idle"])
         inner.addWidget(self._update_caption)
 
         row = QHBoxLayout()
@@ -12324,7 +12146,7 @@ class SettingsView(QWidget):
         inner.addLayout(row)
 
     def set_update_state(self, state: str, tooltip: str = ""):
-        self._update_caption.setText(UpdateBadge.TEXTS.get(state, state.upper()))
+        self._update_caption.setText(UPDATE_STATE_TEXTS.get(state, state.upper()))
         self._update_caption.setToolTip(tooltip)
 
     # -- theme choice ----------------------------------------------------
@@ -12422,7 +12244,7 @@ class SettingsView(QWidget):
 
         self._update_btn.setText(tr("settings.updates.button", lang))
         self._update_btn.setToolTip(tr("settings.updates.button_tooltip", lang))
-        # _update_caption's own text is UpdateBadge.TEXTS-driven, not
+        # _update_caption's own text is UPDATE_STATE_TEXTS-driven, not
         # retranslated here — see _build_updates.
 
     # -- restore points --------------------------------------------------

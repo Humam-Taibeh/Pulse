@@ -422,34 +422,6 @@ def test_the_plaque_glyph_colour_is_all_that_is_left_in_qss():
 # ============================================================
 #  4. STATUS CHIPS — ONE GEOMETRY, AND A RIM THAT COSTS NOTHING
 # ============================================================
-_CHIP_GEOMETRY = ("border-radius", "padding", "font-size", "font-weight",
-                  "letter-spacing")
-
-
-def _decls(qss: str) -> dict:
-    import re
-    out = {}
-    for prop in _CHIP_GEOMETRY:
-        match = re.search(rf"{prop}:\s*([^;]+);", qss)
-        assert match, f"{prop} missing from {qss!r}"
-        out[prop] = match.group(1).strip()
-    return out
-
-
-def test_the_card_badge_and_the_update_badge_are_one_object():
-    """update_badge_qss has claimed to share state_chip_qss's geometry "to
-    the pixel" since it shipped, and it did not: the chip ran 2px of
-    vertical padding against the badge's 3px. A comment is not a
-    constraint. Both now compose theme._CHIP_TYPE, and this is what says
-    so."""
-    t = TH.tokens("dark")
-    chip = _decls(TH.state_chip_qss(t, "applied"))
-    badge = _decls(TH.update_badge_qss(t))
-    assert chip == badge, (
-        f"the card badge and the update badge render differently: {chip} vs "
-        f"{badge}")
-
-
 def test_the_chip_corner_stays_in_pill_territory():
     """Not a MATHEMATICAL pill, and theme.CHIP_PAD_V says why: that needs
     radius >= height/2, which at 20px is a 10 that exists on no tier of the
