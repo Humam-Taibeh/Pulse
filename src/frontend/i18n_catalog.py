@@ -29,12 +29,24 @@ API/library names, version numbers) are likewise kept in Latin script —
 translating "MSVCR100.dll" or "DirectX 12" would make the sentence LESS
 precise, not more accessible.
 
+TWO BACKEND-AUTHORED DATA TABLES ARE COVERED TOO (v16.1), on the same
+"this is Pulse's own copy, not a live system's" reasoning as
+`WhyYouNeedIt` above: BloatwarePurgeDialog's BloatRow reads its `Note`
+field from src/backend/modules/01-Catalogs.ps1's $Script:BloatCatalog
+(48 entries), and StartupManagerDialog's StartupRow reads its `Reason`
+field from src/backend/modules/05-Startup.ps1's rule tables (43
+entries) — both looked up here by the same English text the PowerShell
+literal carries, so a backend edit that changes the wording degrades to
+showing that new English text rather than silently going stale. Every
+package/app/program NAME in both dialogs (BloatRow's catalog Name,
+StartupRow's DisplayName) stays English, same convention as a tool's
+DisplayName.
+
 WHAT THIS DOES NOT COVER, on purpose (see i18n.py's own scope note and
-ROADMAP.md): dialogs opened FROM a card that are not the catalog itself —
-the Restore Point Browser, Startup Manager, Bloatware Purge internals,
-Health Report, Update Center, the Office setup wizard, and
-ToolInstallWizardDialog's own per-app install-option picker — stay
-English in this pass.
+ROADMAP.md): dialogs opened FROM a card that are not one of the four
+covered above — the Restore Point Browser, the Health Report, the
+Office setup wizard, and ToolInstallWizardDialog's own per-app
+install-option picker — stay English in this pass.
 """
 from __future__ import annotations
 
@@ -520,6 +532,288 @@ DESCRIPTIONS: dict[str, str] = {
     "this machine against the same chip elsewhere.":
         "اختبار أداء لتصيير المعالج — نتيجة قابلة للتكرار لمقارنة "
         "هذا الجهاز بالمعالج نفسه في مكان آخر.",
+
+    # -- BloatwarePurgeDialog: src/backend/modules/01-Catalogs.ps1's
+    # $Script:BloatCatalog "Note" field (48 entries) — Pulse's own
+    # authored copy explaining what removing each package costs, same
+    # category as SOFTWARE_CATALOG's "why" field above. The catalog's
+    # "Name" field (Instagram, TikTok, Xbox app, …) is NOT translated —
+    # brand/product names and Windows' own official app names, same
+    # convention as every tool DisplayName elsewhere in this module.
+    "Store stub that opens the web app. Nothing depends on it.":
+        "امتداد من المتجر يفتح تطبيق الويب. لا شيء يعتمد عليه.",
+    "Amazon's pre-installed player stub.":
+        "امتداد مشغّل Amazon المثبَّت مسبقًا.",
+    "Facebook Messenger stub.":
+        "امتداد Facebook Messenger.",
+    "Pre-installed on many OEM images.":
+        "مثبَّت مسبقًا على كثير من نسخ الشركات المصنِّعة.",
+    "Store stub that opens the web app.":
+        "امتداد من المتجر يفتح تطبيق الويب.",
+    "Pre-installed streaming stub.":
+        "امتداد بث مثبَّت مسبقًا.",
+    "The Store build. Removing it does NOT touch a desktop Spotify "
+    "install.":
+        "إصدار المتجر. إزالته لا تمسّ تثبيت Spotify على سطح المكتب.",
+    "Candy Crush, Bubble Witch, Farm Heroes and the rest of the King "
+    "suite.":
+        "Candy Crush وBubble Witch وFarm Heroes وبقية ألعاب King.",
+    "Gameloft promotional install.":
+        "تثبيت ترويجي من Gameloft.",
+    "Casual game, ad-supported.":
+        "لعبة ترفيهية مدعومة بالإعلانات.",
+    "Task app. Removing it does not affect Outlook tasks.":
+        "تطبيق مهام. إزالته لا تؤثر في مهام Outlook.",
+    "The retired Store OneNote, superseded by OneNote in Microsoft "
+    "365.":
+        "إصدار OneNote القديم من المتجر، حلّ محله OneNote في "
+        "Microsoft 365.",
+    "Paint 3D only. Classic Paint (mspaint.exe) is a separate app "
+    "and is untouched.":
+        "Paint 3D فقط. برنامج الرسام الكلاسيكي (mspaint.exe) تطبيق "
+        "منفصل ولا يتأثر.",
+    "Windows Mixed Reality, retired by Microsoft.":
+        "الواقع المختلط لويندوز، أوقفته Microsoft.",
+    "Retired 3D modelling app.":
+        "تطبيق نمذجة ثلاثية الأبعاد متوقف.",
+    "Consumer Skype stub.":
+        "امتداد Skype للمستهلكين.",
+    "Store wrapper around the website.":
+        "غلاف من المتجر حول الموقع.",
+    "Pre-installed video editor.":
+        "محرر فيديو مثبَّت مسبقًا.",
+    "Notes app. Existing notes sync to OneNote and survive removal.":
+        "تطبيق ملاحظات. الملاحظات الحالية تُزامَن مع OneNote وتبقى "
+        "بعد الإزالة.",
+    "The 'Office' launcher tile, not Office itself.":
+        "لبنة مشغّل 'Office'، وليست Office نفسه.",
+    "The consumer Teams that ships with Windows 11. Work/school "
+    "Teams is a separate install.":
+        "نسخة Teams للمستهلكين المرفقة مع ويندوز 11. نسخة العمل/"
+        "التعليم منفصلة.",
+    "The web-wrapper Outlook Microsoft pre-installs.":
+        "نسخة Outlook (غلاف ويب) التي تثبّتها Microsoft مسبقًا.",
+    "Legacy Groove/Media Player entry.":
+        "إدخال قديم لـGroove/مشغّل الوسائط.",
+    "Legacy video player.":
+        "مشغّل فيديو قديم.",
+    "The Phone Link app itself - texts, calls and notification "
+    "mirroring from an Android or iPhone. Removing it does not "
+    "touch the Mobile devices settings page.":
+        "تطبيق Phone Link نفسه - الرسائل والمكالمات ومزامنة "
+        "الإشعارات من هاتف أندرويد أو آيفون. إزالته لا تمسّ صفحة "
+        "إعدادات الأجهزة المحمولة.",
+    "The system component behind Settings > Bluetooth & devices > "
+    "Mobile devices: phone photos in File Explorer, and using a "
+    "phone as a connected camera. Not the Phone Link app - removing "
+    "this leaves that page with nothing to configure.":
+        "المكوّن النظامي خلف الإعدادات > البلوتوث والأجهزة > الأجهزة "
+        "المحمولة: صور الهاتف في مستكشف الملفات، واستخدام الهاتف "
+        "كاميرا متصلة. ليس تطبيق Phone Link - إزالة هذا يترك تلك "
+        "الصفحة بلا شيء لضبطه.",
+    "Phone Link's background host. Remove alongside Phone Link "
+    "(app).":
+        "المضيف الخلفي لـPhone Link. أزِله مع تطبيق Phone Link.",
+    "The Copilot app. The taskbar button is a separate tweak.":
+        "تطبيق Copilot. زر شريط المهام تعديل منفصل.",
+    "The Store wrapper build shipped on newer 11 images.":
+        "إصدار غلاف المتجر المرفق بنسخ 11 الأحدث.",
+    "Retired assistant. Windows Search is unaffected.":
+        "مساعد متوقف. بحث ويندوز لا يتأثر.",
+    "The classic Mail/Calendar pair, retired in favour of new "
+    "Outlook.":
+        "ثنائي البريد/التقويم الكلاسيكي، أوقف لصالح Outlook الجديد.",
+    "Also feeds the taskbar weather widget.":
+        "يغذّي أيضًا أداة الطقس في شريط المهام.",
+    "MSN news feed.":
+        "خلاصة أخبار MSN.",
+    "MSN money feed.":
+        "خلاصة مال MSN.",
+    "MSN sports feed.":
+        "خلاصة رياضة MSN.",
+    "Offline maps app, retired by Microsoft.":
+        "تطبيق خرائط دون اتصال، أوقفته Microsoft.",
+    "Sends diagnostics and feedback to Microsoft.":
+        "يرسل بيانات التشخيص والملاحظات إلى Microsoft.",
+    "Support-contact app.":
+        "تطبيق التواصل مع الدعم.",
+    "The 'Get Started' / Tips promo app.":
+        "تطبيق 'ابدأ الآن' / النصائح الترويجي.",
+    "Contacts app used by the retired Mail client.":
+        "تطبيق جهات اتصال يستخدمه عميل البريد المتوقف.",
+    "The Widgets board and its MSN feed.":
+        "لوحة الودجات وخلاصة MSN الخاصة بها.",
+    "Xbox in-game UI framework. Some Store games need it to sign in.":
+        "إطار واجهة Xbox داخل اللعبة. بعض ألعاب المتجر تحتاجه "
+        "لتسجيل الدخول.",
+    "The Win+G overlay surface.":
+        "سطح تراكب Win+G.",
+    "Game Bar itself, including its screen capture.":
+        "شريط الألعاب نفسه، بما في ذلك تسجيل الشاشة.",
+    "Live captions inside Xbox games.":
+        "ترجمة مباشرة داخل ألعاب Xbox.",
+    "Store game sign-in. Removing it can lock you out of installed "
+    "games.":
+        "تسجيل الدخول لألعاب المتجر. إزالته قد تمنعك من الدخول إلى "
+        "الألعاب المثبَّتة.",
+    "The Xbox console companion - Microsoft.GamingApp on Windows 11, "
+    "Microsoft.XboxApp on 10.":
+        "تطبيق مرافقة أجهزة Xbox - Microsoft.GamingApp على ويندوز "
+        "11، وMicrosoft.XboxApp على 10.",
+    "Bundled codec pack. Windows plays every mainstream format "
+    "without it.":
+        "حزمة ترميز مرفقة. يشغّل ويندوز كل الصيغ الشائعة دونها.",
+
+    # -- StartupManagerDialog: src/backend/modules/05-Startup.ps1's rule
+    # tables (StartupProtectedRules/StartupDisableRules/StartupKeepRules
+    # + the Review-tier default) — 43 Reason strings, same
+    # "Pulse's-own-authored-copy" category as the two catalogs above.
+    "Windows Security component — disabling it weakens malware "
+    "protection.":
+        "مكوّن أمان ويندوز — تعطيله يُضعف الحماية من البرمجيات "
+        "الخبيثة.",
+    "Security / endpoint-protection agent — must keep running from "
+    "boot to protect the machine.":
+        "وكيل أمان / حماية النقاط الطرفية — يجب أن يبقى يعمل من "
+        "الإقلاع لحماية الجهاز.",
+    "Audio driver / sound-device helper — jack detection, device "
+    "switching and effects depend on it.":
+        "مساعد برنامج تشغيل الصوت / جهاز الصوت — يعتمد عليه كشف "
+        "المنفذ وتبديل الأجهزة والمؤثرات.",
+    "Windows text-input / IME subsystem — required for keyboard "
+    "layout and language switching.":
+        "نظام إدخال النص / IME في ويندوز — مطلوب لتخطيط لوحة "
+        "المفاتيح وتبديل اللغة.",
+    "Touchpad / pointing-device driver — gestures, scrolling and "
+    "its settings page depend on it.":
+        "برنامج تشغيل لوحة اللمس / جهاز التأشير — تعتمد عليه "
+        "الإيماءات والتمرير وصفحة إعداداته.",
+    "Graphics tablet driver — pen input stops working the moment "
+    "it is not running.":
+        "برنامج تشغيل لوحة الرسم — يتوقف إدخال القلم فور توقف "
+        "تشغيله.",
+    "Accessibility tool — for some users this is how the machine "
+    "is operated at all.":
+        "أداة إتاحة — هي الطريقة الوحيدة لتشغيل الجهاز لدى بعض "
+        "المستخدمين.",
+    "Storage / RAID controller helper — monitors the array your "
+    "drives depend on.":
+        "مساعد وحدة تحكم التخزين / RAID — يراقب المصفوفة التي "
+        "تعتمد عليها أقراصك.",
+    "Bluetooth stack component — paired keyboards, mice and "
+    "headsets depend on it at sign-in.":
+        "مكوّن مكدّس البلوتوث — تعتمد عليه لوحات المفاتيح والفأرات "
+        "وسماعات الرأس المقترنة عند تسجيل الدخول.",
+    "Vendor power / thermal manager — battery life and fan "
+    "behaviour are controlled here.":
+        "مدير الطاقة / الحرارة من الشركة المصنِّعة — يتحكم هنا في "
+        "عمر البطارية وسلوك المراوح.",
+    "Cloud sync — keeps syncing in the background; launch it "
+    "manually or sign in to files.com when you actually need it.":
+        "مزامنة سحابية — تستمر بالمزامنة في الخلفية؛ شغّلها يدويًا "
+        "أو سجّل الدخول عند الحاجة الفعلية.",
+    "Cloud sync client — adds boot time for a service you can "
+    "start on demand.":
+        "عميل مزامنة سحابية — يضيف وقتًا للإقلاع لخدمة يمكنك "
+        "تشغيلها عند الطلب.",
+    "Game launcher with background update checks — a common "
+    "multi-second boot delay.":
+        "مشغّل ألعاب يتحقق من التحديثات في الخلفية — سبب شائع "
+        "لتأخير الإقلاع بضع ثوانٍ.",
+    "Game launcher — heavy background process not needed until "
+    "you actually play.":
+        "مشغّل ألعاب — عملية خلفية ثقيلة لا حاجة إليها حتى تبدأ "
+        "اللعب فعليًا.",
+    "Game launcher with an always-on updater service.":
+        "مشغّل ألعاب بخدمة تحديث تعمل دائمًا.",
+    "Game launcher — safe to start manually instead of at every "
+    "boot.":
+        "مشغّل ألعاب — آمن لتشغيله يدويًا بدل كل إقلاع.",
+    "Game launcher background updater.":
+        "محدِّث خلفي لمشغّل الألعاب.",
+    "Chat client — convenient always-on, but it's pure boot-time "
+    "overhead if you open it manually anyway.":
+        "عميل محادثة — مريح دائم التشغيل، لكنه عبء إقلاع صرف إن "
+        "كنت ستفتحه يدويًا على أي حال.",
+    "Music client — no reason to launch before you're ready to "
+    "listen.":
+        "عميل موسيقى — لا داعي لتشغيله قبل استعدادك للاستماع.",
+    "Chat client that rarely needs to be running before sign-in "
+    "finishes.":
+        "عميل محادثة نادرًا ما يحتاج للعمل قبل اكتمال تسجيل الدخول.",
+    "Electron-based chat app — one of the heaviest common "
+    "boot-time offenders.":
+        "تطبيق محادثة مبني على Electron — من أثقل أسباب تأخير "
+        "الإقلاع الشائعة.",
+    "Electron-based chat app — noticeable boot-time cost for a "
+    "background presence.":
+        "تطبيق محادثة مبني على Electron — تكلفة إقلاع ملحوظة مقابل "
+        "وجود خلفي.",
+    "Meeting client — only needed right before a call.":
+        "عميل اجتماعات — لا حاجة إليه إلا قبيل المكالمة مباشرة.",
+    "Adobe's background updater — checks for updates you can "
+    "trigger manually instead.":
+        "محدِّث Adobe الخلفي — يتحقق من تحديثات يمكنك تشغيلها يدويًا "
+        "بدلًا من ذلك.",
+    "Apple device helper — only useful while an iPhone/iPad is "
+    "actually connected.":
+        "مساعد أجهزة Apple — مفيد فقط أثناء اتصال آيفون/آيباد فعليًا.",
+    "Legacy media helper rarely needed by modern apps.":
+        "مساعد وسائط قديم نادرًا ما تحتاجه التطبيقات الحديثة.",
+    "Chrome's background updater — Chrome updates itself fine "
+    "when it launches.":
+        "محدِّث Chrome الخلفي — يحدِّث Chrome نفسه جيدًا عند تشغيله.",
+    "Edge's background updater — Edge updates itself fine when it "
+    "launches.":
+        "محدِّث Edge الخلفي — يحدِّث Edge نفسه جيدًا عند تشغيله.",
+    "Legacy Cortana shell integration — safe to disable on most "
+    "modern setups.":
+        "تكامل Cortana القديم مع الواجهة — آمن تعطيله في معظم "
+        "الإعدادات الحديثة.",
+    "Phone Link — only useful if you actively use phone/PC linking.":
+        "Phone Link — مفيد فقط إن كنت تستخدم ربط الهاتف بالحاسوب "
+        "فعليًا.",
+    "Adobe Creative Cloud desktop — one of the heaviest known "
+    "startup offenders.":
+        "تطبيق Adobe Creative Cloud لسطح المكتب — من أثقل أسباب "
+        "بطء الإقلاع المعروفة.",
+    "Java's background updater — safe to check manually instead.":
+        "محدِّث Java الخلفي — آمن التحقق منه يدويًا بدلًا من ذلك.",
+    "NVIDIA telemetry helper — the display driver itself does not "
+    "need it at boot.":
+        "مساعد قياس بيانات NVIDIA — برنامج تشغيل العرض نفسه لا "
+        "يحتاجه عند الإقلاع.",
+    "Audio driver tray helper — needed for sound device "
+    "switching/effects to work correctly.":
+        "مساعد درج برنامج تشغيل الصوت — مطلوب ليعمل تبديل جهاز "
+        "الصوت/المؤثرات بشكل صحيح.",
+    "Touchpad/precision-input driver — gestures and settings "
+    "depend on it.":
+        "برنامج تشغيل لوحة اللمس/الإدخال الدقيق — تعتمد عليه "
+        "الإيماءات والإعدادات.",
+    "GPU control panel tray — lightweight and needed for "
+    "display/overlay settings.":
+        "درج لوحة تحكم كرت الرسومات — خفيف ومطلوب لإعدادات "
+        "العرض/التراكب.",
+    "Windows input/IME subsystem — required for text input "
+    "switching.":
+        "نظام إدخال ويندوز/IME — مطلوب لتبديل إدخال النص.",
+    "Security/endpoint-protection agent — should stay running "
+    "from boot.":
+        "وكيل أمان/حماية النقاط الطرفية — يجب أن يبقى يعمل من "
+        "الإقلاع.",
+    "Graphics tablet driver — needed immediately for pen input to "
+    "work.":
+        "برنامج تشغيل لوحة الرسم — مطلوب فورًا ليعمل إدخال القلم.",
+    "Microsoft Office's own updater — turning it off stops Office "
+    "receiving security fixes.":
+        "محدِّث Microsoft Office نفسه — إيقافه يمنع Office من تلقّي "
+        "إصلاحات الأمان.",
+    "Windows Security — disabling weakens malware protection.":
+        "أمان ويندوز — تعطيله يُضعف الحماية من البرمجيات الخبيثة.",
+    "Not a recognized publisher — check what it is before "
+    "disabling it.":
+        "ناشر غير معروف — تحقق مما هو قبل تعطيله.",
 }
 
 

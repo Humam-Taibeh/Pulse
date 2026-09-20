@@ -1,8 +1,8 @@
 """
 src/frontend/i18n.py
 
-DISPLAY LANGUAGE (v10.15, extended v16) — a manual English/Arabic
-choice, not "follow Windows".
+DISPLAY LANGUAGE (v10.15, extended v16, extended v16.1) — a manual
+English/Arabic choice, not "follow Windows".
 
 WHAT THIS COVERS. v10.15 shipped the foundation and the surfaces a user
 reaches before choosing what to do: the sidebar rail, the Settings page
@@ -19,16 +19,23 @@ widgets.format_relative_age/format_duration/format_history_caption) and
 the restore-point summary sentence in Settings (see
 SettingsView._sync_restore_summary) — in both cases the SENTENCE
 translates while values Pulse did not author (a checkpoint's own
-Windows-assigned description) do not. A key with no entry in STRINGS
-degrades to the key itself — visible-but-safe, matching theme.glyph()'s
-"a missing table entry degrades, never crashes" posture — rather than
-raising, so a half-translated surface never becomes a broken one.
+Windows-assigned description) do not. v16.1 closes the three dialogs
+named explicitly as a "noticeable disconnect": Update Center, Bloatware
+Purge and Startup Manager now translate in full — every static chrome
+string plus two backend-authored data tables that are Pulse's own copy
+(BloatRow's Note field and StartupRow's Reason field, both routed
+through i18n_catalog exactly like SOFTWARE_CATALOG's "why" field). A key
+with no entry in STRINGS degrades to the key itself — visible-but-safe,
+matching theme.glyph()'s "a missing table entry degrades, never
+crashes" posture — rather than raising, so a half-translated surface
+never becomes a broken one.
 
 WHAT STILL STAYS ENGLISH, on purpose (see ROADMAP.md for the tracked
-follow-up): the live PowerShell console log, playbooks, the Health
-Report, and dialogs reached FROM a card rather than shown directly — the
-Restore Point Browser, Startup Manager, Bloatware Purge internals,
-Update Center, the Office setup wizard, per-app install-option pickers.
+follow-up): the live PowerShell console log (including any TaskResult
+message reported at runtime — a toggle's own success/failure line, a
+scan's caveat, its Trigger value), playbooks, the Health Report, the
+Restore Point Browser, the Office setup wizard, and
+ToolInstallWizardDialog's own per-app install-option picker.
 SettingsView's own UPDATE_STATE_TEXTS vocabulary (IDLE/CHECKING/UP TO
 DATE/UPDATE READY) stays deferred too — see widgets.py's own note on it.
 StatusRail's elevation text is NOT on this list — see the "footer
@@ -342,6 +349,20 @@ STRINGS: dict[str, dict[str, str]] = {
     "dialog.danger_warning": {
         "en": "⚠️  This action changes your system and may be hard to undo.",
         "ar": "⚠️  هذا الإجراء يغيّر نظامك وقد يصعب التراجع عنه.",
+    },
+    # Shared across UpdateCenterDialog/BloatwarePurgeDialog/
+    # StartupManagerDialog's own loading/error/results pages (v16.1).
+    "dialog.close": {
+        "en": "Close",
+        "ar": "إغلاق",
+    },
+    "dialog.retry": {
+        "en": "Retry",
+        "ar": "إعادة المحاولة",
+    },
+    "dialog.rescan": {
+        "en": "Rescan",
+        "ar": "إعادة الفحص",
     },
 
     # -- sidebar module labels (v16) --------------------------------------
@@ -751,6 +772,565 @@ STRINGS: dict[str, dict[str, str]] = {
     "catalog.row.requires": {
         "en": "↳ needs {name}",
         "ar": "↳ يحتاج {name}",
+    },
+
+    # ============================================================
+    #  UPDATE CENTER (v16.1)
+    # ============================================================
+    "update_center.row.running_badge": {
+        "en": "RUNNING",
+        "ar": "قيد التشغيل",
+    },
+    "update_center.row.running_tooltip": {
+        "en": "This app is running and will be closed before it is "
+              "updated.\nProcesses: {processes}",
+        "ar": "هذا التطبيق قيد التشغيل وسيُغلق قبل تحديثه.\n"
+              "العمليات: {processes}",
+    },
+    "update_center.title": {
+        "en": "🔄  Update Center",
+        "ar": "🔄  مركز التحديثات",
+    },
+    "update_center.subtitle.scanning": {
+        "en": "Scanning installed apps against winget…",
+        "ar": "جارٍ فحص التطبيقات المثبَّتة عبر winget…",
+    },
+    "update_center.loading": {
+        "en": "Reading your installed programs…",
+        "ar": "جارٍ قراءة برامجك المثبَّتة…",
+    },
+    "update_center.empty.message": {
+        "en": "You're all caught up — every installed app is at its "
+              "latest version.",
+        "ar": "كل شيء محدَّث — كل التطبيقات المثبَّتة عند أحدث إصدار لها.",
+    },
+    "update_center.error.scan_failed_to_run": {
+        "en": "The update scan failed to run.",
+        "ar": "تعذّر تشغيل فحص التحديثات.",
+    },
+    "update_center.error.scan_failed": {
+        "en": "The update scan failed.",
+        "ar": "فشل فحص التحديثات.",
+    },
+    "update_center.error.scan_failed_short": {
+        "en": "Scan failed.",
+        "ar": "فشل الفحص.",
+    },
+    "update_center.empty_after_scan": {
+        "en": "Every installed app is up to date.",
+        "ar": "كل التطبيقات المثبَّتة محدَّثة.",
+    },
+    "update_center.reconcile_subtitle": {
+        "en": "All {total} updates are pre-selected — untick anything "
+              "you don't want, or open a row's link to fetch it from "
+              "the vendor yourself.",
+        "ar": "كل التحديثات ({total}) محدَّدة مسبقًا — ألغِ تحديد ما لا "
+              "تريده، أو افتح رابط أي صف لجلبه من الشركة المصنِّعة بنفسك.",
+    },
+    "update_center.count_selected": {
+        "en": "{count} selected",
+        "ar": "{count} محدَّد",
+    },
+    "update_center.update_selected": {
+        "en": "Update Selected",
+        "ar": "تحديث المحدَّد",
+    },
+    "update_center.update_selected_count": {
+        "en": "Update Selected ({count})",
+        "ar": "تحديث المحدَّد ({count})",
+    },
+    "update_center.update_all_count": {
+        "en": "Update All ({count})",
+        "ar": "تحديث الكل ({count})",
+    },
+    "update_center.confirm_running.title": {
+        "en": "Some of these apps are running",
+        "ar": "بعض هذه التطبيقات قيد التشغيل",
+    },
+    # Two full sentences rather than one gendered/pluralised template —
+    # the English original branches on count via inline conditionals
+    # ("is"/"are", "this app"/"these apps", "it"/"them"); Arabic grammar
+    # does not map onto the same branch points, so each count gets its
+    # own natural, complete sentence instead of a parametrised patchwork.
+    "update_center.confirm_running.desc_singular": {
+        "en": "{names} is open right now. Windows cannot replace files "
+              "that are in use, so this app will be closed before the "
+              "update is applied — you will be asked to save any "
+              "unsaved work first.\n\nCancel if you would rather "
+              "untick it and update the rest.",
+        "ar": "{names} مفتوح الآن. لا يستطيع ويندوز استبدال الملفات "
+              "قيد الاستخدام، لذا سيُغلق هذا التطبيق قبل تطبيق "
+              "التحديث — سيُطلب منك حفظ أي عمل غير محفوظ أولًا.\n\n"
+              "ألغِ الأمر إن كنت تفضّل إلغاء تحديده وتحديث البقية.",
+    },
+    "update_center.confirm_running.desc_plural": {
+        "en": "{names} are open right now. Windows cannot replace "
+              "files that are in use, so these apps will be closed "
+              "before the update is applied — you will be asked to "
+              "save any unsaved work first.\n\nCancel if you would "
+              "rather untick them and update the rest.",
+        "ar": "{names} مفتوحة الآن. لا يستطيع ويندوز استبدال الملفات "
+              "قيد الاستخدام، لذا ستُغلق هذه التطبيقات قبل تطبيق "
+              "التحديث — سيُطلب منك حفظ أي عمل غير محفوظ أولًا.\n\n"
+              "ألغِ الأمر إن كنت تفضّل إلغاء تحديدها وتحديث البقية.",
+    },
+
+    # ============================================================
+    #  BLOATWARE PURGE (v16.1)
+    # ============================================================
+    "bloatware.title": {
+        "en": "🧹  Bloatware Purge",
+        "ar": "🧹  إزالة البرامج غير المرغوبة",
+    },
+    "bloatware.subtitle.scanning": {
+        "en": "Scanning installed and staged packages…",
+        "ar": "جارٍ فحص الحزم المثبَّتة والمهيَّأة…",
+    },
+    "bloatware.loading": {
+        "en": "Reading installed packages, staged provisioning "
+              "templates and the uninstall registry…",
+        "ar": "جارٍ قراءة الحزم المثبَّتة وقوالب التهيئة المرحلية "
+              "وسجل إلغاء التثبيت…",
+    },
+    "bloatware.error.scan_returned_nothing": {
+        "en": "The package scan returned nothing.",
+        "ar": "لم يعد فحص الحزم بأي نتيجة.",
+    },
+    "bloatware.error.suffix": {
+        "en": "\n\nNothing was changed. Close this and try again, or "
+              "run the purge without a selection to remove the "
+              "recommended set.",
+        "ar": "\n\nلم يتغيّر شيء. أغلق هذا وحاول مجددًا، أو شغّل "
+              "الإزالة دون تحديد لإزالة المجموعة الموصى بها.",
+    },
+    "bloatware.clean.headline": {
+        "en": "Your system is clean",
+        "ar": "نظامك نظيف",
+    },
+    "bloatware.clean.note": {
+        "en": "None of the {catalogued} packages Pulse checks for is "
+              "installed, staged for future profiles, or pinned to "
+              "your Start menu.",
+        "ar": "لا شيء من الحزم الـ{catalogued} التي يتحقق منها Pulse "
+              "مثبَّت، أو مهيَّأ لملفات تعريف مستقبلية، أو مثبَّت على "
+              "قائمة ابدأ.",
+    },
+    "bloatware.clean.inspect_btn": {
+        "en": "Show all {catalogued} packages Pulse checks for",
+        "ar": "عرض كل الحزم الـ{catalogued} التي يتحقق منها Pulse",
+    },
+    "bloatware.clean.inspect_tooltip": {
+        "en": "Show every package Pulse checks for, including the "
+              "ones that are not on this machine.",
+        "ar": "عرض كل حزمة يتحقق منها Pulse، بما فيها غير الموجودة "
+              "على هذا الجهاز.",
+    },
+    "bloatware.select_all_installed": {
+        "en": "Select All Installed",
+        "ar": "تحديد كل المثبَّت",
+    },
+    "bloatware.select_all_installed_tooltip": {
+        "en": "Ticks every package REGISTERED on this PC that is "
+              "currently shown, outside the optional Xbox section.",
+        "ar": "يحدِّد كل حزمة مسجَّلة على هذا الجهاز ومعروضة حاليًا، "
+              "باستثناء قسم Xbox الاختياري.",
+    },
+    "bloatware.select_all_stubs": {
+        "en": "Select All Stubs",
+        "ar": "تحديد كل الامتدادات",
+    },
+    "bloatware.select_all_stubs_tooltip": {
+        "en": "Ticks the Start-menu tiles and staged packages "
+              "currently shown — the ones that come back after a "
+              "Windows feature update.",
+        "ar": "يحدِّد لبنات قائمة ابدأ والحزم المهيَّأة المعروضة "
+              "حاليًا — تلك التي تعود بعد تحديث ميزات ويندوز.",
+    },
+    "bloatware.show_absent": {
+        "en": "Show packages that aren't installed",
+        "ar": "عرض الحزم غير المثبَّتة",
+    },
+    "bloatware.filter_placeholder": {
+        "en": "Filter by name or package ID…",
+        "ar": "تصفية بالاسم أو معرّف الحزمة…",
+    },
+    "bloatware.no_match": {
+        "en": "Nothing installed matches “{query}”.",
+        "ar": "لا يوجد مثبَّت يطابق “{query}”.",
+    },
+    "bloatware.no_match.hidden_suffix": {
+        "en": "  {hidden} catalogued package(s) match but are not on "
+              "this PC — tick “Show packages that aren't "
+              "installed” to see them.",
+        "ar": "  هناك {hidden} حزمة مطابقة في الفهرس لكنها غير "
+              "موجودة على هذا الجهاز — فعِّل “عرض الحزم غير "
+              "المثبَّتة” لرؤيتها.",
+    },
+    "bloatware.purge_btn": {
+        "en": "Safe Purge",
+        "ar": "إزالة آمنة",
+    },
+    "bloatware.purge_btn_count": {
+        "en": "Safe Purge ({count})",
+        "ar": "إزالة آمنة ({count})",
+    },
+    "bloatware.count.selected": {
+        "en": "{count} selected",
+        "ar": "{count} محدَّد",
+    },
+    "bloatware.count.selected_shown": {
+        "en": "{count} selected  ·  {shown} of {eligible} shown",
+        "ar": "{count} محدَّد  ·  {shown} من {eligible} معروض",
+    },
+    "bloatware.summary.clean_scan": {
+        "en": "Checked every installed, staged and Start-menu "
+              "package against the Pulse catalog.",
+        "ar": "تحقق Pulse من كل حزمة مثبَّتة أو مهيَّأة أو على قائمة "
+              "ابدأ مقابل فهرسه.",
+    },
+    "bloatware.summary.detected": {
+        "en": "{detected} catalogued package(s) found. Ticked "
+              "packages are removed for every profile, deprovisioned "
+              "so they cannot return after a Windows update, and "
+              "their Start menu promotions disabled.",
+        "ar": "عُثر على {detected} حزمة من الفهرس. الحزم المحدَّدة "
+              "تُزال لكل الملفات الشخصية، وتُلغى تهيئتها فلا تعود بعد "
+              "تحديث ويندوز، وتُعطَّل ترويجاتها في قائمة ابدأ.",
+    },
+    # -- BloatwarePurgeDialog.SECTIONS' own titles -----------------------
+    "bloatware.section.promo": {
+        "en": "Pre-installed stubs and promotions",
+        "ar": "امتدادات وترويجات مثبَّتة مسبقًا",
+    },
+    "bloatware.section.core": {
+        "en": "Redundant Windows apps",
+        "ar": "تطبيقات ويندوز الزائدة",
+    },
+    "bloatware.section.codec": {
+        "en": "Third-party leftovers",
+        "ar": "مخلّفات برامج خارجية",
+    },
+    "bloatware.section.gaming": {
+        "en": "Xbox and gaming (optional)",
+        "ar": "Xbox والألعاب (اختياري)",
+    },
+    "bloatware.section_header": {
+        "en": "{title}  ·  {present} of {total} present",
+        "ar": "{title}  ·  {present} من {total} موجود",
+    },
+    # -- BloatRow's own badges -------------------------------------------
+    "bloatware.presence.installed": {
+        "en": "INSTALLED",
+        "ar": "مثبَّت",
+    },
+    "bloatware.presence.installed_hint": {
+        "en": "Registered on this machine and running when opened.",
+        "ar": "مسجَّل على هذا الجهاز ويعمل عند فتحه.",
+    },
+    "bloatware.presence.staged": {
+        "en": "STAGED",
+        "ar": "مهيَّأ",
+    },
+    "bloatware.presence.staged_hint": {
+        "en": "Not installed for you, but staged for new profiles — "
+              "this is the copy that returns after a Windows update.",
+        "ar": "غير مثبَّت لك، لكنه مهيَّأ لملفات تعريف جديدة — هذه هي "
+              "النسخة التي تعود بعد تحديث ويندوز.",
+    },
+    "bloatware.presence.pinned": {
+        "en": "PINNED",
+        "ar": "مثبَّت على القائمة",
+    },
+    "bloatware.presence.pinned_hint": {
+        "en": "Offered on the Start menu without being installed yet. "
+              "Windows downloads it the first time anyone opens the "
+              "tile; removing it takes the tile away too.",
+        "ar": "معروض على قائمة ابدأ دون أن يُثبَّت بعد. يحمّله ويندوز "
+              "أول مرة يفتح فيها أحد اللبنة؛ إزالته تزيل اللبنة أيضًا.",
+    },
+    "bloatware.presence.absent": {
+        "en": "NOT PRESENT",
+        "ar": "غير موجود",
+    },
+    "bloatware.presence.absent_hint": {
+        "en": "Pulse checks for this one and did not find it here.",
+        "ar": "يتحقق Pulse من وجوده ولم يجده هنا.",
+    },
+    "bloatware.optional_badge": {
+        "en": "OPTIONAL",
+        "ar": "اختياري",
+    },
+    "bloatware.optional_badge_hint": {
+        "en": "Left unticked by a Select All. Removing the Xbox stack "
+              "can break Game Bar's screen capture and Store game "
+              "sign-in.",
+        "ar": "يبقى غير محدَّد عند تحديد الكل. إزالة حزمة Xbox قد "
+              "تعطّل تسجيل شاشة Game Bar وتسجيل الدخول لألعاب المتجر.",
+    },
+
+    # ============================================================
+    #  STARTUP MANAGER (v16.1)
+    # ============================================================
+    "startup.title": {
+        "en": "🚀  Startup Manager",
+        "ar": "🚀  مدير بدء التشغيل",
+    },
+    "startup.subtitle.scanning": {
+        "en": "Auditing Run keys, Startup folders and sign-in tasks…",
+        "ar": "جارٍ تدقيق مفاتيح Run ومجلدات بدء التشغيل ومهام تسجيل "
+              "الدخول…",
+    },
+    "startup.loading": {
+        "en": "Reading Run keys, Startup folders and sign-in tasks, "
+              "and what Windows measured about recent boots…",
+        "ar": "جارٍ قراءة مفاتيح Run ومجلدات بدء التشغيل ومهام تسجيل "
+              "الدخول، وما قاسه ويندوز عن الإقلاعات الأخيرة…",
+    },
+    "startup.error.audit_failed_to_run": {
+        "en": "The startup audit failed to run.",
+        "ar": "تعذّر تشغيل تدقيق بدء التشغيل.",
+    },
+    "startup.error.audit_failed": {
+        "en": "The startup audit failed.",
+        "ar": "فشل تدقيق بدء التشغيل.",
+    },
+    "startup.error.audit_failed_short": {
+        "en": "Audit failed.",
+        "ar": "فشل التدقيق.",
+    },
+    "startup.error.no_items": {
+        "en": "No startup items were found to audit.",
+        "ar": "لم توجد عناصر بدء تشغيل لتدقيقها.",
+    },
+    "startup.filter.all": {
+        "en": "All {count}",
+        "ar": "الكل {count}",
+    },
+    "startup.filter.enabled": {
+        "en": "{count} enabled",
+        "ar": "{count} مفعَّل",
+    },
+    "startup.filter.disabled": {
+        "en": "{count} disabled",
+        "ar": "{count} معطَّل",
+    },
+    "startup.filter.recommended": {
+        "en": "{count} recommended to disable",
+        "ar": "{count} يُنصح بتعطيله",
+    },
+    "startup.filter.all_tooltip": {
+        "en": "Show every startup item",
+        "ar": "عرض كل عناصر بدء التشغيل",
+    },
+    "startup.filter.enabled_tooltip": {
+        "en": "Show only the items that launch at sign-in",
+        "ar": "عرض العناصر التي تُشغَّل عند تسجيل الدخول فقط",
+    },
+    "startup.filter.disabled_tooltip": {
+        "en": "Show only the items you have already disabled",
+        "ar": "عرض العناصر التي عطّلتها بالفعل فقط",
+    },
+    "startup.filter.recommended_tooltip": {
+        "en": "Show only the enabled items this audit recommends "
+              "disabling",
+        "ar": "عرض العناصر المفعَّلة التي ينصح هذا التدقيق بتعطيلها "
+              "فقط",
+    },
+    "startup.optimize_btn": {
+        "en": "Optimize Startup",
+        "ar": "تحسين بدء التشغيل",
+    },
+    "startup.optimize_btn_count": {
+        "en": "Optimize Startup ({count})",
+        "ar": "تحسين بدء التشغيل ({count})",
+    },
+    "startup.optimize_tooltip": {
+        "en": "Disables every currently-enabled item the audit "
+              "recommends disabling, one by one. Never touches a "
+              "System Critical item.",
+        "ar": "يعطّل كل عنصر مفعَّل حاليًا ينصح التدقيق بتعطيله، "
+              "واحدًا تلو الآخر. لا يمسّ أي عنصر حرج للنظام أبدًا.",
+    },
+    "startup.rescan_tooltip": {
+        "en": "Re-read the Run keys, Startup folders and sign-in "
+              "tasks.",
+        "ar": "إعادة قراءة مفاتيح Run ومجلدات بدء التشغيل ومهام "
+              "تسجيل الدخول.",
+    },
+    "startup.filter_note": {
+        "en": "Filtered — {shown} of {total} items shown ({hidden} "
+              "hidden). Click the highlighted pill again, or "
+              "“All”, to show everything.",
+        "ar": "مُصفًّى — يُعرض {shown} من {total} عنصرًا ({hidden} "
+              "مخفي). انقر الشارة المميَّزة مجددًا، أو “الكل"
+              "”، لعرض كل شيء.",
+    },
+    "startup.section.disable": {
+        "en": "⚠️  Recommended to Disable",
+        "ar": "⚠️  يُنصح بتعطيله",
+    },
+    "startup.section.review": {
+        "en": "🔎  Worth Reviewing",
+        "ar": "🔎  يستحق المراجعة",
+    },
+    "startup.section.keep": {
+        "en": "✅  Safe to Keep",
+        "ar": "✅  آمن الإبقاء عليه",
+    },
+    "startup.section.off": {
+        "en": "⏸️  Currently Disabled",
+        "ar": "⏸️  معطَّل حاليًا",
+    },
+    "startup.section_header": {
+        "en": "{label}   ·   {count}",
+        "ar": "{label}   ·   {count}",
+    },
+    "startup.boot_summary.base": {
+        "en": "Toggle any item to change it instantly — changes are "
+              "reversible.",
+        "ar": "بدِّل أي عنصر لتغييره فورًا — التغييرات قابلة للتراجع.",
+    },
+    "startup.boot_summary.last_boot": {
+        "en": "Last boot took {seconds}s",
+        "ar": "استغرق آخر إقلاع {seconds} ثانية",
+    },
+    "startup.boot_summary.average_suffix": {
+        "en": " (average {avg}s over {boots} boots)",
+        "ar": " (بمتوسط {avg} ثانية على مدى {boots} إقلاعًا)",
+    },
+    "startup.boot_summary.measured_singular": {
+        "en": "{measured} entry was measured slowing it down. ",
+        "ar": "قِيس عنصر واحد يبطئه. ",
+    },
+    "startup.boot_summary.measured_plural": {
+        "en": "{measured} entries were measured slowing it down. ",
+        "ar": "قِيست {measured} عناصر تبطئه. ",
+    },
+    "startup.boot_summary.needs_admin": {
+        "en": "Impact badges are estimates — Windows records real "
+              "boot delays, but reading them needs administrator. ",
+        "ar": "شارات الأثر تقديرية — يسجّل ويندوز تأخيرات الإقلاع "
+              "الحقيقية، لكن قراءتها تتطلب صلاحيات المسؤول. ",
+    },
+    "startup.boot_summary.log_disabled": {
+        "en": "Impact badges are estimates — this PC's "
+              "boot-performance log is turned off. ",
+        "ar": "شارات الأثر تقديرية — سجل أداء الإقلاع على هذا الجهاز "
+              "معطَّل. ",
+    },
+    "startup.status.disabling": {
+        "en": "Disabling {count} recommended item(s)…",
+        "ar": "جارٍ تعطيل {count} عنصر موصى به…",
+    },
+    # -- StartupRow's own badges/tooltips ---------------------------------
+    "startup.rec.disable": {
+        "en": "Recommended to Disable",
+        "ar": "يُنصح بتعطيله",
+    },
+    "startup.rec.keep": {
+        "en": "Safe to Keep",
+        "ar": "آمن الإبقاء عليه",
+    },
+    "startup.rec.review": {
+        "en": "Worth Reviewing",
+        "ar": "يستحق المراجعة",
+    },
+    "startup.rec.critical": {
+        "en": "System Critical",
+        "ar": "حرج للنظام",
+    },
+    "startup.missing_badge": {
+        "en": "MISSING",
+        "ar": "مفقود",
+    },
+    "startup.missing_tooltip": {
+        "en": "This entry points at a program that is not on this PC "
+              "any more — usually software that was uninstalled "
+              "without its startup entry being removed. Windows "
+              "still tries to launch it at every boot. Turning it "
+              "off is safe.",
+        "ar": "يشير هذا العنصر إلى برنامج لم يعد على هذا الجهاز — "
+              "غالبًا برنامج أُزيل دون إزالة عنصر بدء تشغيله. لا "
+              "يزال ويندوز يحاول تشغيله كل إقلاع. تعطيله آمن.",
+    },
+    "startup.protected_tooltip": {
+        "en": "Pulse never recommends disabling this one, and "
+              "“Optimize Startup” will not touch it. You "
+              "can still toggle it by hand.",
+        "ar": "لا يوصي Pulse أبدًا بتعطيل هذا العنصر، ولن يمسّه "
+              "“تحسين بدء التشغيل”. يمكنك مع ذلك تبديله "
+              "يدويًا.",
+    },
+    "startup.no_target_tooltip": {
+        "en": "This entry names no target.",
+        "ar": "هذا العنصر لا يسمّي هدفًا.",
+    },
+    "startup.impact.measured": {
+        "en": "DELAYS BOOT {seconds}s",
+        "ar": "يؤخر الإقلاع {seconds} ث",
+    },
+    "startup.impact.measured_tooltip_singular": {
+        "en": "Measured by Windows: this entry slowed {samples} "
+              "recent boot by {seconds}s on average",
+        "ar": "قاسه ويندوز: أبطأ هذا العنصر إقلاعًا واحدًا حديثًا "
+              "بمعدل {seconds} ثانية",
+    },
+    "startup.impact.measured_tooltip_plural": {
+        "en": "Measured by Windows: this entry slowed {samples} "
+              "recent boots by {seconds}s on average",
+        "ar": "قاسه ويندوز: أبطأ هذا العنصر {samples} إقلاعات "
+              "حديثة بمعدل {seconds} ثانية",
+    },
+    "startup.impact.measured_worst_suffix": {
+        "en": ", {worst}s at worst",
+        "ar": "، وحتى {worst} ثانية في أسوأ حال",
+    },
+    "startup.impact.estimated_tooltip": {
+        "en": "Estimated from what this kind of program usually "
+              "costs at startup — not a measurement taken on this "
+              "PC.",
+        "ar": "تقدير مبني على التكلفة المعتادة لهذا النوع من "
+              "البرامج عند بدء التشغيل — وليس قياسًا فعليًا على هذا "
+              "الجهاز.",
+    },
+    "startup.impact.high": {
+        "en": "HIGH",
+        "ar": "عالي",
+    },
+    "startup.impact.medium": {
+        "en": "MEDIUM",
+        "ar": "متوسط",
+    },
+    "startup.impact.low": {
+        "en": "LOW",
+        "ar": "منخفض",
+    },
+    "startup.impact.suffix": {
+        "en": "{impact} IMPACT",
+        "ar": "أثر {impact}",
+    },
+    "startup.type.registry": {
+        "en": "Registry (Run key)",
+        "ar": "السجل (مفتاح Run)",
+    },
+    "startup.type.task": {
+        "en": "Scheduled task ({trigger})",
+        "ar": "مهمة مجدولة ({trigger})",
+    },
+    "startup.type.task_default_trigger": {
+        "en": "at sign-in",
+        "ar": "عند تسجيل الدخول",
+    },
+    "startup.type.folder": {
+        "en": "Startup folder shortcut",
+        "ar": "اختصار في مجلد بدء التشغيل",
+    },
+    "startup.missing_reason": {
+        "en": "The program this points at is not installed any "
+              "more. Windows tries to start it at every boot and "
+              "fails; turning it off is safe.",
+        "ar": "البرنامج الذي يشير إليه هذا العنصر لم يعد مثبَّتًا. "
+              "يحاول ويندوز تشغيله كل إقلاع ويفشل؛ تعطيله آمن.",
     },
 }
 

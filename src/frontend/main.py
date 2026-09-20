@@ -3465,7 +3465,8 @@ class PulseApp(QMainWindow):
             # Fully self-contained: scans, groups by recommendation and
             # flips items live via its own workers. Nothing to hand back —
             # open it and move on, exactly like a plain informational card.
-            StartupManagerDialog(self, self.ps1_path, self.theme.t).exec()
+            StartupManagerDialog(self, self.ps1_path, self.theme.t,
+                                 lang=self._language).exec()
             return
         if item.get("context_menu"):
             # Self-contained like the DNS switcher: per-row toggles on a
@@ -3506,7 +3507,8 @@ class PulseApp(QMainWindow):
             self._exec_dialog(StorageAnalyzerDialog(self, self.ps1_path, self.theme.t))
             return
         if item.get("update_center"):
-            dialog = UpdateCenterDialog(self, self.ps1_path, self.theme.t)
+            dialog = UpdateCenterDialog(self, self.ps1_path, self.theme.t,
+                                       lang=self._language)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if dialog.selected_ids:
@@ -3550,7 +3552,8 @@ class PulseApp(QMainWindow):
             # already ticked. A modal asking "are you sure?" on top of a
             # modal the user just finished reading is the kind of double
             # prompt people learn to click through.
-            dialog = BloatwarePurgeDialog(self, self.ps1_path, self.theme.t)
+            dialog = BloatwarePurgeDialog(self, self.ps1_path, self.theme.t,
+                                          lang=self._language)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if not dialog.selected_ids:

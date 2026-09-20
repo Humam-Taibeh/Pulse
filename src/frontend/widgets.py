@@ -10499,7 +10499,7 @@ class UpdateRow(QFrame):
     RATIO_BAKED = True
 
     def __init__(self, app_id: str, name: str, current: str, available: str,
-                 t: dict, running: list[str] | None = None):
+                 t: dict, running: list[str] | None = None, lang: str = "en"):
         super().__init__()
         self.app_id = app_id
         self.app_name = name
@@ -10543,11 +10543,11 @@ class UpdateRow(QFrame):
         # into a decision: untick this one, or go and save your work.
         self._running_chip: QLabel | None = None
         if self.running_processes:
-            self._running_chip = QLabel("RUNNING")
+            self._running_chip = QLabel(
+                I18N.tr("update_center.row.running_badge", lang))
             self._running_chip.setToolTip(
-                "This app is running and will be closed before it is "
-                "updated.\nProcesses: "
-                + ", ".join(self.running_processes))
+                I18N.tr("update_center.row.running_tooltip", lang).format(
+                    processes=", ".join(self.running_processes)))
             row.addWidget(self._running_chip)
 
         row.addStretch()
@@ -10563,9 +10563,9 @@ class UpdateRow(QFrame):
         self.website_btn.setFixedSize(_ROW_LINK_W, _ROW_LINK_H)
         self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.website_btn.setToolTip(
-            f"Open {name}'s official download page in your browser")
+            I18N.tr("catalog.row.website_tooltip", lang).format(name=name))
         self.website_btn.setAccessibleName(
-            f"Open the official {name} download page")
+            I18N.tr("catalog.row.website_accessible", lang).format(name=name))
         self.website_btn.clicked.connect(
             lambda: open_official_page(self.app_id, self.app_name))
         row.addWidget(self.website_btn)
@@ -10629,9 +10629,10 @@ class UpdateCenterDialog(PulseDialog):
       Rejected -> nothing to do.
     """
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1_path = ps1_path
         self.selected_ids: list[str] = []
         self._rows: dict[str, UpdateRow] = {}
@@ -10646,11 +10647,11 @@ class UpdateCenterDialog(PulseDialog):
         panel = _dialog_chrome(self, t, accent, responsive=True)
         lay = dialog_body(panel, "md")
 
-        head = QLabel("🔄  Update Center")
+        head = QLabel(I18N.tr("update_center.title", lang))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
-        self._subtitle = QLabel("Scanning installed apps against winget…")
+        self._subtitle = QLabel(I18N.tr("update_center.subtitle.scanning", lang))
         self._subtitle.setWordWrap(True)
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._subtitle)
@@ -10685,13 +10686,13 @@ class UpdateCenterDialog(PulseDialog):
         # replace it. A shimmer bar over a fixed sentence cannot distinguish a
         # scan that is working from one that has hung, which is exactly what
         # made a 30s scan feel broken; naming the current phase can.
-        self._loading_label = QLabel("Reading your installed programs…")
+        self._loading_label = QLabel(I18N.tr("update_center.loading", self._lang))
         self._loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._loading_label.setWordWrap(True)
         self._loading_label.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._loading_label)
         lay.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", self._lang))
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         dialog_footer(lay, cancel)
@@ -10708,16 +10709,16 @@ class UpdateCenterDialog(PulseDialog):
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         icon.setStyleSheet(f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
         lay.addWidget(icon)
-        msg = QLabel("You're all caught up — every installed app is at its latest version.")
+        msg = QLabel(I18N.tr("update_center.empty.message", self._lang))
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         msg.setWordWrap(True)
         msg.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(msg)
         lay.addStretch()
-        rescan = QPushButton("Rescan")
+        rescan = QPushButton(I18N.tr("dialog.rescan", self._lang))
         rescan.setStyleSheet(TH.dialog_cancel_qss(t))
         rescan.clicked.connect(self._start_scan)
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", self._lang))
         close.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         close.clicked.connect(self.reject)
         dialog_footer(lay, rescan, close)
@@ -10740,10 +10741,10 @@ class UpdateCenterDialog(PulseDialog):
         self._error_label.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._error_label)
         lay.addStretch()
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", self._lang))
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
-        retry = QPushButton("Retry")
+        retry = QPushButton(I18N.tr("dialog.retry", self._lang))
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_scan)
         dialog_footer(lay, close, retry)
@@ -10765,17 +10766,17 @@ class UpdateCenterDialog(PulseDialog):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(TH.SPACE["lg"])
-        all_btn = QPushButton("Select All")
+        all_btn = QPushButton(I18N.tr("catalog.select_all", self._lang))
         all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         all_btn.setStyleSheet(TH.link_button_qss(t, accent))
         all_btn.clicked.connect(lambda: self._set_all(True))
         toolbar.addWidget(all_btn)
-        none_btn = QPushButton("Deselect All")
+        none_btn = QPushButton(I18N.tr("catalog.deselect_all", self._lang))
         none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         none_btn.setStyleSheet(TH.link_button_qss(t, accent))
         none_btn.clicked.connect(lambda: self._set_all(False))
         toolbar.addWidget(none_btn)
-        rescan_btn = QPushButton("Rescan")
+        rescan_btn = QPushButton(I18N.tr("dialog.rescan", self._lang))
         rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         rescan_btn.setStyleSheet(TH.link_button_qss(t, accent))
         rescan_btn.clicked.connect(self._start_scan)
@@ -10799,11 +10800,11 @@ class UpdateCenterDialog(PulseDialog):
         scroll.setWidget(self._host)
         lay.addWidget(scroll, 1)
 
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", self._lang))
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
 
-        self._deploy_btn = QPushButton("Update Selected")
+        self._deploy_btn = QPushButton(I18N.tr("update_center.update_selected", self._lang))
         self._deploy_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._deploy_btn.clicked.connect(self._accept_selection)
 
@@ -10814,10 +10815,10 @@ class UpdateCenterDialog(PulseDialog):
     def _start_scan(self):
         if self._thread is not None:
             return  # a scan is already in flight
-        self._subtitle.setText("Scanning installed apps against winget…")
+        self._subtitle.setText(I18N.tr("update_center.subtitle.scanning", self._lang))
         self._clear_rows()
         self._streaming = False
-        self._loading_label.setText("Reading your installed programs…")
+        self._loading_label.setText(I18N.tr("update_center.loading", self._lang))
         self._stack.setCurrentWidget(self._loading_page)
         self._shimmer.start()
 
@@ -10884,7 +10885,8 @@ class UpdateCenterDialog(PulseDialog):
             self._thread = None
 
     def _on_scan_failed(self, message: str):
-        self._show_error(message or "The update scan failed to run.")
+        self._show_error(
+            message or I18N.tr("update_center.error.scan_failed_to_run", self._lang))
 
     def _on_scan_finished(self, result: TaskResult):
         self._shimmer.stop()
@@ -10897,7 +10899,7 @@ class UpdateCenterDialog(PulseDialog):
             # preview that the final document does not confirm was wrong, and
             # leaving it on screen would offer an update that isn't there.
             self._clear_rows()
-            self._subtitle.setText("Every installed app is up to date.")
+            self._subtitle.setText(I18N.tr("update_center.empty_after_scan", self._lang))
             self._stack.setCurrentWidget(self._empty_page)
             return
         self._reconcile_rows(updates)
@@ -10905,8 +10907,9 @@ class UpdateCenterDialog(PulseDialog):
 
     def _show_error(self, message: str):
         self._shimmer.stop()
-        self._error_label.setText(message or "The update scan failed.")
-        self._subtitle.setText("Scan failed.")
+        self._error_label.setText(
+            message or I18N.tr("update_center.error.scan_failed", self._lang))
+        self._subtitle.setText(I18N.tr("update_center.error.scan_failed_short", self._lang))
         self._stack.setCurrentWidget(self._error_page)
 
     # -- row management -------------------------------------------------
@@ -10945,7 +10948,8 @@ class UpdateCenterDialog(PulseDialog):
         running = [str(n) for n in running] if isinstance(running, list) else []
         if entry.get("Running") and not running:
             running = ["(unknown)"]
-        row = UpdateRow(app_id, name, current, available, self._t, running)
+        row = UpdateRow(app_id, name, current, available, self._t, running,
+                        lang=self._lang)
         row.checkbox.toggled.connect(self._update_count)
         self._rows[app_id] = row
         self._host_lay.insertWidget(self._host_lay.count() - 1, row)
@@ -10979,9 +10983,8 @@ class UpdateCenterDialog(PulseDialog):
         # Same sentence shape SoftwareCatalogDialog uses for its selection —
         # one consistent voice across every selector in the app.
         self._subtitle.setText(
-            f"All {len(self._rows)} updates are pre-selected — untick anything you "
-            "don't want, or open a row's link to fetch it from the vendor "
-            "yourself.")
+            I18N.tr("update_center.reconcile_subtitle", self._lang).format(
+                total=len(self._rows)))
         self._update_count()
 
     def _set_all(self, checked: bool):
@@ -10990,12 +10993,16 @@ class UpdateCenterDialog(PulseDialog):
 
     def _update_count(self, _checked: bool = False):
         count = sum(1 for r in self._rows.values() if r.is_checked())
-        self._count_label.setText(f"{count} selected")
+        self._count_label.setText(
+            I18N.tr("update_center.count_selected", self._lang).format(count=count))
         total = len(self._rows)
         if count and count == total:
-            self._deploy_btn.setText(f"Update All ({count})")
+            self._deploy_btn.setText(
+                I18N.tr("update_center.update_all_count", self._lang).format(count=count))
         else:
-            self._deploy_btn.setText(f"Update Selected ({count})" if count else "Update Selected")
+            self._deploy_btn.setText(
+                I18N.tr("update_center.update_selected_count", self._lang).format(count=count)
+                if count else I18N.tr("update_center.update_selected", self._lang))
         self._deploy_btn.setEnabled(count > 0)
 
     # -- acceptance -------------------------------------------------
@@ -11030,18 +11037,13 @@ class UpdateCenterDialog(PulseDialog):
         if not running:
             return True
         names = ", ".join(sorted(r.app_name for r in running))
+        desc_key = ("update_center.confirm_running.desc_singular"
+                    if len(running) == 1 else
+                    "update_center.confirm_running.desc_plural")
         confirm = ConfirmDialog(self, {
             "icon": "\u26a0\ufe0f",
-            "title": "Some of these apps are running",
-            "desc": (
-                f"{names} {'is' if len(running) == 1 else 'are'} open right "
-                "now. Windows cannot replace files that are in use, so "
-                f"{'this app' if len(running) == 1 else 'these apps'} will "
-                "be closed before the update is applied — you will be asked "
-                "to save any unsaved work first.\n\n"
-                "Cancel if you would rather untick "
-                f"{'it' if len(running) == 1 else 'them'} and update the "
-                "rest."),
+            "title": I18N.tr("update_center.confirm_running.title", self._lang),
+            "desc": I18N.tr(desc_key, self._lang).format(names=names),
         }, self._t)
         return confirm.exec() == QDialog.DialogCode.Accepted
 
@@ -11423,30 +11425,27 @@ class BloatRow(QFrame):
     #  TestBrandMarks.test_every_catalogued_row_has_a_full_colour_mark
     #  fails if that stops being true.
 
-    #: `Presence` -> (badge text, its tone). The backend reports the
-    #: STRONGEST claim its evidence supports; this turns that into the one
-    #: word a user needs.
+    #: `Presence` -> (badge text i18n key, its hint i18n key). The backend
+    #: reports the STRONGEST claim its evidence supports; this turns that
+    #: into the one word a user needs.
     #:
     #: "PINNED" IS THE WHOLE POINT OF THE MAP. Before it there were two
     #: states, DETECTED and NOT PRESENT, and a Start-menu stub had to be
     #: filed under one of them — so it was filed under the wrong one.
     _PRESENCE = {
-        "installed": ("INSTALLED", "warn"),
-        "staged":    ("STAGED", "warn"),
-        "pinned":    ("PINNED", "accent"),
-        "absent":    ("NOT PRESENT", "neutral"),
+        "installed": ("bloatware.presence.installed", "bloatware.presence.installed_hint"),
+        "staged":    ("bloatware.presence.staged", "bloatware.presence.staged_hint"),
+        "pinned":    ("bloatware.presence.pinned", "bloatware.presence.pinned_hint"),
+        "absent":    ("bloatware.presence.absent", "bloatware.presence.absent_hint"),
     }
 
-    #: What each badge means, spelled out. A one-word chip that the user
-    #: has to guess at is a decoration.
-    _PRESENCE_HINTS = {
-        "installed": "Registered on this machine and running when opened.",
-        "staged": "Not installed for you, but staged for new profiles — "
-                  "this is the copy that returns after a Windows update.",
-        "pinned": "Offered on the Start menu without being installed yet. "
-                  "Windows downloads it the first time anyone opens the "
-                  "tile; removing it takes the tile away too.",
-        "absent": "Pulse checks for this one and did not find it here.",
+    #: `Presence` -> its badge tone, kept apart from the i18n keys above
+    #: so apply_theme's colour lookup does not need a language.
+    _PRESENCE_TONES = {
+        "installed": "warn",
+        "staged":    "warn",
+        "pinned":    "accent",
+        "absent":    "neutral",
     }
 
     #: This row rasterises a brand mark at the SCREEN's device-pixel ratio
@@ -11455,7 +11454,7 @@ class BloatRow(QFrame):
     #: PulseDialog.rescale_marks.
     RATIO_BAKED = True
 
-    def __init__(self, entry: dict, t: dict):
+    def __init__(self, entry: dict, t: dict, lang: str = "en"):
         super().__init__()
         self.entry_id = str(entry.get("Id") or "")
         self.group = str(entry.get("Group") or "promo")
@@ -11522,22 +11521,22 @@ class BloatRow(QFrame):
         self.checkbox.setEnabled(self.detected)
         name_row.addWidget(self.checkbox)
 
-        label, self._badge_tone = self._PRESENCE[self.presence]
-        self._badge = QLabel(label)
-        self._badge.setToolTip(self._PRESENCE_HINTS[self.presence])
+        label_key, hint_key = self._PRESENCE[self.presence]
+        self._badge_tone = self._PRESENCE_TONES[self.presence]
+        self._badge = QLabel(I18N.tr(label_key, lang))
+        self._badge.setToolTip(I18N.tr(hint_key, lang))
         name_row.addWidget(self._badge)
 
         self._optional_badge: QLabel | None = None
         if self.optional:
-            self._optional_badge = QLabel("OPTIONAL")
+            self._optional_badge = QLabel(I18N.tr("bloatware.optional_badge", lang))
             self._optional_badge.setToolTip(
-                "Left unticked by a Select All. Removing the Xbox stack can "
-                "break Game Bar's screen capture and Store game sign-in.")
+                I18N.tr("bloatware.optional_badge_hint", lang))
             name_row.addWidget(self._optional_badge)
         name_row.addStretch()
         col.addLayout(name_row)
 
-        note = str(entry.get("Note") or "")
+        note = I18N_CAT.tr_desc(str(entry.get("Note") or ""), lang)
         # THE START-MENU TIER COUNTS HERE TOO. A pinned stub has a real
         # package name and it is exactly the row where "what am I actually
         # removing?" is hardest to answer from the friendly name alone.
@@ -12517,9 +12516,10 @@ class BloatwarePurgeDialog(PulseDialog):
     #: once rather than per character, short enough to feel immediate.
     SEARCH_DEBOUNCE_MS = 120
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1_path = ps1_path
         self.selected_ids: list[str] = []
         self._caveat = ""
@@ -12539,10 +12539,10 @@ class BloatwarePurgeDialog(PulseDialog):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(TH.SPACE["xxs"])
-        title = QLabel("🧹  Bloatware Purge")
+        title = QLabel(I18N.tr("bloatware.title", lang))
         title.setStyleSheet(TH.label_qss(t, "dialog"))
         title_col.addWidget(title)
-        self._subtitle = QLabel("Scanning installed and staged packages…")
+        self._subtitle = QLabel(I18N.tr("bloatware.subtitle.scanning", lang))
         self._subtitle.setWordWrap(True)
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         title_col.addWidget(self._subtitle)
@@ -12575,9 +12575,7 @@ class BloatwarePurgeDialog(PulseDialog):
         self._shimmer = ShimmerBar(height=6)
         self._shimmer.set_theme(t)
         lay.addWidget(self._shimmer)
-        self._loading_label = QLabel(
-            "Reading installed packages, staged provisioning templates and "
-            "the uninstall registry…")
+        self._loading_label = QLabel(I18N.tr("bloatware.loading", self._lang))
         self._loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._loading_label.setWordWrap(True)
         self._loading_label.setStyleSheet(TH.label_qss(t, "body"))
@@ -12658,7 +12656,7 @@ class BloatwarePurgeDialog(PulseDialog):
         row.addStretch()
         lay.addLayout(row)
 
-        headline = QLabel("Your system is clean")
+        headline = QLabel(I18N.tr("bloatware.clean.headline", self._lang))
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         headline.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(headline)
@@ -12675,8 +12673,7 @@ class BloatwarePurgeDialog(PulseDialog):
         self._inspect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._inspect_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._inspect_btn.setToolTip(
-            "Show every package Pulse checks for, including the ones that "
-            "are not on this machine.")
+            I18N.tr("bloatware.clean.inspect_tooltip", self._lang))
         self._inspect_btn.clicked.connect(self._inspect_catalog)
         link_row = QHBoxLayout()
         link_row.addStretch()
@@ -12712,25 +12709,23 @@ class BloatwarePurgeDialog(PulseDialog):
         # that silently ticked hidden rows would be a trap. Deselect All
         # stays global, because turning everything off is never the
         # dangerous direction.
-        self._all_btn = QPushButton("Select All Installed")
+        self._all_btn = QPushButton(I18N.tr("bloatware.select_all_installed", self._lang))
         self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._all_btn.setToolTip(
-            "Ticks every package REGISTERED on this PC that is currently "
-            "shown, outside the optional Xbox section.")
+            I18N.tr("bloatware.select_all_installed_tooltip", self._lang))
         self._all_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._all_btn.clicked.connect(
             lambda: self._select_presence(self.INSTALLED_TIERS))
         bar.addWidget(self._all_btn)
-        self._stubs_btn = QPushButton("Select All Stubs")
+        self._stubs_btn = QPushButton(I18N.tr("bloatware.select_all_stubs", self._lang))
         self._stubs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._stubs_btn.setToolTip(
-            "Ticks the Start-menu tiles and staged packages currently shown "
-            "— the ones that come back after a Windows feature update.")
+            I18N.tr("bloatware.select_all_stubs_tooltip", self._lang))
         self._stubs_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._stubs_btn.clicked.connect(
             lambda: self._select_presence(self.STUB_TIERS))
         bar.addWidget(self._stubs_btn)
-        self._none_btn = QPushButton("Deselect All")
+        self._none_btn = QPushButton(I18N.tr("catalog.deselect_all", self._lang))
         self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._none_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._none_btn.clicked.connect(lambda: self._select_all(False))
@@ -12748,12 +12743,13 @@ class BloatwarePurgeDialog(PulseDialog):
         # The toggle exists because the evidence is a fair question: "does
         # Pulse know about TikTok?" is answerable in one click rather than
         # by reading the source.
-        self._show_absent = QCheckBox("Show packages that aren't installed")
+        self._show_absent = QCheckBox(I18N.tr("bloatware.show_absent", self._lang))
         self._show_absent.setCursor(Qt.CursorShape.PointingHandCursor)
         self._show_absent.setStyleSheet(TH.checkbox_qss(t, t["accent"]))
         self._show_absent.toggled.connect(self._sync_visibility)
         bar.addWidget(self._show_absent)
-        self._count = QLabel("0 selected")
+        self._count = QLabel(
+            I18N.tr("bloatware.count.selected", self._lang).format(count=0))
         self._count.setStyleSheet(TH.label_qss(t, "caption"))
         bar.addWidget(self._count)
         lay.addLayout(bar)
@@ -12777,7 +12773,8 @@ class BloatwarePurgeDialog(PulseDialog):
         field_lay.setContentsMargins(TH.SPACE["md"], 0, TH.SPACE["sm"], 0)
         field_lay.setSpacing(TH.SPACE["sm"])
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Filter by name or package ID…")
+        self._search.setPlaceholderText(
+            I18N.tr("bloatware.filter_placeholder", self._lang))
         self._search.setClearButtonEnabled(True)
         self._search.setFrame(False)
         self._search.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -12816,10 +12813,10 @@ class BloatwarePurgeDialog(PulseDialog):
         #  and it said it in the one position where the good news is least
         #  likely to be read: below three sections of evidence against it.)
 
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = QPushButton(I18N.tr("dialog.cancel", self._lang))
         self._cancel_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._cancel_btn.clicked.connect(self.reject)
-        self._purge_btn = QPushButton("Safe Purge")
+        self._purge_btn = QPushButton(I18N.tr("bloatware.purge_btn", self._lang))
         self._purge_btn.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
         self._purge_btn.setEnabled(False)
         self._purge_btn.clicked.connect(self._accept_selection)
@@ -12849,15 +12846,16 @@ class BloatwarePurgeDialog(PulseDialog):
         self._caveat = message[message.index(marker):] if marker in message else ""
         entries = result.data if isinstance(result.data, list) else None
         if not result.success or entries is None:
-            self._on_scan_failed(result.message or "The package scan returned nothing.")
+            self._on_scan_failed(
+                result.message
+                or I18N.tr("bloatware.error.scan_returned_nothing", self._lang))
             return
         self._render(entries)
 
     def _on_scan_failed(self, message: str):
         self._shimmer.stop()
         self._error_label.setText(
-            f"{message}\n\nNothing was changed. Close this and try again, or "
-            "run the purge without a selection to remove the recommended set.")
+            message + I18N.tr("bloatware.error.suffix", self._lang))
         self._stack.setCurrentWidget(self._error_page)
         self._purge_btn.setEnabled(False)
 
@@ -12878,7 +12876,7 @@ class BloatwarePurgeDialog(PulseDialog):
                 by_group.setdefault(str(entry.get("Group") or "promo"), []).append(entry)
 
         detected = 0
-        for key, title, _optional in self.SECTIONS:
+        for key, _title, _optional in self.SECTIONS:
             rows = by_group.get(key) or []
             # Detected first inside a section, then alphabetically. A user
             # opening this wants to see what is actually there, and a list
@@ -12888,10 +12886,13 @@ class BloatwarePurgeDialog(PulseDialog):
                 continue
             present = sum(1 for e in rows if e.get("Detected"))
             detected += present
-            header = self._add_header(f"{title}  ·  {present} of {len(rows)} present")
+            title = I18N.tr(f"bloatware.section.{key}", self._lang)
+            header = self._add_header(
+                I18N.tr("bloatware.section_header", self._lang).format(
+                    title=title, present=present, total=len(rows)))
             built = []
             for entry in rows:
-                row = BloatRow(entry, t)
+                row = BloatRow(entry, t, lang=self._lang)
                 row.checkbox.toggled.connect(self._sync_count)
                 self._rows[row.entry_id] = row
                 self._insert(row)
@@ -12907,17 +12908,15 @@ class BloatwarePurgeDialog(PulseDialog):
         # dialog-title weight, and saying it twice on one screen makes
         # the second one look like a different claim.
         summary = (
-            "Checked every installed, staged and Start-menu package "
-            "against the Pulse catalog."
+            I18N.tr("bloatware.summary.clean_scan", self._lang)
             if detected == 0 else
-            f"{detected} catalogued package(s) found. Ticked packages are "
-            "removed for every profile, deprovisioned so they cannot return "
-            "after a Windows update, and their Start menu promotions "
-            "disabled.")
+            I18N.tr("bloatware.summary.detected", self._lang).format(detected=detected))
         # The backend appends a caveat when it could not read the staged
         # packages (that read needs elevation). Passing it through matters:
         # "clean" and "clean as far as I could see" are different claims,
-        # and the second one is what an unelevated scan can make.
+        # and the second one is what an unelevated scan can make — the
+        # caveat itself is backend-generated text and stays English, same
+        # boundary as the live console.
         if self._caveat:
             summary = f"{summary}  {self._caveat}"
         self._subtitle.setText(summary)
@@ -12926,12 +12925,14 @@ class BloatwarePurgeDialog(PulseDialog):
         # thirty boxes to agree would be theatre. The optional section is
         # the exception and stays untouched.
         self._select_all(True)
-        self._clean_note.setText(
-            f"None of the {self._catalogued} packages Pulse checks for is "
-            "installed, staged for future profiles, or pinned to your Start "
-            "menu." + (f"  {self._caveat}" if self._caveat else ""))
+        clean_note = I18N.tr("bloatware.clean.note", self._lang).format(
+            catalogued=self._catalogued)
+        if self._caveat:
+            clean_note = f"{clean_note}  {self._caveat}"
+        self._clean_note.setText(clean_note)
         self._inspect_btn.setText(
-            f"Show all {self._catalogued} packages Pulse checks for")
+            I18N.tr("bloatware.clean.inspect_btn", self._lang).format(
+                catalogued=self._catalogued))
         # THE TOGGLE STAYS LIVE ON A CLEAN MACHINE, and that is the fix.
         # It used to be forced on and DISABLED here, which is how a
         # control the user pressed did nothing: with nothing detected the
@@ -12975,7 +12976,9 @@ class BloatwarePurgeDialog(PulseDialog):
         # the page just said there is nothing of. Cancel becomes Close for
         # the same reason: there is no selection to abandon.
         self._purge_btn.setVisible(not clean)
-        self._cancel_btn.setText("Close" if clean else "Cancel")
+        self._cancel_btn.setText(
+            I18N.tr("dialog.close", self._lang) if clean
+            else I18N.tr("dialog.cancel", self._lang))
         if clean:
             self._stack.setCurrentWidget(self._clean_page)
             return
@@ -13017,11 +13020,11 @@ class BloatwarePurgeDialog(PulseDialog):
         hidden = 0 if show_all else sum(
             1 for row in self._rows.values()
             if not row.detected and self._row_matches(row))
-        text = f"Nothing installed matches “{self._search.text().strip()}”."
+        text = I18N.tr("bloatware.no_match", self._lang).format(
+            query=self._search.text().strip())
         if hidden:
-            text += (f"  {hidden} catalogued package(s) match but are not on "
-                     "this PC — tick “Show packages that aren't installed” "
-                     "to see them.")
+            text += I18N.tr("bloatware.no_match.hidden_suffix", self._lang).format(
+                hidden=hidden)
         self._no_match.setText(text)
         self._no_match.show()
 
@@ -13079,14 +13082,17 @@ class BloatwarePurgeDialog(PulseDialog):
         # the list is not, so "12 selected" above four visible rows reads
         # as a bug until the badge says how many are on screen.
         self._count.setText(
-            f"{len(chosen)} selected  ·  {shown} of {eligible} shown"
-            if self._query else f"{len(chosen)} selected")
+            I18N.tr("bloatware.count.selected_shown", self._lang).format(
+                count=len(chosen), shown=shown, eligible=eligible)
+            if self._query else
+            I18N.tr("bloatware.count.selected", self._lang).format(count=len(chosen)))
         self._count.setStyleSheet(
             TH.micro_chip_qss(self._t, "accent") if chosen
             else TH.label_qss(self._t, "caption"))
         self._purge_btn.setEnabled(bool(chosen))
         self._purge_btn.setText(
-            "Safe Purge" if not chosen else f"Safe Purge ({len(chosen)})")
+            I18N.tr("bloatware.purge_btn", self._lang) if not chosen else
+            I18N.tr("bloatware.purge_btn_count", self._lang).format(count=len(chosen)))
 
     def _accept_selection(self):
         self.selected_ids = [r.entry_id for r in self._rows.values() if r.is_selected()]
@@ -13114,7 +13120,8 @@ class StartupRow(QFrame):
     the disable/enable task the instant it flips — no separate 'Apply'
     step, per the brief's 'fluid, native toggle switches ... instantly'."""
 
-    _REC_LABELS = {"Disable": "Recommended to Disable", "Keep": "Safe to Keep", "Review": "Worth Reviewing"}
+    _REC_LABELS = {"Disable": "startup.rec.disable", "Keep": "startup.rec.keep",
+                   "Review": "startup.rec.review"}
 
     #: The row's fixed right-hand column, and the switch lives in it alone.
     #:
@@ -13148,8 +13155,9 @@ class StartupRow(QFrame):
 
     toggle_requested = Signal(str, bool)   # (encoded_id, want_enabled)
 
-    def __init__(self, item: dict, t: dict):
+    def __init__(self, item: dict, t: dict, lang: str = "en"):
         super().__init__()
+        self._lang = lang
         self.item_id = str(item["Id"])
         #: The Run-key command or shortcut target, which is what the icon
         #: is read out of. Kept because apply_theme re-renders the mark.
@@ -13203,7 +13211,8 @@ class StartupRow(QFrame):
         self._icon.setFixedSize(TH.PLAQUE_SIZE, TH.PLAQUE_SIZE)
         self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._icon.setStyleSheet("background: transparent; border: none;")
-        self._icon.setToolTip(self._command or "This entry names no target.")
+        self._icon.setToolTip(
+            self._command or I18N.tr("startup.no_target_tooltip", lang))
         outer.addWidget(self._icon, 0, Qt.AlignmentFlag.AlignVCenter)
 
         col = QVBoxLayout()
@@ -13244,23 +13253,29 @@ class StartupRow(QFrame):
         self._measured = bool(item.get("ImpactMeasured")) and delay_ms not in (None, "")
         if self._measured:
             seconds = float(delay_ms) / 1000.0
-            self._impact_badge = QLabel(f"DELAYS BOOT {seconds:.1f}s")
+            self._impact_badge = QLabel(
+                I18N.tr("startup.impact.measured", lang).format(seconds=f"{seconds:.1f}"))
             samples = int(item.get("BootDelaySamples") or 0)
-            tip = (f"Measured by Windows: this entry slowed {samples} recent "
-                   f"boot{'' if samples == 1 else 's'} by {seconds:.1f}s on average")
+            tip_key = ("startup.impact.measured_tooltip_singular" if samples == 1
+                       else "startup.impact.measured_tooltip_plural")
+            tip = I18N.tr(tip_key, lang).format(samples=samples, seconds=f"{seconds:.1f}")
             worst = item.get("BootDelayMaxMs")
             if worst not in (None, ""):
-                tip += f", {float(worst) / 1000.0:.1f}s at worst"
+                tip += I18N.tr("startup.impact.measured_worst_suffix", lang).format(
+                    worst=f"{float(worst) / 1000.0:.1f}")
             self._impact_badge.setToolTip(tip + ".")
         else:
-            self._impact_badge = QLabel(f"{self._impact.upper()} IMPACT")
+            impact_key = f"startup.impact.{self._impact.lower()}"
+            self._impact_badge = QLabel(
+                I18N.tr("startup.impact.suffix", lang).format(
+                    impact=I18N.tr(impact_key, lang)))
             self._impact_badge.setToolTip(
-                "Estimated from what this kind of program usually costs at "
-                "startup — not a measurement taken on this PC.")
+                I18N.tr("startup.impact.estimated_tooltip", lang))
         name_row.addWidget(self._impact_badge)
         self._rec_badge = QLabel(
-            "System Critical" if self._protected
-            else self._REC_LABELS.get(self._recommendation, self._recommendation))
+            I18N.tr("startup.rec.critical", lang) if self._protected
+            else I18N.tr(self._REC_LABELS.get(self._recommendation, ""), lang)
+            or self._recommendation)
         name_row.addWidget(self._rec_badge)
         # THE BADGE THAT EXPLAINS THE GREY BOX. Six of fifteen entries on
         # the machine this was measured on point at binaries that are no
@@ -13271,39 +13286,35 @@ class StartupRow(QFrame):
         # captioned MISSING are six entries worth turning off.
         self._missing_badge: QLabel | None = None
         if not self._target_present:
-            self._missing_badge = QLabel("MISSING")
-            self._missing_badge.setToolTip(
-                "This entry points at a program that is not on this PC any "
-                "more — usually software that was uninstalled without its "
-                "startup entry being removed. Windows still tries to launch "
-                "it at every boot. Turning it off is safe.")
+            self._missing_badge = QLabel(I18N.tr("startup.missing_badge", lang))
+            self._missing_badge.setToolTip(I18N.tr("startup.missing_tooltip", lang))
             name_row.addWidget(self._missing_badge)
         name_row.addStretch()
         if self._protected:
-            self.setToolTip(
-                "Pulse never recommends disabling this one, and “Optimize "
-                "Startup” will not touch it. You can still toggle it by hand.")
+            self.setToolTip(I18N.tr("startup.protected_tooltip", lang))
         col.addLayout(name_row)
 
         item_type = item.get("Type")
         if item_type == "Registry":
-            type_label = "Registry (Run key)"
+            type_label = I18N.tr("startup.type.registry", lang)
         elif item_type == "Task":
             # v10.13: a Task Scheduler entry with a logon or boot trigger.
             # The trigger is part of the label because "scheduled task" on
-            # its own does not say why the row is in a STARTUP list.
-            type_label = f"Scheduled task ({item.get('Trigger') or 'at sign-in'})"
+            # its own does not say why the row is in a STARTUP list. The
+            # trigger VALUE itself, when the backend supplies one, is
+            # backend-generated text and stays English — only the "Scheduled
+            # task (...)" wrapper and the "at sign-in" fallback translate.
+            trigger = item.get("Trigger") or I18N.tr("startup.type.task_default_trigger", lang)
+            type_label = I18N.tr("startup.type.task", lang).format(trigger=trigger)
         else:
-            type_label = "Startup folder shortcut"
-        reason = str(item.get("Reason") or "")
+            type_label = I18N.tr("startup.type.folder", lang)
+        reason = I18N_CAT.tr_desc(str(item.get("Reason") or ""), lang)
         if not self._target_present:
             # REPLACES the recommendation rather than joining it. The
             # engine's reason is advice about the PROGRAM ("a launcher
             # you rarely need at boot"), and there is no program — saying
             # both would be two answers to one question.
-            reason = ("The program this points at is not installed any "
-                      "more. Windows tries to start it at every boot and "
-                      "fails; turning it off is safe.")
+            reason = I18N.tr("startup.missing_reason", lang)
         self._meta = QLabel(f"{type_label}  ·  {reason}")
         self._meta.setWordWrap(True)
         col.addWidget(self._meta)
@@ -13380,9 +13391,10 @@ class StartupManagerDialog(PulseDialog):
     which only decide what a *later* task should run), so main.py just
     opens it and moves on when it closes."""
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1_path = ps1_path
         self._rows: dict[str, StartupRow] = {}
         self._items: dict[str, dict] = {}
@@ -13406,10 +13418,10 @@ class StartupManagerDialog(PulseDialog):
         head = QHBoxLayout()
         title_col = QVBoxLayout()
         title_col.setSpacing(TH.SPACE["xxs"])
-        title = QLabel("🚀  Startup Manager")
+        title = QLabel(I18N.tr("startup.title", lang))
         title.setStyleSheet(TH.label_qss(t, "dialog"))
         title_col.addWidget(title)
-        self._subtitle = QLabel("Auditing Run keys, Startup folders and sign-in tasks…")
+        self._subtitle = QLabel(I18N.tr("startup.subtitle.scanning", lang))
         self._subtitle.setWordWrap(True)
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         title_col.addWidget(self._subtitle)
@@ -13453,8 +13465,7 @@ class StartupManagerDialog(PulseDialog):
         self._shimmer = ShimmerBar(height=6)
         self._shimmer.set_theme(t)
         lay.addWidget(self._shimmer)
-        label = QLabel("Reading Run keys, Startup folders and sign-in tasks, and what "
-                       "Windows measured about recent boots…")
+        label = QLabel(I18N.tr("startup.loading", self._lang))
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
         label.setStyleSheet(TH.label_qss(t, "body"))
@@ -13462,7 +13473,7 @@ class StartupManagerDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", self._lang))
         size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
@@ -13489,12 +13500,12 @@ class StartupManagerDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", self._lang))
         size_dialog_button(close)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         row.addWidget(close)
-        retry = QPushButton("Retry")
+        retry = QPushButton(I18N.tr("dialog.retry", self._lang))
         size_dialog_button(retry)
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_scan)
@@ -13532,14 +13543,14 @@ class StartupManagerDialog(PulseDialog):
             return btn
 
         self._chip_all = chip(
-            "all", "accent", "Show every startup item")
+            "all", "accent", I18N.tr("startup.filter.all_tooltip", self._lang))
         self._chip_enabled = chip(
-            "enabled", "neutral", "Show only the items that launch at sign-in")
+            "enabled", "neutral", I18N.tr("startup.filter.enabled_tooltip", self._lang))
         self._chip_disabled = chip(
-            "disabled", "neutral", "Show only the items you have already disabled")
+            "disabled", "neutral", I18N.tr("startup.filter.disabled_tooltip", self._lang))
         self._chip_recommended = chip(
             "recommended", "warn",
-            "Show only the enabled items this audit recommends disabling")
+            I18N.tr("startup.filter.recommended_tooltip", self._lang))
         summary.addStretch()
 
         # THE TOOLBAR ENDS WITH ITS ACTIONS, exactly as the Update
@@ -13558,21 +13569,18 @@ class StartupManagerDialog(PulseDialog):
         # something to offer and simply absent otherwise — which states
         # "all clear" by the honest route, and gives the list back the
         # ~48px the banner was holding.
-        self._optimize_btn = QPushButton("Optimize Startup")
+        self._optimize_btn = QPushButton(I18N.tr("startup.optimize_btn", self._lang))
         self._optimize_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._optimize_btn.setStyleSheet(TH.link_button_qss(t, t["warn"]))
-        self._optimize_btn.setToolTip(
-            "Disables every currently-enabled item the audit recommends "
-            "disabling, one by one. Never touches a System Critical item.")
+        self._optimize_btn.setToolTip(I18N.tr("startup.optimize_tooltip", self._lang))
         self._optimize_btn.clicked.connect(self._start_optimize)
         self._optimize_btn.hide()
         summary.addWidget(self._optimize_btn)
 
-        self._rescan_btn = QPushButton("Rescan")
+        self._rescan_btn = QPushButton(I18N.tr("dialog.rescan", self._lang))
         self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._rescan_btn.setStyleSheet(TH.link_button_qss(t, accent))
-        self._rescan_btn.setToolTip(
-            "Re-read the Run keys, Startup folders and sign-in tasks.")
+        self._rescan_btn.setToolTip(I18N.tr("startup.rescan_tooltip", self._lang))
         self._rescan_btn.clicked.connect(self._start_scan)
         summary.addWidget(self._rescan_btn)
         lay.addLayout(summary)
@@ -13598,7 +13606,7 @@ class StartupManagerDialog(PulseDialog):
         # leaves the action bar saying exactly what a self-contained
         # dialog's action bar should: every toggle already took effect,
         # there is nothing to commit, you are done.
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", self._lang))
         close.setStyleSheet(TH.dialog_secondary_go_qss(t, accent))
         close.clicked.connect(self.accept)
         dialog_footer(lay, close)
@@ -13608,7 +13616,7 @@ class StartupManagerDialog(PulseDialog):
     def _start_scan(self):
         if self._scan_thread is not None:
             return
-        self._subtitle.setText("Auditing Run keys, Startup folders and sign-in tasks…")
+        self._subtitle.setText(I18N.tr("startup.subtitle.scanning", self._lang))
         self._clear_rows()
         # Back to the full list for a fresh scan. Carrying a filter across a
         # rescan can land the user on an empty list whose emptiness is the
@@ -13646,7 +13654,8 @@ class StartupManagerDialog(PulseDialog):
             self._scan_thread = None
 
     def _on_scan_failed(self, message: str):
-        self._show_error(message or "The startup audit failed to run.")
+        self._show_error(
+            message or I18N.tr("startup.error.audit_failed_to_run", self._lang))
 
     def _on_scan_finished(self, result: TaskResult):
         self._shimmer.stop()
@@ -13664,14 +13673,14 @@ class StartupManagerDialog(PulseDialog):
         items = data if isinstance(data, list) else []
         items = [it for it in items if isinstance(it, dict) and it.get("Id")]
         if not items:
-            self._show_error("No startup items were found to audit.")
+            self._show_error(I18N.tr("startup.error.no_items", self._lang))
             return
         self._populate_rows(items)
-        self._subtitle.setText(self._boot_summary(boot, items))
+        self._subtitle.setText(self._boot_summary(boot, items, self._lang))
         self._stack.setCurrentWidget(self._results_page)
 
     @staticmethod
-    def _boot_summary(boot: dict, items: list) -> str:
+    def _boot_summary(boot: dict, items: list, lang: str = "en") -> str:
         """The subtitle, carrying what Windows measured when it could.
 
         THREE HONEST STATES. Measured: the last boot's duration and how many
@@ -13680,34 +13689,36 @@ class StartupManagerDialog(PulseDialog):
         silent fallback would let an estimate pass for a measurement. And an
         older engine with no boot data at all, which says nothing new.
         """
-        base = "Toggle any item to change it instantly — changes are reversible."
+        tr = I18N.tr
+        base = tr("startup.boot_summary.base", lang)
         if not isinstance(boot, dict) or not boot:
             return base
         if boot.get("available") and boot.get("lastBootMs"):
-            text = f"Last boot took {float(boot['lastBootMs']) / 1000.0:.1f}s"
+            text = tr("startup.boot_summary.last_boot", lang).format(
+                seconds=f"{float(boot['lastBootMs']) / 1000.0:.1f}")
             boots = int(boot.get("boots") or 0)
             if boot.get("averageBootMs") and boots > 1:
-                text += (f" (average {float(boot['averageBootMs']) / 1000.0:.1f}s "
-                         f"over {boots} boots)")
+                text += tr("startup.boot_summary.average_suffix", lang).format(
+                    avg=f"{float(boot['averageBootMs']) / 1000.0:.1f}", boots=boots)
             text += ". "
             measured = sum(1 for it in items if it.get("ImpactMeasured"))
             if measured:
-                noun = "entry was" if measured == 1 else "entries were"
-                text += f"{measured} {noun} measured slowing it down. "
+                key = ("startup.boot_summary.measured_singular" if measured == 1
+                       else "startup.boot_summary.measured_plural")
+                text += tr(key, lang).format(measured=measured)
             return text + base
         reason = str(boot.get("reason") or "")
         if reason == "needs-admin":
-            return ("Impact badges are estimates — Windows records real boot "
-                    "delays, but reading them needs administrator. " + base)
+            return tr("startup.boot_summary.needs_admin", lang) + base
         if reason == "disabled":
-            return ("Impact badges are estimates — this PC's boot-performance "
-                    "log is turned off. " + base)
+            return tr("startup.boot_summary.log_disabled", lang) + base
         return base
 
     def _show_error(self, message: str):
         self._shimmer.stop()
-        self._error_label.setText(message or "The startup audit failed.")
-        self._subtitle.setText("Audit failed.")
+        self._error_label.setText(
+            message or I18N.tr("startup.error.audit_failed", self._lang))
+        self._subtitle.setText(I18N.tr("startup.error.audit_failed_short", self._lang))
         self._stack.setCurrentWidget(self._error_page)
 
     # -- row management -------------------------------------------------
@@ -13773,19 +13784,21 @@ class StartupManagerDialog(PulseDialog):
                 buckets.setdefault(it.get("Recommendation", "Review"), []).append(it)
 
         sections = [
-            ("⚠️  Recommended to Disable", buckets["Disable"]),
-            ("🔎  Worth Reviewing", buckets["Review"]),
-            ("✅  Safe to Keep", buckets["Keep"]),
-            ("⏸️  Currently Disabled", buckets["_off"]),
+            (I18N.tr("startup.section.disable", self._lang), buckets["Disable"]),
+            (I18N.tr("startup.section.review", self._lang), buckets["Review"]),
+            (I18N.tr("startup.section.keep", self._lang), buckets["Keep"]),
+            (I18N.tr("startup.section.off", self._lang), buckets["_off"]),
         ]
         for label, rows in sections:
             if not rows:
                 continue
-            header = QLabel(f"{label}   ·   {len(rows)}")
+            header = QLabel(
+                I18N.tr("startup.section_header", self._lang).format(
+                    label=label, count=len(rows)))
             header.setStyleSheet(TH.label_qss(self._t, "section"))
             self._host_lay.insertWidget(self._host_lay.count() - 1, header)
             for it in rows:
-                row = StartupRow(it, self._t)
+                row = StartupRow(it, self._t, lang=self._lang)
                 row.toggle_requested.connect(self._on_toggle_requested)
                 self._rows[str(it["Id"])] = row
                 self._host_lay.insertWidget(self._host_lay.count() - 1, row)
@@ -13795,20 +13808,21 @@ class StartupManagerDialog(PulseDialog):
         else:
             hidden = len(self._items) - len(items)
             self._filter_note.setText(
-                f"Filtered — {len(items)} of {len(self._items)} items shown "
-                f"({hidden} hidden). Click the highlighted pill again, or “All”, "
-                "to show everything.")
+                I18N.tr("startup.filter_note", self._lang).format(
+                    shown=len(items), total=len(self._items), hidden=hidden))
             self._filter_note.show()
 
     def _update_summary(self):
         items = list(self._items.values())
         counts = {key: sum(1 for it in items if pred(it))
                   for key, pred in self._FILTERS.items()}
+        tr = I18N.tr
         labels = {
-            "all":         f"All {counts['all']}",
-            "enabled":     f"{counts['enabled']} enabled",
-            "disabled":    f"{counts['disabled']} disabled",
-            "recommended": f"{counts['recommended']} recommended to disable",
+            "all": tr("startup.filter.all", self._lang).format(count=counts["all"]),
+            "enabled": tr("startup.filter.enabled", self._lang).format(count=counts["enabled"]),
+            "disabled": tr("startup.filter.disabled", self._lang).format(count=counts["disabled"]),
+            "recommended": tr("startup.filter.recommended", self._lang).format(
+                count=counts["recommended"]),
         }
         for key, (btn, tone) in self._chips.items():
             btn.setText(labels[key])
@@ -13825,7 +13839,8 @@ class StartupManagerDialog(PulseDialog):
         # appears when acting on it is possible.
         recommended = counts["recommended"]
         self._optimize_btn.setVisible(recommended > 0)
-        self._optimize_btn.setText(f"Optimize Startup ({recommended})")
+        self._optimize_btn.setText(
+            I18N.tr("startup.optimize_btn_count", self._lang).format(count=recommended))
 
     # -- toggle queue (sequential — one PowerShell process at a time) --
     def _on_toggle_requested(self, item_id: str, want_enabled: bool):
@@ -13846,7 +13861,8 @@ class StartupManagerDialog(PulseDialog):
         ]
         if not recommended_ids:
             return
-        self._show_status("info", f"Disabling {len(recommended_ids)} recommended item(s)…")
+        self._show_status("info", I18N.tr("startup.status.disabling", self._lang).format(
+            count=len(recommended_ids)))
         for item_id in recommended_ids:
             row = self._rows.get(item_id)
             if row is not None:
