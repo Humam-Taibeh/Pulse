@@ -1,8 +1,8 @@
 """
 src/frontend/i18n.py
 
-DISPLAY LANGUAGE (v10.15, extended v16, extended v16.1) — a manual
-English/Arabic choice, not "follow Windows".
+DISPLAY LANGUAGE (v10.15, extended v16, v16.1, v10.17.1, v10.17.2) — a
+manual English/Arabic choice, not "follow Windows".
 
 WHAT THIS COVERS. v10.15 shipped the foundation and the surfaces a user
 reaches before choosing what to do: the sidebar rail, the Settings page
@@ -30,17 +30,58 @@ matching theme.glyph()'s "a missing table entry degrades, never
 crashes" posture — rather than raising, so a half-translated surface
 never becomes a broken one.
 
+v10.17.1 closes two more gaps. The bottom status strip (widgets.
+ActivityDrawer's always-visible rail — CHANGELOG.md's own "bottom status
+bar" note) now translates its canonical states ("System Ready",
+"Administrator rights required", "Stopping task…", the Stop button and
+its tooltip, the pin chevron): a DYNAMIC status (a live backend phase
+line, a catalog item's own title baked into "Executing: X…") stays
+English along with the console it echoes into, exactly like everywhere
+else — main.PulseApp tracks which kind is currently showing via
+_status_key/_set_canonical_status, since only it knows. The
+OfficeWizardDialog wizard and ToolInstallWizardDialog's install-option
+picker — named explicitly, in every release note through v10.17.0, as
+the last still-English "dialogs reached from a card" — now translate in
+full too; both are built fresh on every open, like Update Center/
+Bloatware Purge/Startup Manager, so `lang` is read once at construction.
+
+v10.17.2 closes the "any remaining tool dialogs" gap for the two
+surfaces named explicitly: PATH Doctor and Leftovers Cleaner, end to
+end — HubDialog/ActionRow (the shell both of them, and every other hub
+card — Microsoft Edge, Microsoft OneDrive, Network & Connectivity —
+open into), PathConflictDialog ("Fix Shadowed Tools") and its
+widgets.InspectorDialog base shell, and LeftoversDialog/LeftoverRow
+("Scan & Purge Leftovers"). InspectorDialog's TITLE/LOADING gained
+opt-in TITLE_KEY/LOADING_KEY counterparts, so a subclass that wants
+translation adds two class attributes rather than the base class
+forcing it on every subclass. Several backend-authored data points
+translate on the established "Pulse's own deterministic copy, not live
+system output" reasoning BloatRow's Note/StartupRow's Reason already
+set: PathConflictDialog's verdict buttons ("Use this one"/"In use"/
+"Needs administrator"/…, the exhaustive `Short` values 03-Environment.
+ps1's Get-PathPriorityPlan/Get-PathInstallPlan return) and LeftoverRow's
+own reason line (17-Leftovers.ps1's `-Reason` literals) — both routed
+through i18n_catalog. PowerHealthDialog/StorageAnalyzerDialog/
+DnsSwitcherDialog/ContextMenuDialog (InspectorDialog's other three
+subclasses) and the smaller one-off dialogs (NoticeDialog,
+RevertChoiceDialog, PlaybookDialog, ActivationStatusDialog,
+CloseConfirmDialog, ElevatePromptDialog, ShortcutSheetDialog,
+SelfUpdateDialog, DataHygieneDialog) remain untranslated — real gaps,
+not a documented boundary, left for a follow-up pass.
+
 WHAT STILL STAYS ENGLISH, on purpose (see ROADMAP.md for the tracked
 follow-up): the live PowerShell console log (including any TaskResult
 message reported at runtime — a toggle's own success/failure line, a
-scan's caveat, its Trigger value), playbooks, the Health Report, the
-Restore Point Browser, the Office setup wizard, and
-ToolInstallWizardDialog's own per-app install-option picker.
-SettingsView's own UPDATE_STATE_TEXTS vocabulary (IDLE/CHECKING/UP TO
-DATE/UPDATE READY) stays deferred too — see widgets.py's own note on it.
-StatusRail's elevation text is NOT on this list — see the "footer
-chrome" section below, where it earns a translation rather than staying
-a gap, now that it is the only control still living in the footer.
+scan's caveat, its Trigger value, PathConflictDialog's own long-form
+`reason` tooltip), playbooks, the Health Report, and the Restore Point
+Browser (widgets.RestorePointDialog deliberately does not opt into
+InspectorDialog's TITLE_KEY/LOADING_KEY). SettingsView's own
+UPDATE_STATE_TEXTS vocabulary (IDLE/CHECKING/UP TO DATE/UPDATE READY)
+stays deferred too — see widgets.py's own note on it. The elevation
+state's own text (now Settings' Session group, formerly the sidebar's
+widgets.StatusRail) and the activity drawer's own canonical states are
+NOT on this list — see the "settings: Session" and "activity drawer"
+sections below.
 
 NOT "FOLLOW WINDOWS". Unlike theme.py's system-sync mode, this reads no
 OS locale API at all: a user picks English or Arabic, and that choice is
@@ -293,45 +334,99 @@ STRINGS: dict[str, dict[str, str]] = {
         "ar": "يتحقق من GitHub بحثًا عن إصدار أحدث من Pulse.",
     },
 
-    # -- footer chrome: the sidebar's one remaining control -----------
-    # v16 ("ultra-clean footer") removed the theme toggle, the update
-    # badge and the version/identity line from the sidebar footer
-    # entirely — all three live exclusively in Settings now (theme in
-    # General, updates in its own group; the version string is not
-    # shown anywhere in chrome any more, only in Settings' tagline
-    # context). The elevation-status indicator is the ONLY thing left
-    # in the footer, so — unlike the deferred UPDATE_STATE_TEXTS
-    # vocabulary (see widgets.py's own note on that one) — it earns a
-    # translation now rather than staying a documented gap.
-    "footer.elevation.engine_missing_name": {
-        "en": "Engine missing",
-        "ar": "المحرك غير موجود",
+    # -- settings: Session (v10.17.2) --------------------------------------
+    # v16 ("ultra-clean footer") had already removed the theme toggle, the
+    # update badge and the version/identity line from the sidebar footer,
+    # leaving only the elevation/engine indicator (widgets.StatusRail) as
+    # a standalone shield button there. v10.17.2 removes that too: a
+    # control glanced at maybe once a session does not earn a permanent
+    # icon-only seat in the busiest real estate in the window, and every
+    # other "how this session is set up" fact already lives in Settings —
+    # so this one now does too, as a plain captioned row (General's theme
+    # picker, this group's session state) rather than a painted icon.
+    "settings.group.session": {
+        "en": "Session",
+        "ar": "الجلسة",
     },
-    "footer.elevation.engine_missing_detail": {
+    "settings.session.engine_missing_detail": {
         "en": "The PowerShell engine is missing — Pulse can report but "
               "cannot run operations.",
         "ar": "محرك PowerShell غير موجود — يمكن لـPulse الإبلاغ لكن لا "
               "يمكنه تنفيذ العمليات.",
     },
-    "footer.elevation.admin_name": {
-        "en": "Running as Administrator",
-        "ar": "يعمل بصلاحيات المسؤول",
-    },
-    "footer.elevation.admin_detail": {
+    "settings.session.admin_detail": {
         "en": "Running as Administrator — every operation is available.",
         "ar": "يعمل بصلاحيات المسؤول — كل العمليات متاحة.",
     },
-    "footer.elevation.not_admin_name": {
-        "en": "Not elevated — relaunch as Administrator",
-        "ar": "غير مرتفع الصلاحيات — أعد التشغيل كمسؤول",
-    },
-    "footer.elevation.not_admin_detail": {
+    "settings.session.not_admin_detail": {
         "en": "Not elevated. Some system-level operations need "
               "Administrator rights — click to relaunch (a UAC prompt "
               "will appear).",
         "ar": "غير مرتفع الصلاحيات. بعض عمليات مستوى النظام تحتاج "
               "صلاحيات المسؤول — انقر لإعادة التشغيل (ستظهر نافذة "
               "UAC).",
+    },
+    "settings.session.relaunch_btn": {
+        "en": "Relaunch as Administrator",
+        "ar": "إعادة التشغيل كمسؤول",
+    },
+
+    # -- activity drawer / status strip (v10.17.1) -------------------------
+    # The always-visible 44px rail (status dot, status text, Stop button,
+    # pin chevron) — CHANGELOG.md's "bottom status bar", the last chrome
+    # surface still hardcoded English. Only the rail's own canonical
+    # states are covered here: a dynamic phase line (main._set_status fed
+    # a live backend stage or a catalog item's title, e.g. "Downloading
+    # Firefox 145.0…") stays English along with the live console it
+    # echoes into, same boundary as everywhere else — see main.py's own
+    # _status_key/_set_canonical_status split.
+    "activity.status.ready": {
+        "en": "System Ready",
+        "ar": "النظام جاهز",
+    },
+    "activity.status.admin_required": {
+        "en": "Administrator rights required",
+        "ar": "صلاحيات المسؤول مطلوبة",
+    },
+    "activity.status.stopping": {
+        "en": "Stopping task…",
+        "ar": "جارٍ إيقاف المهمة…",
+    },
+    "activity.stop_btn": {
+        "en": "■  Stop Task",
+        "ar": "■  إيقاف المهمة",
+    },
+    "activity.stop_btn.stopping": {
+        "en": "Stopping…",
+        "ar": "جارٍ الإيقاف…",
+    },
+    "activity.stop_btn_tooltip": {
+        "en": "Hard-stop the running task (kills the whole process tree)",
+        "ar": "إيقاف قسري للمهمة الجارية (يُنهي شجرة العمليات بأكملها)",
+    },
+    "activity.pin.open_tooltip": {
+        "en": "Pin the live output open",
+        "ar": "تثبيت الإخراج المباشر مفتوحًا",
+    },
+    "activity.pin.unpin_tooltip": {
+        "en": "Unpin the live output",
+        "ar": "إلغاء تثبيت الإخراج المباشر",
+    },
+    "activity.engine_ready_toast": {
+        "en": "Engine ready — all modules loaded.",
+        "ar": "المحرك جاهز — تم تحميل كل الوحدات.",
+    },
+    "activity.engine_missing_toast": {
+        "en": "{filename} not found next to the app.",
+        "ar": "لم يُعثر على {filename} بجانب التطبيق.",
+    },
+    "activity.not_admin_toast": {
+        "en": "Not running as Administrator — system tasks will prompt to "
+              "relaunch elevated. Settings' Session group does it in one "
+              "click.",
+        "ar": "لا يعمل بصلاحيات المسؤول — ستطلب مهام النظام إعادة التشغيل "
+              "بصلاحيات مرتفعة. مجموعة الجلسة في الإعدادات تقوم بذلك "
+              "بنقرة واحدة.",
     },
 
     # -- shared confirm-dialog chrome -------------------------------------
@@ -1331,6 +1426,545 @@ STRINGS: dict[str, dict[str, str]] = {
               "fails; turning it off is safe.",
         "ar": "البرنامج الذي يشير إليه هذا العنصر لم يعد مثبَّتًا. "
               "يحاول ويندوز تشغيله كل إقلاع ويفشل؛ تعطيله آمن.",
+    },
+
+    # ============================================================
+    #  OFFICE DEPLOYMENT WIZARD (v10.17.1)
+    # ============================================================
+    # OfficeWizardDialog's own chrome — built fresh on every open, same
+    # shape as CommandPalette/SoftwareCatalogDialog: `lang` is read once
+    # at construction, no retranslate() needed. The choice page's three
+    # GlassCards route through i18n_catalog instead (see its own note),
+    # since GlassCard only knows that lookup; everything else here is
+    # this dialog's own static chrome or a format template it fills with
+    # a live file path — never translated content of its own.
+    "office_wizard.title": {
+        "en": "📄  Microsoft Office Deployment",
+        "ar": "📄  نشر Microsoft Office",
+    },
+    "office_wizard.step.choice": {
+        "en": "Choose how you'd like to proceed",
+        "ar": "اختر كيف تريد المتابعة",
+    },
+    "office_wizard.step.auto_confirm": {
+        "en": "Automated Cloud Download",
+        "ar": "تنزيل سحابي تلقائي",
+    },
+    "office_wizard.step.guide": {
+        "en": "Beginner Guide — get the official tools",
+        "ar": "دليل المبتدئين — احصل على الأدوات الرسمية",
+    },
+    "office_wizard.step.locate": {
+        "en": "Locate your Office files",
+        "ar": "حدد موقع ملفات Office الخاصة بك",
+    },
+    "office_wizard.step.confirm": {
+        "en": "Confirm & Install",
+        "ar": "تأكيد وتثبيت",
+    },
+    "office_wizard.back": {
+        "en": "‹  Back",
+        "ar": "‹  رجوع",
+    },
+    "office_wizard.choice.intro": {
+        "en": "Office ships as one bundle through Microsoft's official "
+              "Deployment Tool (ODT) — there's no per-app silent "
+              "installer. Choose how you'd like to proceed.",
+        "ar": "يُشحن Office كحزمة واحدة عبر أداة النشر الرسمية من "
+              "Microsoft (ODT) — لا يوجد مثبِّت صامت لكل تطبيق على حدة. "
+              "اختر كيف تريد المتابعة.",
+    },
+    "office_wizard.auto.info": {
+        "en": "Pulse will download the official Office Click-to-Run "
+              "client and write a standard configuration to "
+              "<b>Desktop\\Office</b> — Word, Excel, PowerPoint and "
+              "Outlook in English and Arabic. No files to find, nothing "
+              "to configure by hand.",
+        "ar": "سيُنزِّل Pulse عميل Office Click-to-Run الرسمي ويكتب "
+              "تكوينًا قياسيًا إلى <b>سطح المكتب\\Office</b> — Word "
+              "وExcel وPowerPoint وOutlook بالإنجليزية والعربية. لا "
+              "ملفات لإيجادها، ولا شيء لضبطه يدويًا.",
+    },
+    "office_wizard.auto.note": {
+        "en": "ℹ️  This standard configuration targets Volume License "
+              "activation (no product key baked in). If your network "
+              "has a KMS host it activates automatically; otherwise "
+              "Office installs but stays unactivated until a key is "
+              "added. Prefer a subscription install with your own "
+              "settings? Use one of the other two paths instead.",
+        "ar": "ℹ️  يستهدف هذا التكوين القياسي تفعيل ترخيص الحجم "
+              "(Volume License) دون مفتاح منتج مضمَّن. إن كانت شبكتك "
+              "تضم مضيف KMS فسيُفعَّل تلقائيًا؛ وإلا فسيُثبَّت Office "
+              "لكنه يبقى غير مفعَّل حتى تُضاف مفتاح. تفضّل تثبيت اشتراك "
+              "بإعداداتك الخاصة؟ استخدم أحد المسارين الآخرين بدلًا من "
+              "ذلك.",
+    },
+    "office_wizard.warn_dont_close": {
+        "en": "⚠️  IMPORTANT: When the Microsoft Setup window appears, "
+              "DO NOT close it or open any other apps until it reaches "
+              "100%.",
+        "ar": "⚠️  مهم: عند ظهور نافذة إعداد Microsoft، لا تُغلقها ولا "
+              "تفتح أي تطبيقات أخرى حتى تصل إلى 100%.",
+    },
+    "office_wizard.auto.install_btn": {
+        "en": "Download && Install Now",
+        "ar": "تنزيل && تثبيت الآن",
+    },
+    "office_wizard.guide.step1": {
+        "en": "Open the Deployment Tool below, run it, and extract it "
+              "into a folder named <b>Office</b> on your Desktop.",
+        "ar": "افتح أداة النشر أدناه، شغِّلها، واستخرجها إلى مجلد باسم "
+              "<b>Office</b> على سطح مكتبك.",
+    },
+    "office_wizard.guide.step2": {
+        "en": "Open the Customization Tool below, choose your apps, "
+              "languages and channel, then download the resulting "
+              "<b>configuration.xml</b> into that same Office folder.",
+        "ar": "افتح أداة التخصيص أدناه، اختر تطبيقاتك ولغاتك وقناتك، ثم "
+              "نزِّل ملف <b>configuration.xml</b> الناتج إلى مجلد "
+              "Office نفسه.",
+    },
+    "office_wizard.guide.step3": {
+        "en": "Come back here and continue — Pulse will pick up both "
+              "files automatically.",
+        "ar": "عد إلى هنا وتابع — سيلتقط Pulse كلا الملفين تلقائيًا.",
+    },
+    "office_wizard.guide.odt_link": {
+        "en": "🌐  Open Office Deployment Tool   ↗",
+        "ar": "🌐  فتح أداة نشر Office   ↗",
+    },
+    "office_wizard.guide.oct_link": {
+        "en": "⚙️  Open Office Customization Tool   ↗",
+        "ar": "⚙️  فتح أداة تخصيص Office   ↗",
+    },
+    "office_wizard.guide.continue_btn": {
+        "en": "I have the files now  ›",
+        "ar": "لدي الملفات الآن  ›",
+    },
+    "office_wizard.locate.found": {
+        "en": "✅  Found in <b>{folder}</b>",
+        "ar": "✅  وُجد في <b>{folder}</b>",
+    },
+    "office_wizard.locate.setup_label": {
+        "en": "<b>Setup:</b> {path}",
+        "ar": "<b>الإعداد:</b> {path}",
+    },
+    "office_wizard.locate.config_label": {
+        "en": "<b>Config:</b> {path}",
+        "ar": "<b>التكوين:</b> {path}",
+    },
+    "office_wizard.locate.pick_config": {
+        "en": "Found {n} configuration files — which one should Pulse "
+              "use?",
+        "ar": "عُثر على {n} ملفات تكوين — أيها يجب أن يستخدم Pulse؟",
+    },
+    "office_wizard.locate.recommended_tag": {
+        "en": "  (recommended)",
+        "ar": "  (موصى به)",
+    },
+    "office_wizard.locate.browse_other": {
+        "en": "📂  Browse for a different folder…",
+        "ar": "📂  تصفّح مجلدًا آخر…",
+    },
+    "office_wizard.locate.continue_btn": {
+        "en": "Continue  ›",
+        "ar": "متابعة  ›",
+    },
+    "office_wizard.locate.missing": {
+        "en": "⚠️  No Office folder with both setup.exe and a "
+              "configuration file was found automatically (checked "
+              "<b>{folder}</b>).",
+        "ar": "⚠️  لم يُعثر تلقائيًا على مجلد Office يحوي كلًا من "
+              "setup.exe وملف تكوين (تم التحقق من <b>{folder}</b>).",
+    },
+    "office_wizard.locate.browse_folder": {
+        "en": "📂  Browse for the Office folder…",
+        "ar": "📂  تصفّح مجلد Office…",
+    },
+    "office_wizard.locate.pick_individually": {
+        "en": "🗂️  Pick setup.exe and configuration.xml individually…",
+        "ar": "🗂️  اختر setup.exe وconfiguration.xml كلًا على حدة…",
+    },
+    "office_wizard.locate.retry": {
+        "en": "Retry auto-detect",
+        "ar": "إعادة محاولة الاكتشاف التلقائي",
+    },
+    "office_wizard.locate.missing_setup": {
+        "en": "setup.exe (or the ODT self-extractor)",
+        "ar": "setup.exe (أو المستخرج الذاتي لـODT)",
+    },
+    "office_wizard.locate.missing_config": {
+        "en": "a configuration .xml file",
+        "ar": "ملف تكوين .xml",
+    },
+    "office_wizard.locate.incomplete": {
+        "en": "❌  <b>{folder}</b> is missing: {missing}",
+        "ar": "❌  <b>{folder}</b> ينقصه: {missing}",
+    },
+    "office_wizard.locate.pick_individually_short": {
+        "en": "🗂️  Pick the files individually…",
+        "ar": "🗂️  اختر الملفات كلًا على حدة…",
+    },
+    "office_wizard.locate.browse_again": {
+        "en": "Browse again",
+        "ar": "تصفّح مجددًا",
+    },
+    "office_wizard.locate.browse_dialog_title": {
+        "en": "Select the folder with setup.exe and configuration.xml",
+        "ar": "حدد المجلد الذي يحوي setup.exe وconfiguration.xml",
+    },
+    "office_wizard.locate.pick_setup_dialog_title": {
+        "en": "Select the Office Deployment Tool (setup.exe)",
+        "ar": "حدد أداة نشر Office (setup.exe)",
+    },
+    "office_wizard.locate.pick_setup_filter": {
+        "en": "Executable files (*.exe)",
+        "ar": "الملفات التنفيذية (*.exe)",
+    },
+    "office_wizard.locate.pick_config_dialog_title": {
+        "en": "Select configuration.xml",
+        "ar": "حدد configuration.xml",
+    },
+    "office_wizard.locate.pick_config_filter": {
+        "en": "XML files (*.xml)",
+        "ar": "ملفات XML (*.xml)",
+    },
+    "office_wizard.confirm.summary": {
+        "en": "<b>Setup:</b> {setup}<br><b>Config:</b> {config}",
+        "ar": "<b>الإعداد:</b> {setup}<br><b>التكوين:</b> {config}",
+    },
+    "office_wizard.confirm.install_btn": {
+        "en": "Install Now",
+        "ar": "تثبيت الآن",
+    },
+
+    # ============================================================
+    #  TOOL INSTALL WIZARD — per-app winget option picker (v10.17.1)
+    # ============================================================
+    "tool_install.note": {
+        "en": "Pulse installs this silently with winget — the same path "
+              "it uses everywhere else.",
+        "ar": "يثبِّت Pulse هذا بصمت عبر winget — نفس المسار الذي "
+              "يستخدمه في كل مكان آخر.",
+    },
+    "tool_install.install_btn": {
+        "en": "Automated Install (winget)",
+        "ar": "تثبيت تلقائي (winget)",
+    },
+    "tool_install.website_btn": {
+        "en": "Visit Official Website",
+        "ar": "زيارة الموقع الرسمي",
+    },
+    "tool_install.website_tooltip_named": {
+        "en": "Opens {name}'s official download page in your browser.",
+        "ar": "يفتح صفحة تنزيل {name} الرسمية في متصفحك.",
+    },
+    "tool_install.website_tooltip_generic": {
+        "en": "Opens a web search for the official download page.",
+        "ar": "يفتح بحثًا على الويب عن صفحة التنزيل الرسمية.",
+    },
+    # The one caller-supplied `desc` this dialog is opened with today
+    # (PulseApp's bundled-app restore flow, _RESTORE_TARGETS) — kept here
+    # rather than inline so the sentence a user sees INSIDE a now-Arabic
+    # dialog isn't the one part of it still hardcoded English.
+    "tool_install.not_installed_desc": {
+        "en": "{name} is not currently installed. Choose how to put it "
+              "back.",
+        "ar": "{name} غير مثبَّت حاليًا. اختر كيف تريد إعادته.",
+    },
+
+    # ============================================================
+    #  HUB DIALOG — PATH Doctor, Leftovers Cleaner, Edge, OneDrive,
+    #  Network & Connectivity (v10.17.2)
+    # ============================================================
+    # HubDialog itself is built fresh on every open (no retranslate()
+    # needed, same shape as CommandPalette/SoftwareCatalogDialog). Its
+    # hub['title']/hub['desc'] and every ActionRow's item['title']/
+    # item['desc'] already have entries in i18n_catalog (the hub is also
+    # a card, translated there since v16); only these action VERBS are
+    # new — short, reused across every hub, so they read as chrome
+    # vocabulary (i18n.py) rather than catalog copy (i18n_catalog.py).
+    "hub.action.scan": {"en": "Scan", "ar": "فحص"},
+    "hub.action.fix": {"en": "Fix", "ar": "إصلاح"},
+    "hub.action.prune": {"en": "Prune", "ar": "تقليم"},
+    "hub.action.restore": {"en": "Restore", "ar": "استعادة"},
+    "hub.action.open": {"en": "Open", "ar": "فتح"},
+    "hub.action.remove": {"en": "Remove", "ar": "إزالة"},
+    "hub.action.reinstall": {"en": "Reinstall", "ar": "إعادة تثبيت"},
+    "hub.action.install": {"en": "Install", "ar": "تثبيت"},
+    "hub.action.run": {"en": "Run", "ar": "تشغيل"},
+    "hub.action.check": {"en": "Check", "ar": "فحص"},
+    "hub.action.reset": {"en": "Reset", "ar": "إعادة ضبط"},
+
+    # ============================================================
+    #  INSPECTOR DIALOGS — shared shell (v10.17.2)
+    # ============================================================
+    # widgets.InspectorDialog's own chrome: TITLE/LOADING move from class-
+    # level literals to class-level i18n KEYS (TITLE_KEY/LOADING_KEY) so
+    # each subclass still owns its own text without hardcoding English.
+    # RestorePointDialog is the one subclass that does NOT opt in — the
+    # Restore Point Browser stays English on purpose, same documented
+    # boundary as the Health Report (see i18n.py's own module docstring).
+    "inspector.close": {
+        "en": "Close",
+        "ar": "إغلاق",
+    },
+    "inspector.rescan": {
+        "en": "Re-scan",
+        "ar": "إعادة الفحص",
+    },
+    "inspector.loading": {
+        "en": "Reading…",
+        "ar": "جارٍ القراءة…",
+    },
+    "inspector.engine_unavailable": {
+        "en": "Engine unavailable — core.ps1 was not found.",
+        "ar": "المحرك غير متاح — لم يُعثر على core.ps1.",
+    },
+    "inspector.report_unreadable": {
+        "en": "The report could not be read.",
+        "ar": "تعذّرت قراءة التقرير.",
+    },
+
+    # ============================================================
+    #  PATH CONFLICT DIALOG — PATH Doctor's "Fix Shadowed Tools" (v10.17.2)
+    # ============================================================
+    "path_conflict.title": {
+        "en": "🧭  Shadowed Tools",
+        "ar": "🧭  الأدوات المتراكبة",
+    },
+    "path_conflict.loading": {
+        "en": "Scanning your PATH for tools with more than one copy…",
+        "ar": "جارٍ فحص PATH بحثًا عن أدوات لها أكثر من نسخة…",
+    },
+    "path_conflict.elevate_btn": {
+        "en": "Restart as administrator",
+        "ar": "إعادة التشغيل كمسؤول",
+    },
+    "path_conflict.elevate_tooltip": {
+        "en": "Reordering the system PATH needs an elevated Pulse. This "
+              "closes Pulse and reopens it with administrator rights; "
+              "Windows will ask you to confirm.",
+        "ar": "إعادة ترتيب PATH النظام يتطلب صلاحيات مرتفعة لـPulse. "
+              "سيُغلق هذا Pulse ويعيد فتحه بصلاحيات المسؤول؛ سيطلب "
+              "ويندوز تأكيدك.",
+    },
+    "path_conflict.nothing_shadowed": {
+        "en": "Nothing is shadowed. Across {entries} PATH entries, "
+              "every tool Pulse checks is answered by exactly one "
+              "installation.",
+        "ar": "لا شيء متراكب. عبر {entries} إدخالًا في PATH، تُجيب "
+              "تثبيتة واحدة فقط عن كل أداة يتحقق منها Pulse.",
+    },
+    "path_conflict.nothing_to_fix_title": {
+        "en": "Nothing to fix",
+        "ar": "لا شيء لإصلاحه",
+    },
+    "path_conflict.nothing_to_fix_note": {
+        "en": "Pulse looks for a second copy of the tools where "
+              "“which one wins?” is a question people actually "
+              "have to debug — interpreters, package managers, "
+              "compilers and build drivers. A machine with one of each "
+              "has nothing to show here, which is the healthy result.",
+        "ar": "يبحث Pulse عن نسخة ثانية للأدوات التي يُضطر الناس فعليًا "
+              "لتشخيص سؤال «أيّها يفوز؟» بشأنها — المفسِّرات، ومديرو "
+              "الحزم، والمترجمات، وأدوات البناء. جهاز يملك نسخة واحدة "
+              "من كل منها لا يُظهر شيئًا هنا، وهذه هي النتيجة السليمة.",
+    },
+    "path_conflict.status_singular": {
+        "en": "1 toolchain has more than one installation on this "
+              "PATH, across {entries} entries. Choosing one REORDERS "
+              "your PATH so it is found first — nothing is removed, "
+              "and an installation's folders always move together.",
+        "ar": "سلسلة أدوات واحدة لها أكثر من تثبيتة على PATH هذا، عبر "
+              "{entries} إدخالًا. اختيار واحدة يُعيد ترتيب PATH ليُعثر "
+              "عليها أولًا — لا يُزال شيء، ومجلدات كل تثبيتة تنتقل معًا "
+              "دائمًا.",
+    },
+    "path_conflict.status_plural": {
+        "en": "{count} toolchains have more than one installation on "
+              "this PATH, across {entries} entries. Choosing one "
+              "REORDERS your PATH so it is found first — nothing is "
+              "removed, and an installation's folders always move "
+              "together.",
+        "ar": "{count} سلاسل أدوات لها أكثر من تثبيتة على PATH هذا، "
+              "عبر {entries} إدخالًا. اختيار واحدة يُعيد ترتيب PATH "
+              "ليُعثر عليها أولًا — لا يُزال شيء، ومجلدات كل تثبيتة "
+              "تنتقل معًا دائمًا.",
+    },
+    "path_conflict.installation_singular": {
+        "en": "{count} INSTALLATION",
+        "ar": "تثبيتة واحدة",
+    },
+    "path_conflict.installation_plural": {
+        "en": "{count} INSTALLATIONS",
+        "ar": "{count} تثبيتات",
+    },
+    "path_conflict.commands_label": {
+        "en": "Commands",
+        "ar": "الأوامر",
+    },
+    "path_conflict.system_path": {
+        "en": "System PATH",
+        "ar": "PATH النظام",
+    },
+    "path_conflict.user_path": {
+        "en": "Your PATH",
+        "ar": "PATH الخاص بك",
+    },
+    "path_conflict.more_folder_singular": {
+        "en": "   (+{n} more folder)",
+        "ar": "   (+{n} مجلد إضافي)",
+    },
+    "path_conflict.more_folder_plural": {
+        "en": "   (+{n} more folders)",
+        "ar": "   (+{n} مجلدات إضافية)",
+    },
+    "path_conflict.applying_status": {
+        "en": "Making {directory} the installation in use…",
+        "ar": "جارٍ جعل {directory} التثبيتة المستخدَمة…",
+    },
+    "path_conflict.applied_fallback": {
+        "en": "PATH updated.",
+        "ar": "تم تحديث PATH.",
+    },
+    "path_conflict.apply_failed": {
+        "en": "The PATH was not changed: {message}",
+        "ar": "لم يتغيّر PATH: {message}",
+    },
+
+    # ============================================================
+    #  LEFTOVERS CLEANER (v10.17.2)
+    # ============================================================
+    # Built fresh on every open (no retranslate() needed, same shape as
+    # the other scan-and-select dialogs). Select All/Deselect All, the
+    # count chip and the Safe Purge button reuse the exact same English
+    # text the Bloatware Purge/Software Catalog dialogs already use
+    # (catalog.select_all/deselect_all, bloatware.count.selected,
+    # bloatware.purge_btn/purge_btn_count) — one key each, not
+    # duplicated here.
+    "leftovers.title": {
+        "en": "🧽  Leftovers Cleaner",
+        "ar": "🧽  منظّف المخلّفات",
+    },
+    "leftovers.subtitle.scanning": {
+        "en": "Looking for what uninstalled software left behind…",
+        "ar": "جارٍ البحث عمّا خلّفته البرامج التي أُزيلت…",
+    },
+    "leftovers.loading": {
+        "en": "Checking startup entries, scheduled tasks, app folders "
+              "and the right-click menu for anything pointing at "
+              "software that is gone…",
+        "ar": "جارٍ فحص إدخالات بدء التشغيل والمهام المجدولة ومجلدات "
+              "التطبيقات وقائمة النقر بالزر الأيمن بحثًا عمّا يشير إلى "
+              "برامج لم تعد موجودة…",
+    },
+    "leftovers.error.scan_failed": {
+        "en": "The leftovers scan returned nothing.",
+        "ar": "لم يعد فحص المخلّفات بأي نتيجة.",
+    },
+    "leftovers.error.suffix": {
+        "en": "\n\nNothing was changed.",
+        "ar": "\n\nلم يتغيّر شيء.",
+    },
+    "leftovers.clean.headline": {
+        "en": "Nothing left behind",
+        "ar": "لا شيء متروك خلفًا",
+    },
+    "leftovers.clean.note": {
+        "en": "No startup entry, scheduled task, app folder or "
+              "right-click entry on this PC points at software that "
+              "has been removed.",
+        "ar": "لا يوجد إدخال بدء تشغيل، أو مهمة مجدولة، أو مجلد "
+              "تطبيق، أو إدخال نقر بزر أيمن على هذا الجهاز يشير إلى "
+              "برنامج أُزيل.",
+    },
+    "leftovers.clean.checked_subtitle": {
+        "en": "Checked startup entries, scheduled tasks, app folders "
+              "and the right-click menu.",
+        "ar": "تم فحص إدخالات بدء التشغيل والمهام المجدولة ومجلدات "
+              "التطبيقات وقائمة النقر بالزر الأيمن.",
+    },
+    "leftovers.section.startup": {
+        "en": "Startup entries",
+        "ar": "إدخالات بدء التشغيل",
+    },
+    "leftovers.section.tasks": {
+        "en": "Scheduled tasks",
+        "ar": "المهام المجدولة",
+    },
+    "leftovers.section.residue": {
+        "en": "Abandoned app folders",
+        "ar": "مجلدات تطبيقات مهجورة",
+    },
+    "leftovers.section.shell": {
+        "en": "Right-click menu",
+        "ar": "قائمة النقر بالزر الأيمن",
+    },
+    "leftovers.section.other": {
+        "en": "Other",
+        "ar": "أخرى",
+    },
+    "leftovers.section_header": {
+        "en": "{title}  ·  {count}",
+        "ar": "{title}  ·  {count}",
+    },
+    "leftovers.summary.singular": {
+        "en": "1 item points at software that is no longer installed",
+        "ar": "عنصر واحد يشير إلى برنامج لم يعد مثبَّتًا",
+    },
+    "leftovers.summary.plural": {
+        "en": "{count} items point at software that is no longer "
+              "installed",
+        "ar": "{count} عناصر تشير إلى برامج لم تعد مثبَّتة",
+    },
+    "leftovers.summary.holding_suffix": {
+        "en": ", holding {size}",
+        "ar": "، تشغل {size}",
+    },
+    "leftovers.summary.backup_note": {
+        "en": ". Everything you purge is backed up first — Restore "
+              "Last Purge puts it back.",
+        "ar": ". كل ما تزيله يُنسخ احتياطيًا أولًا — استعادة آخر إزالة "
+              "تعيده.",
+    },
+    "leftovers.summary.needs_admin_suffix": {
+        "en": " Removing some of these needs administrator; Pulse "
+              "will ask.",
+        "ar": " إزالة بعض هذه العناصر يتطلب صلاحيات المسؤول؛ سيطلبها "
+              "Pulse.",
+    },
+    "leftovers.kind.startup_run": {
+        "en": "Startup entry",
+        "ar": "إدخال بدء تشغيل",
+    },
+    "leftovers.kind.startup_folder": {
+        "en": "Startup shortcut",
+        "ar": "اختصار بدء تشغيل",
+    },
+    "leftovers.kind.task": {
+        "en": "Scheduled task",
+        "ar": "مهمة مجدولة",
+    },
+    "leftovers.kind.residue": {
+        "en": "App folder",
+        "ar": "مجلد تطبيق",
+    },
+    "leftovers.kind.shell_handler": {
+        "en": "Right-click extension",
+        "ar": "امتداد نقر بزر أيمن",
+    },
+    "leftovers.kind.shell_verb": {
+        "en": "Right-click entry",
+        "ar": "إدخال نقر بزر أيمن",
+    },
+    "leftovers.size_tooltip": {
+        "en": "Disk space this frees once the cleanup's backup folder "
+              "is emptied — a purge moves folders aside rather than "
+              "deleting them, so it can be undone.",
+        "ar": "مساحة القرص التي يحررها هذا بعد إفراغ مجلد النسخ "
+              "الاحتياطي الخاص بالتنظيف — الإزالة تنقل المجلدات "
+              "جانبًا بدلًا من حذفها، حتى يمكن التراجع عنها.",
     },
 }
 

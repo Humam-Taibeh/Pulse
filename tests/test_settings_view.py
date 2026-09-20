@@ -43,14 +43,16 @@ def settings(window, qapp):
 
 class TestTheGroupedPage:
 
-    def test_it_offers_the_four_declared_groups(self, settings, qapp):
+    def test_it_offers_the_five_declared_groups(self, settings, qapp):
         """Windows 11's own settings shape: titled groups of related rows,
-        not a flat column of controls."""
+        not a flat column of controls. Session (v10.17.2) is the newest —
+        the sidebar footer's elevation/engine shield (widgets.StatusRail)
+        relocated here rather than staying a standalone icon in chrome."""
         from PySide6.QtWidgets import QLabel
 
         titles = {label.text() for label in settings.findChildren(QLabel)}
         for group in ("General", "System Protection",
-                       "Configuration Management", "Updates"):
+                       "Configuration Management", "Updates", "Session"):
             assert group in titles, f"no {group!r} group on the settings page"
 
     def test_it_owns_no_worker_thread(self, settings):
@@ -319,6 +321,93 @@ class TestTheUpdatesSection:
             assert settings._update_caption.text() == text
 
 
+class TestTheSessionGroup:
+    """Elevation/engine state, relocated here from the sidebar footer's
+    widgets.StatusRail (v10.17.2) — same three states, same "caption says
+    what is true, button appears only when it would change something"
+    split System Protection's restore row already uses."""
+
+    def test_when_elevated_the_button_is_hidden(self, window, qapp):
+        """isHidden(), not isVisible(): the view is never shown here, and
+        isVisible() would read False for every child regardless of what
+        setVisible() was actually called with — isHidden() reflects the
+        explicit flag _sync_session sets, independent of the ancestor
+        chain."""
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=True, engine_ok=True)
+        try:
+            assert view._elevate_btn.isHidden()
+            assert "Administrator" in view._session_caption.text()
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_when_not_admin_the_button_is_actionable(self, window, qapp):
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=False, engine_ok=True)
+        try:
+            assert not view._elevate_btn.isHidden()
+            assert view._elevate_btn.text() == "Relaunch as Administrator"
+            assert "Not elevated" in view._session_caption.text()
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_when_the_engine_is_missing_the_button_stays_hidden_too(
+            self, window, qapp):
+        """Relaunching cannot fix a missing engine, so the button offers
+        no action even though the session is also unelevated — is_admin
+        alone is not enough to decide actionability, only
+        engine_ok and not is_admin together is."""
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=False, engine_ok=False)
+        try:
+            assert view._elevate_btn.isHidden()
+            assert "engine" in view._session_caption.text().lower()
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_clicking_the_button_only_asks(self, window, qapp):
+        """Same "ASKS ONLY" shape as every other action on this page — see
+        TestTheUpdatesSection.test_the_button_asks_main_not_a_private_worker."""
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=False, engine_ok=True)
+        try:
+            fired: list[bool] = []
+            view.elevate_requested.connect(lambda: fired.append(True))
+            view._elevate_btn.click()
+            qapp.processEvents()
+            assert fired == [True]
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_the_session_group_translates_to_arabic(self, window, qapp):
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=False, engine_ok=True,
+                            lang="ar")
+        try:
+            assert view._elevate_btn.text() == "إعادة التشغيل كمسؤول"
+            assert view._session_caption.text() != ""
+            assert view._session_caption.text().isascii() is False
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_settings_view_no_longer_needs_a_status_rail(self, settings):
+        """The class this whole group replaces is gone outright, not just
+        unused — see widgets.py's own StatusRail-removal note."""
+        import frontend.widgets as W
+
+        assert not hasattr(W, "StatusRail")
+
+
 # ============================================================
 #  THE PROFILE ITSELF  (no Qt — pure schema)
 # ============================================================
@@ -472,7 +561,7 @@ class TestTheSidebarEntry:
 
     def test_the_settings_button_is_reskinned_on_a_theme_switch(
             self, window, qapp):
-        """_apply_theme's sweep re-skins status_rail, titlebar and every
+        """_apply_theme's sweep re-skins the titlebar and every
         _nav_buttons entry on a live switch — _settings_btn sat outside
         _nav_buttons (by design, see the comment at its construction) and
         outside the sweep too (not by design), so it froze in whatever
@@ -494,14 +583,14 @@ class TestTheSidebarEntry:
             window.theme.set_mode(before)
             qapp.processEvents()
 
-    def test_settings_sits_between_the_stretch_and_the_footer(
+    def test_settings_is_the_rails_own_anchored_bottom_element(
             self, window, qapp):
         """Windows-11/Fluent pattern: Settings pinned to the very bottom of
-        the rail, separated from the module list by the stretch, but still
-        above the session footer — not mixed into it. (v16 removed the
-        update badge from the footer entirely; status_rail's elevation
-        indicator is the only thing left there, so Settings only has to
-        sit directly above THAT now.)
+        the rail, separated from the module list by the stretch. v10.17.2
+        removed the footer's last control (widgets.StatusRail, an
+        elevation/engine shield) entirely — that state moved into
+        Settings' own Session group — so Settings is once again the LAST
+        widget in the rail, with nothing anchored below it.
 
         The stretch is a QSpacerItem, not a widget — side.itemAt(i).widget()
         returns None for it, so a widget-only index comparison cannot tell
@@ -520,14 +609,11 @@ class TestTheSidebarEntry:
         settings_index = next(
             i for i, item in enumerate(items)
             if item.widget() is window._settings_btn)
-        rail_index = next(
-            i for i, item in enumerate(items)
-            if item.widget() is window.status_rail)
 
         assert settings_index > spacer_index, (
             "Settings still sits above the stretch, among the module buttons")
-        assert settings_index < rail_index, (
-            "Settings is not above the footer")
-        assert settings_index + 1 == rail_index, (
-            "something now sits between Settings and the footer's one "
-            "remaining control")
+        assert settings_index == len(items) - 1, (
+            "Settings is no longer the last widget in the sidebar rail — "
+            "something now sits below it")
+        assert not hasattr(window, "status_rail"), (
+            "the removed sidebar elevation shield is back")

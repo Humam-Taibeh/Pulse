@@ -1641,8 +1641,8 @@ class TitleBar(QWidget):
     punched through the drag region to receive a click at all
     (`PulseApp._over_theme_button`, ~15 lines of DPI-aware physical-pixel
     mapping that had to stay in sync with the button's geometry). The
-    toggle now lives in the sidebar's status rail with the rest of the
-    session chrome (widgets.StatusRail), and the hole is gone with it.
+    toggle now lives in Settings, with the rest of the session chrome
+    (widgets.SettingsView), and the hole is gone with it.
 
     Drag guard: dragging while maximized restores the window first and
     re-anchors it under the cursor proportionally — native Windows feel.
@@ -1671,6 +1671,16 @@ class TitleBar(QWidget):
         self._press_gp: QPoint | None = None
         self._icon_font = _caption_icon_font()
         self.setFixedHeight(50)
+        # PINNED, NOT INHERITED (v10.17.2): Arabic mirrors the sidebar and
+        # its content, but the brand mark stays top-left and the caption
+        # buttons stay top-right regardless — the standard OS position
+        # every native Windows app keeps them at. Explicit here means the
+        # shell's own RTL cascade (main._apply_language) can never reach
+        # this bar even though it is built before that cascade exists to
+        # run at all: PulseApp.body, not root, is what mirrors, and this
+        # widget is root's child, not body's — but pinning it costs one
+        # line and removes any doubt.
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(TH.SPACE["xl"], TH.SPACE["sm"],
@@ -1693,18 +1703,17 @@ class TitleBar(QWidget):
         # that (they are what the tooltip is built from).
         #
         # They were "v10.8.0" and a "BETA" pill sitting immediately right
-        # of the wordmark — and the SAME two facts, in the same order,
-        # already sit in the sidebar's status rail as "PULSE v10.8.0 ·
-        # BETA", where they are also a BUTTON that checks for updates. So
-        # the chrome carried the app's version twice, and the copy that
-        # could act on it was the one nobody was looking at. One home, and
-        # it is the one that does something.
+        # of the wordmark — the same two facts already sit in Settings'
+        # own tagline/Updates group, where update-checking is also a
+        # BUTTON. So the chrome carried the app's version twice, and the
+        # copy that could act on it was the one nobody was looking at.
+        # One home, and it is the one that does something.
         self.setToolTip(f"{app_name} v{version}"
                         + (f" · {channel.upper()}" if channel else ""))
         # The left cluster is a brand-only block: elevation state, the
-        # theme toggle and the update check all live in the sidebar's
-        # status rail (widgets.StatusRail), which is the one place in the
-        # app that describes the session rather than the work.
+        # theme toggle and the update check all live in Settings
+        # (widgets.SettingsView), which is the one place in the app that
+        # describes the session rather than the work.
         lay.addStretch()
 
         btns = QHBoxLayout()
@@ -3053,11 +3062,17 @@ class GlassCard(QFrame):
             self._badge = QLabel(item["note"])
         # Drill-in chevron — shown only for cards that open a further screen
         # (hubs / selectors), i.e. exactly the cards that have a meta footer.
+        # A literal glyph, not a layout: the header row's own icon/title/
+        # chevron/lock order mirrors for free once an RTL ancestor cascades
+        # down to it (plain QHBoxLayout, no manual painting), but "which
+        # way is deeper" still has to be chosen explicitly, same as
+        # CategoryPage's breadcrumb separator — see retranslate() below.
         self._meta_texts = _derive_card_meta(item, lang)
         self._chevron: QLabel | None = None
         if self._meta_texts:
-            self._chevron = QLabel(TH.glyph("chevron")[0])
-            cf = TH.icon_font(TH.ICON["inline"]) if TH.glyph("chevron")[1] else QFont()
+            chevron_key = "chevron_left" if I18N.is_rtl(lang) else "chevron"
+            self._chevron = QLabel(TH.glyph(chevron_key)[0])
+            cf = TH.icon_font(TH.ICON["inline"]) if TH.glyph(chevron_key)[1] else QFont()
             if cf is not None:
                 cf.setPixelSize(TH.ICON["inline"])
                 self._chevron.setFont(cf)
@@ -3167,13 +3182,16 @@ class GlassCard(QFrame):
         CategoryPage both keep their GlassCards alive for the app's
         lifetime rather than rebuilding the grid, so a live language
         switch needs every already-built card told explicitly, the same
-        shape NavButton.set_rtl/StatusRail.retranslate already use for
-        the sidebar."""
+        shape NavButton.set_rtl uses for the sidebar and SettingsView.
+        _retranslate uses for Settings."""
         self._lang = lang
         self._title.setFullText(I18N_CAT.tr_title(self.item["title"], lang))
         self._desc.setFullText(I18N_CAT.tr_desc(self.item["desc"], lang))
         if self._lock is not None:
             self._lock.setToolTip(I18N.tr("card.lock_tooltip", lang))
+        if self._chevron is not None:
+            chevron_key = "chevron_left" if I18N.is_rtl(lang) else "chevron"
+            self._chevron.setText(TH.glyph(chevron_key)[0])
         self._meta_texts = _derive_card_meta(self.item, lang)
         for pill, text in zip(self._meta_pills, self._meta_texts):
             pill.setText(text)
@@ -3787,135 +3805,6 @@ BreathingIcon = BrandMark
 
 
 # ============================================================
-#  STATUS RAIL — the sidebar's session footer (v16: elevation only)
-# ============================================================
-class StatusRail(QFrame):
-    """ONE CONTROL AT THE BOTTOM OF THE SIDEBAR: the elevation/engine
-    state indicator, and nothing else.
-
-        ┌─────────────────────────────────────┐
-        │                 ⛨                   │
-        └─────────────────────────────────────┘
-                      elevation state
-
-    v15 consolidated the theme toggle, the version/"check for updates"
-    line and elevation into one 36px row. v16 goes further: the theme
-    toggle and the version line are REMOVED from chrome entirely — both
-    now live exclusively in Settings (General's theme picker, and the
-    version string is no longer shown as persistent chrome anywhere) —
-    because a control for something a session touches once, if ever,
-    does not earn a permanent seat in the busiest real estate in the
-    window. What is left is the one thing that genuinely IS session
-    state a technician glances at repeatedly: can this app do its job
-    right now.
-
-    THE ELEVATION CONTROL IS A STATE INDICATOR FIRST. The packaged app
-    ships `requireAdministrator` (main.spec), so it is emerald and
-    disabled on essentially every real launch; it only becomes a button —
-    amber, clickable, relaunching through UAC — in the cases that survive
-    that manifest: a developer running from source at their own level, or
-    a policy-restricted account denied the token.
-    """
-
-    elevate_requested = Signal()
-
-    def __init__(self, t: dict, is_admin: bool, engine_ok: bool = True,
-                 parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("statusRail")
-        self.setFixedHeight(TH.CONTROL_H)
-        self._t = t
-        self._is_admin = is_admin
-        self._engine_ok = engine_ok
-        self._lang = "en"
-
-        lay = QHBoxLayout(self)
-        # TH.RAIL_INSET, not a SPACE step: SPACE measures the gap BETWEEN
-        # things, and this is the thickness of a frame around one. It is
-        # derived from the two sizes it has to reconcile (see the note on
-        # the constant) so the rail cannot drift out of alignment with its
-        # own buttons.
-        inset = TH.RAIL_INSET
-        lay.setContentsMargins(inset, inset, inset, inset)
-        lay.setSpacing(TH.SPACE["xxs"])
-
-        # Centred rather than edge-anchored: with only one control left,
-        # a stretch on either side reads as a deliberately minimal footer
-        # rather than a full-width row that happens to be empty.
-        lay.addStretch()
-        self._state_btn = QPushButton()
-        self._state_btn.setFixedSize(TH.RAIL_BUTTON, TH.RAIL_BUTTON)
-        self._state_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._state_btn.clicked.connect(self.elevate_requested.emit)
-        lay.addWidget(self._state_btn)
-        lay.addStretch()
-
-        self.apply_theme(t)
-
-    # -- session state -------------------------------------------------
-    def set_session(self, is_admin: bool, engine_ok: bool):
-        """Re-report the session. Both facts land on ONE control because
-        they answer one question — can this app do its job right now — and
-        two separate chips saying that is what the masthead used to do."""
-        self._is_admin, self._engine_ok = is_admin, engine_ok
-        self._sync_state()
-
-    def is_actionable(self) -> bool:
-        """True when the state button is a BUTTON rather than a readout —
-        i.e. the session is unelevated and relaunching would change it."""
-        return bool(self._engine_ok and not self._is_admin)
-
-    def _sync_state(self):
-        t = self._t
-        tr = I18N.tr
-        lang = self._lang
-        ok = self._is_admin and self._engine_ok
-        self._state_btn.setStyleSheet(TH.rail_state_qss(t, ok))
-        glyph, fallback = TH.glyph("shieldplain")
-        font = TH.icon_font(TH.ICON["micro"]) if glyph else None
-        if font is not None:
-            self._state_btn.setFont(font)
-        self._state_btn.setText(glyph or fallback)
-        # NAME AND DESCRIPTION SPLIT DELIBERATELY. The tooltip here is a
-        # sentence, and a sentence is the wrong thing for a screen reader
-        # to announce as a control's NAME — the reader says the name every
-        # time focus lands, so "Not elevated. Some system-level operations
-        # need Administrator rights - click to relaunch (a UAC prompt will
-        # appear)." would be read out in full on every pass. The short
-        # label is the name; the sentence stays the description, which a
-        # reader offers on request.
-        if not self._engine_ok:
-            name = tr("footer.elevation.engine_missing_name", lang)
-            detail = tr("footer.elevation.engine_missing_detail", lang)
-        elif self._is_admin:
-            name = tr("footer.elevation.admin_name", lang)
-            detail = tr("footer.elevation.admin_detail", lang)
-        else:
-            name = tr("footer.elevation.not_admin_name", lang)
-            detail = tr("footer.elevation.not_admin_detail", lang)
-        self._state_btn.setToolTip(detail)
-        self._state_btn.setAccessibleName(name)
-        self._state_btn.setAccessibleDescription(detail)
-        self._state_btn.setEnabled(self.is_actionable())
-        self._state_btn.setCursor(
-            Qt.CursorShape.PointingHandCursor if self.is_actionable()
-            else Qt.CursorShape.ArrowCursor)
-
-    # -- theming -------------------------------------------------------
-    def apply_theme(self, t: dict):
-        self._t = t
-        self.setStyleSheet(TH.status_rail_qss(t))
-        self._sync_state()
-
-    def retranslate(self, lang: str):
-        """The elevation state's name/detail text — the only thing left
-        in this footer, so unlike v15 (which deferred it) it is fully
-        bilingual from the start of v16."""
-        self._lang = lang
-        self._sync_state()
-
-
-# ============================================================
 #  NAV PILL — Back / Home header buttons
 # ============================================================
 class NavPill(QPushButton):
@@ -4201,11 +4090,27 @@ class ActionRow(QFrame):
     _PLAQUE = TH.PLAQUE_SIZE + 2 * IconPlaque._PAD
     _ICON_PX = TH.ICON["plaque"]
 
+    #: menu_structure.py's own English verb -> its i18n.py key. Every hub
+    #: item that reaches this row supplies "action" explicitly (see
+    #: HubDialog's own note), but the fallback in _default_label() reads
+    #: the same table, so a future item that omits it still translates
+    #: rather than silently staying English under Arabic.
+    _ACTION_VERB_KEYS = {
+        "Scan": "hub.action.scan", "Fix": "hub.action.fix",
+        "Prune": "hub.action.prune", "Restore": "hub.action.restore",
+        "Open": "hub.action.open", "Remove": "hub.action.remove",
+        "Reinstall": "hub.action.reinstall", "Install": "hub.action.install",
+        "Run": "hub.action.run", "Check": "hub.action.check",
+        "Reset": "hub.action.reset",
+    }
+
     def __init__(self, item: dict, t: dict, accent: str,
-                 action_label: str = "", parent: QWidget | None = None):
+                 action_label: str = "", lang: str = "en",
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("actionRow")
         self.item = item
+        self._lang = lang
         self._danger = bool(item.get("danger"))
         self._accent = t["err"] if self._danger else accent
 
@@ -4233,17 +4138,19 @@ class ActionRow(QFrame):
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
         text.setSpacing(TH.SPACE["xxs"])
-        self._title = QLabel(item.get("title", ""))
+        self._title = QLabel(I18N_CAT.tr_title(item.get("title", ""), lang))
         text.addWidget(self._title)
         # ClampedLabel, not a plain wrapped QLabel: the row's height must be
         # a function of its LINE BUDGET rather than of how long somebody's
         # description happened to be, or one verbose entry silently makes
         # its whole dialog taller than the rest.
-        self._desc = ClampedLabel(item.get("desc", ""), max_lines=2)
+        self._desc = ClampedLabel(I18N_CAT.tr_desc(item.get("desc", ""), lang),
+                                  max_lines=2)
         text.addWidget(self._desc)
         row.addLayout(text, 1)
 
-        self.button = QPushButton(action_label or self._default_label())
+        self.button = QPushButton(
+            self._tr_verb(action_label) if action_label else self._default_label())
         self.button.setFixedHeight(TH.CONTROL_H)
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.clicked.connect(self.activated.emit)
@@ -4262,8 +4169,17 @@ class ActionRow(QFrame):
         `action` lets a caller override; otherwise the destructive tone
         gets the blunt word and everything else gets the neutral one.
         """
-        return str(self.item.get("action")
+        verb = str(self.item.get("action")
                    or ("Remove" if self._danger else "Run"))
+        return self._tr_verb(verb)
+
+    def _tr_verb(self, verb: str) -> str:
+        """menu_structure.py's own English verb, translated via
+        _ACTION_VERB_KEYS — or the verb itself unchanged, the same
+        "never block on a missing entry" contract i18n.tr() holds,
+        for a future action word this table has not learned yet."""
+        key = self._ACTION_VERB_KEYS.get(verb)
+        return I18N.tr(key, self._lang) if key else verb
 
     def apply_theme(self, t: dict, accent: str | None = None):
         if accent is not None:
@@ -5656,13 +5572,24 @@ class InspectorDialog(PulseDialog):
     TASK = ""
     TITLE = ""
     LOADING = "Reading…"
+    #: i18n.py keys, opt-in (v10.17.2): a subclass that sets these gets a
+    #: translated title/loading line instead of the literal TITLE/LOADING
+    #: above. RestorePointDialog deliberately does NOT set them — the
+    #: Restore Point Browser stays English on purpose, the same
+    #: documented boundary as the Health Report (see i18n.py's own
+    #: module docstring) — so it keeps reading its plain TITLE/LOADING
+    #: literals completely unchanged by this.
+    TITLE_KEY: str | None = None
+    LOADING_KEY: str | None = None
     ACCENT_KEY = "information"
     TIMEOUT = 120
     _LABEL_W = 150
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict,
+                 lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1 = ps1_path
         self._thread: QThread | None = None
         self._worker: PowerShellTask | None = None
@@ -5672,12 +5599,16 @@ class InspectorDialog(PulseDialog):
         panel = _dialog_chrome(self, t, accent, responsive=True)
         lay = dialog_body(panel)
 
-        head = QLabel(self.TITLE)
+        title_text = (I18N.tr(self.TITLE_KEY, lang) if self.TITLE_KEY
+                      else self.TITLE)
+        head = QLabel(title_text)
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         head.setWordWrap(True)
         lay.addWidget(head)
 
-        self._status = QLabel(self.LOADING)
+        loading_text = (I18N.tr(self.LOADING_KEY, lang) if self.LOADING_KEY
+                        else self.LOADING)
+        self._status = QLabel(loading_text)
         self._status.setWordWrap(True)
         self._status.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._status)
@@ -5708,7 +5639,8 @@ class InspectorDialog(PulseDialog):
         (the Storage Analyzer's drive picker). Default: nothing."""
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
-        return [self._button("Close", TH.dialog_cancel_qss(t), self.reject)]
+        return [self._button(I18N.tr("inspector.close", self._lang),
+                             TH.dialog_cancel_qss(t), self.reject)]
 
     def _render(self, report: dict):
         raise NotImplementedError
@@ -5738,11 +5670,13 @@ class InspectorDialog(PulseDialog):
 
     def _start(self):
         if not self._ps1:
-            self._status.setText("Engine unavailable — core.ps1 was not found.")
+            self._status.setText(I18N.tr("inspector.engine_unavailable", self._lang))
             return
         if self._worker is not None:      # a read is already in flight
             return
-        self._status.setText(self.LOADING)
+        self._status.setText(
+            I18N.tr(self.LOADING_KEY, self._lang) if self.LOADING_KEY
+            else self.LOADING)
         thread = QThread(self)
         worker = PowerShellTask(self._ps1, self.TASK, timeout=self.TIMEOUT,
                                 **self.task_arguments())
@@ -5758,7 +5692,9 @@ class InspectorDialog(PulseDialog):
 
     def _on_report(self, result: TaskResult):
         if not result.success or not isinstance(result.data, dict):
-            self._on_failed(result.message or "The report could not be read.")
+            self._on_failed(
+                result.message
+                or I18N.tr("inspector.report_unreadable", self._lang))
             return
         self._clear()
         self._render(result.data)
@@ -6447,6 +6383,8 @@ class PathConflictDialog(InspectorDialog):
     TASK = "PathConflictReport"
     TITLE = "🧭  Shadowed Tools"
     LOADING = "Scanning your PATH for tools with more than one copy…"
+    TITLE_KEY = "path_conflict.title"
+    LOADING_KEY = "path_conflict.loading"
     ACCENT_KEY = "optimization"
     TIMEOUT = 180
 
@@ -6457,11 +6395,11 @@ class PathConflictDialog(InspectorDialog):
     elevate_requested = Signal()
 
     def __init__(self, parent: QWidget, ps1_path: str, t: dict,
-                 is_admin: bool = True):
+                 is_admin: bool = True, lang: str = "en"):
         self._is_admin = is_admin
         self._busy = False
         self._elevate_btn: QPushButton | None = None
-        super().__init__(parent, ps1_path, t)
+        super().__init__(parent, ps1_path, t, lang=lang)
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
         # BUILT HIDDEN AND SHOWN BY _render, because whether elevation
@@ -6469,19 +6407,19 @@ class PathConflictDialog(InspectorDialog):
         # session: an unelevated Pulse looking at a machine whose only
         # conflict is in the user PATH needs no shield at all, and
         # offering one there teaches the user that the button is decoration.
+        lang = self._lang
         self._elevate_btn = self._button(
-            "Restart as administrator", TH.dialog_secondary_go_qss(t, accent),
-            self._request_elevation)
+            I18N.tr("path_conflict.elevate_btn", lang),
+            TH.dialog_secondary_go_qss(t, accent), self._request_elevation)
         self._elevate_btn.setToolTip(
-            "Reordering the system PATH needs an elevated Pulse. This closes "
-            "Pulse and reopens it with administrator rights; Windows will ask "
-            "you to confirm.")
+            I18N.tr("path_conflict.elevate_tooltip", lang))
         self._elevate_btn.hide()
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
+            self._button(I18N.tr("inspector.close", lang),
+                         TH.dialog_cancel_qss(t), self.reject),
             self._elevate_btn,
-            self._button("Re-scan", TH.dialog_secondary_go_qss(t, accent),
-                         self._start),
+            self._button(I18N.tr("inspector.rescan", lang),
+                         TH.dialog_secondary_go_qss(t, accent), self._start),
         ]
 
     def _request_elevation(self):
@@ -6490,6 +6428,7 @@ class PathConflictDialog(InspectorDialog):
 
     # -- rendering ------------------------------------------------
     def _render(self, report: dict):
+        lang = self._lang
         conflicts = report.get("conflicts") or []
         entries = int(report.get("entries") or 0)
         # THE MEASUREMENT BEATS THE ASSUMPTION. `is_admin` is what the GUI
@@ -6504,24 +6443,17 @@ class PathConflictDialog(InspectorDialog):
 
         if not conflicts:
             self._status.setText(
-                f"Nothing is shadowed. Across {entries} PATH entries, every "
-                "tool Pulse checks is answered by exactly one installation.")
-            card = self._card("Nothing to fix")
-            card.note(
-                "Pulse looks for a second copy of the tools where "
-                "\"which one wins?\" is a question people actually have to "
-                "debug — interpreters, package managers, compilers and "
-                "build drivers. A machine with one of each has nothing to "
-                "show here, which is the healthy result.")
+                I18N.tr("path_conflict.nothing_shadowed", lang)
+                    .format(entries=entries))
+            card = self._card(I18N.tr("path_conflict.nothing_to_fix_title", lang))
+            card.note(I18N.tr("path_conflict.nothing_to_fix_note", lang))
             self._sync_elevate_button([])
             return
 
-        noun = "toolchain" if len(conflicts) == 1 else "toolchains"
+        status_key = ("path_conflict.status_singular" if len(conflicts) == 1
+                      else "path_conflict.status_plural")
         self._status.setText(
-            f"{len(conflicts)} {noun} have more than one installation on "
-            f"this PATH, across {entries} entries. Choosing one REORDERS "
-            "your PATH so it is found first — nothing is removed, and an "
-            "installation's folders always move together.")
+            I18N.tr(status_key, lang).format(count=len(conflicts), entries=entries))
 
         for conflict in conflicts:
             self._conflict_card(conflict)
@@ -6539,17 +6471,19 @@ class PathConflictDialog(InspectorDialog):
         self._elevate_btn.setVisible(blocked_by_rights and not self._is_admin)
 
     def _conflict_card(self, conflict: dict):
+        lang = self._lang
         name = str(conflict.get("command") or "")
         key = str(conflict.get("key") or name)
         options = conflict.get("options") or []
         count = int(conflict.get("count") or len(options))
         commands = [str(c) for c in (conflict.get("commands") or [])]
 
-        plural = "INSTALLATION" if count == 1 else "INSTALLATIONS"
-        card = self._card(name, (f"{count} {plural}", "warn"))
+        badge_key = ("path_conflict.installation_singular" if count == 1
+                     else "path_conflict.installation_plural")
+        card = self._card(name, (I18N.tr(badge_key, lang).format(count=count), "warn"))
         if commands:
-            card.row("Commands", ", ".join(commands),
-                     label_width=self._LABEL_W)
+            card.row(I18N.tr("path_conflict.commands_label", lang),
+                     ", ".join(commands), label_width=self._LABEL_W)
 
         labels = self._option_labels(options)
         for option, label in zip(options, labels):
@@ -6558,6 +6492,7 @@ class PathConflictDialog(InspectorDialog):
     def _option_row(self, key: str, option: dict, label: str) -> QWidget:
         """One installation: what it is on the left, what you can do
         about it on the right."""
+        lang = self._lang
         path = str(option.get("path") or "")
         scope = str(option.get("scope") or "")
         commands = [str(c) for c in (option.get("commands") or [])]
@@ -6572,15 +6507,18 @@ class PathConflictDialog(InspectorDialog):
 
         col = QVBoxLayout()
         col.setSpacing(0)
-        where = "System PATH" if scope == "Machine" else "Your PATH"
+        where = I18N.tr(
+            "path_conflict.system_path" if scope == "Machine"
+            else "path_conflict.user_path", lang)
         head = QLabel(f"{label}  ·  {where}")
         head.setStyleSheet(TH.label_qss(self._t, "card"))
         col.addWidget(head)
 
         detail = path
         if len(dirs) > 1:
-            detail += f"   (+{len(dirs) - 1} more folder"
-            detail += "s)" if len(dirs) > 2 else ")"
+            more_key = ("path_conflict.more_folder_singular" if len(dirs) == 2
+                        else "path_conflict.more_folder_plural")
+            detail += I18N.tr(more_key, lang).format(n=len(dirs) - 1)
         if commands:
             detail += f"   ·   {', '.join(commands)}"
         body = QLabel(detail)
@@ -6649,9 +6587,14 @@ class PathConflictDialog(InspectorDialog):
         # beside the rule that enforces it (Get-PathInstallPlan), so the
         # button cannot promise something the task will refuse — and the
         # reason no longer has to be a paragraph on the card, because the
-        # control itself now says it.
+        # control itself now says it. Pulse's own deterministic copy, not
+        # live system output — translated via i18n_catalog exactly like
+        # BloatRow's Note/StartupRow's Reason, by the exhaustive set of
+        # `Short` values Get-PathPriorityPlan/Get-PathInstallPlan return
+        # (see i18n_catalog.py's own note on this table).
         short = str(option.get("short") or "").strip()
-        btn = QPushButton((short or "Use this one").replace("&", "&&"))
+        label = I18N_CAT.tr_title(short or "Use this one", self._lang)
+        btn = QPushButton(label.replace("&", "&&"))
         btn.setFixedHeight(_CHIP_H)
         btn.setMinimumWidth(150)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -6675,7 +6618,9 @@ class PathConflictDialog(InspectorDialog):
         if self._busy or self._worker is not None:
             return
         self._busy = True
-        self._status.setText(f"Making {directory} the installation in use…")
+        self._status.setText(
+            I18N.tr("path_conflict.applying_status", self._lang)
+                .format(directory=directory))
 
         thread = QThread(self)
         worker = PowerShellTask(
@@ -6693,12 +6638,16 @@ class PathConflictDialog(InspectorDialog):
 
     def _on_applied(self, result: TaskResult):
         self._busy = False
-        self._status.setText(result.message or "PATH updated.")
+        self._status.setText(
+            result.message
+            or I18N.tr("path_conflict.applied_fallback", self._lang))
         QTimer.singleShot(120, self._start)
 
     def _on_apply_failed(self, message: str):
         self._busy = False
-        self._status.setText(f"The PATH was not changed: {message}")
+        self._status.setText(
+            I18N.tr("path_conflict.apply_failed", self._lang)
+                .format(message=message))
 
 
 class ContextMenuDialog(InspectorDialog):
@@ -6949,9 +6898,11 @@ class ElevatePromptDialog(PulseDialog):
     (see menu_structure.requires_admin). Instead of spawning PowerShell only
     to bounce back an access-denied verdict, this offers a one-click UAC
     relaunch up front. Accepted => the caller runs PulseApp._relaunch_as_admin;
-    rejected => nothing happens and no task is started. Amber `warn` accent
-    to match the status rail's unelevated session shield (StatusRail) — a
-    standing requirement, not a red failure.
+    rejected => nothing happens and no task is started. Amber `warn` accent:
+    unelevated is a standing requirement to fix, not a red failure that
+    just happened — the same posture Settings' own Session group takes
+    (widgets.SettingsView._build_session) in the sentence above its
+    relaunch button.
 
     IT SURVIVES requireAdministrator ON PURPOSE. The packaged app elevates
     before it starts (main.spec), so a packaged Pulse cannot normally reach
@@ -7091,21 +7042,28 @@ class HubDialog(PulseDialog):
     #: ever does, and _fit_scroll caps the viewport at the same count.
     _SCROLL_AFTER = 5
 
-    def __init__(self, parent: QWidget, hub: dict, t: dict):
+    def __init__(self, parent: QWidget, hub: dict, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self.chosen_item: dict | None = None
         accent = t["accent"]
         panel = _dialog_chrome(self, t, accent, responsive="action")
 
         lay = dialog_body(panel, "md")
 
-        head = QLabel(f"{hub['icon']}  {hub['title']}")
+        # hub['title']/hub['desc'] already have entries in i18n_catalog —
+        # this hub is also a card (GlassCard translates the same dict via
+        # the same lookup) — so this dialog only had to start ROUTING
+        # through it, not add anything new. Product-name hubs (Microsoft
+        # Edge, Microsoft OneDrive) pass through tr_title unchanged by
+        # the same "brand names stay Latin" convention every card uses.
+        head = QLabel(f"{hub['icon']}  {I18N_CAT.tr_title(hub['title'], lang)}")
         head.setWordWrap(True)
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
-        sub = QLabel(hub.get("desc", ""))
+        sub = QLabel(I18N_CAT.tr_desc(hub.get("desc", ""), lang))
         sub.setWordWrap(True)
         sub.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(sub)
@@ -7113,7 +7071,7 @@ class HubDialog(PulseDialog):
         host = QWidget()
         host.setStyleSheet("background: transparent;")
         host_lay = scroll_host_layout(host, "sm")
-        rows = self._build_rows(host_lay, hub, t, accent)
+        rows = self._build_rows(host_lay, hub, t, accent, lang)
         # ONE BUTTON WIDTH FOR THE WHOLE COLUMN. Each button sizes itself
         # to its own verb, so "Remove" and "Reinstall" came out 78 and 80
         # wide — a two-pixel stagger on the dialog's right edge, which is
@@ -7141,13 +7099,13 @@ class HubDialog(PulseDialog):
         else:
             lay.addWidget(host)
 
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", lang))
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         dialog_footer(lay, close)
 
     def _build_rows(self, host_lay: QVBoxLayout, hub: dict, t: dict,
-                    accent: str) -> list["ActionRow"]:
+                    accent: str, lang: str = "en") -> list["ActionRow"]:
         """Every sub-action as an ActionRow, flat or grouped.
 
         NO TRAILING STRETCH, and that is the whole difference from the old
@@ -7159,7 +7117,7 @@ class HubDialog(PulseDialog):
         rows: list[ActionRow] = []
 
         def add(item: dict):
-            row = ActionRow(item, t, accent, item.get("action", ""))
+            row = ActionRow(item, t, accent, item.get("action", ""), lang=lang)
             row.activated.connect(lambda it=item: self._choose(it))
             host_lay.addWidget(row)
             rows.append(row)
@@ -7182,7 +7140,7 @@ class HubDialog(PulseDialog):
                     host_lay.addSpacing(TH.SPACE["md"])
                 head_row = QHBoxLayout()
                 head_row.setSpacing(TH.SPACE["md"])
-                header = QLabel(group["title"])
+                header = QLabel(I18N_CAT.tr_title(group["title"], lang))
                 header.setStyleSheet(TH.hub_group_header_qss(t, accent))
                 head_row.addWidget(header)
                 rule = QFrame()
@@ -7726,10 +7684,11 @@ class ActivityDrawer(QWidget):
     height_changed = Signal()
 
     def __init__(self, t: dict, on_stop=None, parent: QWidget | None = None,
-                 pinned: bool = False):
+                 pinned: bool = False, lang: str = "en"):
         super().__init__(parent)
         self._pinned = pinned
         self._active = False   # a task is currently running
+        self._lang = lang
 
         # Auto-collapse countdown. A restartable QTimer rather than a chain
         # of QTimer.singleShot calls: the hold now has to be CANCELLABLE
@@ -7785,14 +7744,13 @@ class ActivityDrawer(QWidget):
         # the tooltip, which is the contract every ElidedCaption caller
         # owes its own text.
         self.status_text = ElidedCaption(max_width=420)
-        self.status_text.setFullText("System Ready")
+        self.status_text.setFullText(I18N.tr("activity.status.ready", lang))
         rail.addWidget(self.status_text, 1)
 
-        self.stop_btn = QPushButton("■  Stop Task")
+        self.stop_btn = QPushButton(I18N.tr("activity.stop_btn", lang))
         self.stop_btn.setFixedSize(112, 26)
         self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn.setToolTip(
-            "Hard-stop the running task (kills the whole process tree)")
+        self.stop_btn.setToolTip(I18N.tr("activity.stop_btn_tooltip", lang))
         if on_stop is not None:
             self.stop_btn.clicked.connect(on_stop)
         self.stop_btn.hide()
@@ -7803,8 +7761,9 @@ class ActivityDrawer(QWidget):
         self._toggle.setFixedSize(28, 28)
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._toggle.setToolTip("Pin the live output open")
-        self._toggle.setAccessibleName("Pin the live output open")
+        pin_label = I18N.tr("activity.pin.open_tooltip", lang)
+        self._toggle.setToolTip(pin_label)
+        self._toggle.setAccessibleName(pin_label)
         tf = TH.icon_font(TH.ICON["micro"]) if TH.glyph("chevron")[1] else None
         if tf is not None:
             self._toggle.setFont(tf)
@@ -7999,6 +7958,26 @@ class ActivityDrawer(QWidget):
         self.console.apply_theme(t)
         self.shimmer.set_theme(t)
 
+    def retranslate(self, lang: str):
+        """The rail's own static chrome — the Stop button's tooltip and the
+        pin chevron's label, matching its current checked state.
+
+        `status_text` and the Stop button's OWN text are deliberately NOT
+        touched here: they are state-driven (a canonical "System Ready" /
+        "Stopping…" vs. a dynamic backend phase or catalog task name, which
+        stays English along with the live console it echoes into), and only
+        main.PulseApp knows which one is currently showing — see its
+        `_status_key`/`_set_canonical_status` split and `_apply_language`,
+        which re-render those two from the tracked state right after
+        calling this."""
+        self._lang = lang
+        self.stop_btn.setToolTip(I18N.tr("activity.stop_btn_tooltip", lang))
+        label = I18N.tr(
+            "activity.pin.unpin_tooltip" if self._toggle.isChecked()
+            else "activity.pin.open_tooltip", lang)
+        self._toggle.setToolTip(label)
+        self._toggle.setAccessibleName(label)
+
     # -- open / close animation -------------------------------
     def _animate_to(self, target: int):
         self._anim.stop()
@@ -8032,7 +8011,9 @@ class ActivityDrawer(QWidget):
 
     def _on_toggle(self, checked: bool):
         self._pinned = checked
-        label = "Unpin the live output" if checked else "Pin the live output open"
+        label = I18N.tr(
+            "activity.pin.unpin_tooltip" if checked else "activity.pin.open_tooltip",
+            self._lang)
         self._toggle.setToolTip(label)
         self._toggle.setAccessibleName(label)
         if checked:
@@ -9594,17 +9575,21 @@ class OfficeWizardDialog(PulseDialog):
         "configuration-Office365-x64.xml", "configuration-Office365-x86.xml",
     )
 
+    #: step -> its i18n.py key (frontend.i18n.STRINGS), not literal text —
+    #: _goto looks each one up fresh so a live `lang` change before the
+    #: next navigation always reads the current language.
     _SUBTITLES = {
-        "choice": "Choose how you'd like to proceed",
-        "auto_confirm": "Automated Cloud Download",
-        "guide": "Beginner Guide — get the official tools",
-        "locate": "Locate your Office files",
-        "confirm": "Confirm & Install",
+        "choice": "office_wizard.step.choice",
+        "auto_confirm": "office_wizard.step.auto_confirm",
+        "guide": "office_wizard.step.guide",
+        "locate": "office_wizard.step.locate",
+        "confirm": "office_wizard.step.confirm",
     }
 
-    def __init__(self, parent: QWidget, t: dict):
+    def __init__(self, parent: QWidget, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self.setup_path: str | None = None
         self.config_path: str | None = None
         self.task_override: str | None = None
@@ -9621,7 +9606,7 @@ class OfficeWizardDialog(PulseDialog):
         head = QHBoxLayout()
         title_col = QVBoxLayout()
         title_col.setSpacing(TH.SPACE["xxs"])
-        title = QLabel("📄  Microsoft Office Deployment")
+        title = QLabel(I18N.tr("office_wizard.title", lang))
         title.setStyleSheet(TH.label_qss(t, "dialog"))
         title_col.addWidget(title)
         self._step_label = QLabel("")
@@ -9649,7 +9634,7 @@ class OfficeWizardDialog(PulseDialog):
 
     # -- small shared button factories --------------------------
     def _back_button(self, slot) -> QPushButton:
-        b = QPushButton("‹  Back")
+        b = QPushButton(I18N.tr("office_wizard.back", self._lang))
         size_dialog_button(b)
         b.setStyleSheet(TH.dialog_cancel_qss(self._t))
         b.clicked.connect(slot)
@@ -9688,7 +9673,7 @@ class OfficeWizardDialog(PulseDialog):
 
     # -- navigation -----------------------------------------------
     def _goto(self, step: str):
-        self._step_label.setText(self._SUBTITLES[step])
+        self._step_label.setText(I18N.tr(self._SUBTITLES[step], self._lang))
         self._stack.setCurrentIndex(self._pages[step])
         if step == "locate":
             self._run_autodetect()
@@ -9703,10 +9688,7 @@ class OfficeWizardDialog(PulseDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(TH.SPACE["md"])
 
-        intro = QLabel(
-            "Office ships as one bundle through Microsoft's official "
-            "Deployment Tool (ODT) — there's no per-app silent installer. "
-            "Choose how you'd like to proceed.")
+        intro = QLabel(I18N.tr("office_wizard.choice.intro", self._lang))
         intro.setWordWrap(True)
         intro.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(intro)
@@ -9762,7 +9744,8 @@ class OfficeWizardDialog(PulseDialog):
         ):
             card = GlassCard(
                 {"glyph": glyph, "title": title, "desc": desc},
-                appicons.readable_glyph_color(brand, surface, t), t)
+                appicons.readable_glyph_color(brand, surface, t), t,
+                lang=self._lang)
             card.setMinimumHeight(GlassCard.CARD_STEPS[1])
             card.clicked.connect(slot)
             lay.addWidget(card)
@@ -9770,7 +9753,7 @@ class OfficeWizardDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", self._lang))
         size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
@@ -9790,30 +9773,18 @@ class OfficeWizardDialog(PulseDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(TH.SPACE["lg"])
 
-        info = QLabel(
-            "Pulse will download the official Office Click-to-Run client "
-            "and write a standard configuration to <b>Desktop\\Office</b> "
-            "— Word, Excel, PowerPoint and Outlook in English and Arabic. "
-            "No files to find, nothing to configure by hand.")
+        info = QLabel(I18N.tr("office_wizard.auto.info", self._lang))
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setWordWrap(True)
         info.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(info)
 
-        note = QLabel(
-            "ℹ️  This standard configuration targets Volume License "
-            "activation (no product key baked in). If your network has a "
-            "KMS host it activates automatically; otherwise Office installs "
-            "but stays unactivated until a key is added. Prefer a "
-            "subscription install with your own settings? Use one of the "
-            "other two paths instead.")
+        note = QLabel(I18N.tr("office_wizard.auto.note", self._lang))
         note.setWordWrap(True)
         note.setStyleSheet(TH.label_qss(t, "caption"))
         lay.addWidget(note)
 
-        warn = QLabel(
-            "⚠️  IMPORTANT: When the Microsoft Setup window appears, DO NOT "
-            "close it or open any other apps until it reaches 100%.")
+        warn = QLabel(I18N.tr("office_wizard.warn_dont_close", self._lang))
         warn.setWordWrap(True)
         warn.setStyleSheet(TH.warning_banner_qss(t))
         lay.addWidget(warn)
@@ -9823,7 +9794,7 @@ class OfficeWizardDialog(PulseDialog):
         row.addWidget(self._back_button(lambda: self._goto("choice")))
         row.addStretch()
         row.addWidget(self._primary_button(
-            "Download && Install Now", self._accept_auto))
+            I18N.tr("office_wizard.auto.install_btn", self._lang), self._accept_auto))
         lay.addLayout(row)
         return page
 
@@ -9840,13 +9811,9 @@ class OfficeWizardDialog(PulseDialog):
         lay.setSpacing(TH.SPACE["md"])
 
         steps = [
-            ("1", "Open the Deployment Tool below, run it, and extract it "
-                  "into a folder named <b>Office</b> on your Desktop."),
-            ("2", "Open the Customization Tool below, choose your apps, "
-                  "languages and channel, then download the resulting "
-                  "<b>configuration.xml</b> into that same Office folder."),
-            ("3", "Come back here and continue — Pulse will pick up both "
-                  "files automatically."),
+            ("1", I18N.tr("office_wizard.guide.step1", self._lang)),
+            ("2", I18N.tr("office_wizard.guide.step2", self._lang)),
+            ("3", I18N.tr("office_wizard.guide.step3", self._lang)),
         ]
         for num, text in steps:
             row = QHBoxLayout()
@@ -9869,10 +9836,10 @@ class OfficeWizardDialog(PulseDialog):
             lay.addLayout(row)
 
         lay.addWidget(self._link_row_button(
-            "🌐  Open Office Deployment Tool   ↗",
+            I18N.tr("office_wizard.guide.odt_link", self._lang),
             lambda: QDesktopServices.openUrl(QUrl(self.ODT_URL))))
         lay.addWidget(self._link_row_button(
-            "⚙️  Open Office Customization Tool   ↗",
+            I18N.tr("office_wizard.guide.oct_link", self._lang),
             lambda: QDesktopServices.openUrl(QUrl(self.OCT_URL))))
 
         lay.addStretch()
@@ -9880,7 +9847,8 @@ class OfficeWizardDialog(PulseDialog):
         row.addWidget(self._back_button(lambda: self._goto("choice")))
         row.addStretch()
         row.addWidget(self._primary_button(
-            "I have the files now  ›", self._enter_locate_from_guide))
+            I18N.tr("office_wizard.guide.continue_btn", self._lang),
+            self._enter_locate_from_guide))
         lay.addLayout(row)
         return page
 
@@ -9911,38 +9879,43 @@ class OfficeWizardDialog(PulseDialog):
         t = self._t
         lay = self._locate_lay
 
-        ok = QLabel(f"✅  Found in <b>{folder}</b>")
+        ok = QLabel(I18N.tr("office_wizard.locate.found", self._lang).format(folder=folder))
         ok.setTextFormat(Qt.TextFormat.RichText)
         ok.setWordWrap(True)
         ok.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(ok)
 
-        setup_row = QLabel(f"<b>Setup:</b> {setup}")
+        setup_row = QLabel(
+            I18N.tr("office_wizard.locate.setup_label", self._lang).format(path=setup))
         setup_row.setTextFormat(Qt.TextFormat.RichText)
         setup_row.setWordWrap(True)
         setup_row.setStyleSheet(TH.label_qss(t, "caption"))
         lay.addWidget(setup_row)
 
         if len(configs) == 1:
-            config_row = QLabel(f"<b>Config:</b> {configs[0]}")
+            config_row = QLabel(
+                I18N.tr("office_wizard.locate.config_label", self._lang)
+                    .format(path=configs[0]))
             config_row.setTextFormat(Qt.TextFormat.RichText)
             config_row.setWordWrap(True)
             config_row.setStyleSheet(TH.label_qss(t, "caption"))
             lay.addWidget(config_row)
         else:
             picker_label = QLabel(
-                f"Found {len(configs)} configuration files — which one should Pulse use?")
+                I18N.tr("office_wizard.locate.pick_config", self._lang)
+                    .format(n=len(configs)))
             picker_label.setWordWrap(True)
             picker_label.setStyleSheet(TH.label_qss(t, "body"))
             lay.addWidget(picker_label)
             for i, cfg in enumerate(configs):
-                tag = "  (recommended)" if i == 0 else ""
+                tag = (I18N.tr("office_wizard.locate.recommended_tag", self._lang)
+                       if i == 0 else "")
                 btn = self._link_row_button(
                     f"📝  {cfg.name}{tag}",
                     lambda checked=False, c=cfg: self._on_files_chosen(str(setup), str(c)))
                 lay.addWidget(btn)
 
-        browse = QPushButton("📂  Browse for a different folder…")
+        browse = QPushButton(I18N.tr("office_wizard.locate.browse_other", self._lang))
         browse.setCursor(Qt.CursorShape.PointingHandCursor)
         browse.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         browse.clicked.connect(self._browse_folder)
@@ -9954,7 +9927,8 @@ class OfficeWizardDialog(PulseDialog):
         row2.addStretch()
         if len(configs) == 1:
             row2.addWidget(self._primary_button(
-                "Continue  ›", lambda: self._on_files_chosen(str(setup), str(configs[0]))))
+                I18N.tr("office_wizard.locate.continue_btn", self._lang),
+                lambda: self._on_files_chosen(str(setup), str(configs[0]))))
         lay.addLayout(row2)
 
     def _render_locate_missing(self, folder: str):
@@ -9962,24 +9936,23 @@ class OfficeWizardDialog(PulseDialog):
         lay = self._locate_lay
 
         warn = QLabel(
-            f"⚠️  No Office folder with both setup.exe and a configuration "
-            f"file was found automatically (checked <b>{folder}</b>).")
+            I18N.tr("office_wizard.locate.missing", self._lang).format(folder=folder))
         warn.setTextFormat(Qt.TextFormat.RichText)
         warn.setWordWrap(True)
         warn.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(warn)
 
         lay.addWidget(self._link_row_button(
-            "📂  Browse for the Office folder…", self._browse_folder))
+            I18N.tr("office_wizard.locate.browse_folder", self._lang), self._browse_folder))
         lay.addWidget(self._link_row_button(
-            "🗂️  Pick setup.exe and configuration.xml individually…",
+            I18N.tr("office_wizard.locate.pick_individually", self._lang),
             self._pick_files_individually))
         lay.addStretch()
 
         row = QHBoxLayout()
         row.addWidget(self._back_button(self._locate_back))
         row.addStretch()
-        retry = QPushButton("Retry auto-detect")
+        retry = QPushButton(I18N.tr("office_wizard.locate.retry", self._lang))
         retry.setCursor(Qt.CursorShape.PointingHandCursor)
         retry.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         retry.clicked.connect(self._run_autodetect)
@@ -9991,11 +9964,12 @@ class OfficeWizardDialog(PulseDialog):
         lay = self._locate_lay
         missing = []
         if not setup:
-            missing.append("setup.exe (or the ODT self-extractor)")
+            missing.append(I18N.tr("office_wizard.locate.missing_setup", self._lang))
         if not configs:
-            missing.append("a configuration .xml file")
+            missing.append(I18N.tr("office_wizard.locate.missing_config", self._lang))
 
-        msg = QLabel(f"❌  <b>{folder}</b> is missing: " + ", ".join(missing))
+        msg = QLabel(I18N.tr("office_wizard.locate.incomplete", self._lang)
+                          .format(folder=folder, missing=", ".join(missing)))
         msg.setTextFormat(Qt.TextFormat.RichText)
         msg.setWordWrap(True)
         msg.setStyleSheet(
@@ -10004,13 +9978,14 @@ class OfficeWizardDialog(PulseDialog):
         lay.addWidget(msg)
 
         lay.addWidget(self._link_row_button(
-            "🗂️  Pick the files individually…", self._pick_files_individually))
+            I18N.tr("office_wizard.locate.pick_individually_short", self._lang),
+            self._pick_files_individually))
         lay.addStretch()
 
         row = QHBoxLayout()
         row.addWidget(self._back_button(self._locate_back))
         row.addStretch()
-        retry = QPushButton("Browse again")
+        retry = QPushButton(I18N.tr("office_wizard.locate.browse_again", self._lang))
         retry.setCursor(Qt.CursorShape.PointingHandCursor)
         retry.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         retry.clicked.connect(self._browse_folder)
@@ -10020,7 +9995,7 @@ class OfficeWizardDialog(PulseDialog):
     def _browse_folder(self):
         start = str(Path.home() / "Desktop")
         folder = QFileDialog.getExistingDirectory(
-            self, "Select the folder with setup.exe and configuration.xml", start)
+            self, I18N.tr("office_wizard.locate.browse_dialog_title", self._lang), start)
         if not folder:
             return
         setup, configs = self._find_office_files(Path(folder))
@@ -10033,13 +10008,14 @@ class OfficeWizardDialog(PulseDialog):
     def _pick_files_individually(self):
         start = str(Path.home() / "Desktop")
         setup, _ = QFileDialog.getOpenFileName(
-            self, "Select the Office Deployment Tool (setup.exe)", start,
-            "Executable files (*.exe)")
+            self, I18N.tr("office_wizard.locate.pick_setup_dialog_title", self._lang),
+            start, I18N.tr("office_wizard.locate.pick_setup_filter", self._lang))
         if not setup:
             return
         config, _ = QFileDialog.getOpenFileName(
-            self, "Select configuration.xml", str(Path(setup).parent),
-            "XML files (*.xml)")
+            self, I18N.tr("office_wizard.locate.pick_config_dialog_title", self._lang),
+            str(Path(setup).parent),
+            I18N.tr("office_wizard.locate.pick_config_filter", self._lang))
         if not config:
             return
         self._clear_layout(self._locate_lay)
@@ -10064,15 +10040,14 @@ class OfficeWizardDialog(PulseDialog):
         lay = self._confirm_lay
 
         summary = QLabel(
-            f"<b>Setup:</b> {self.setup_path}<br><b>Config:</b> {self.config_path}")
+            I18N.tr("office_wizard.confirm.summary", self._lang)
+                .format(setup=self.setup_path, config=self.config_path))
         summary.setTextFormat(Qt.TextFormat.RichText)
         summary.setWordWrap(True)
         summary.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(summary)
 
-        warn = QLabel(
-            "⚠️  IMPORTANT: When the Microsoft Setup window appears, DO NOT "
-            "close it or open any other apps until it reaches 100%.")
+        warn = QLabel(I18N.tr("office_wizard.warn_dont_close", self._lang))
         warn.setWordWrap(True)
         warn.setStyleSheet(TH.warning_banner_qss(t))
         lay.addWidget(warn)
@@ -10081,7 +10056,8 @@ class OfficeWizardDialog(PulseDialog):
         row = QHBoxLayout()
         row.addWidget(self._back_button(lambda: self._goto("locate")))
         row.addStretch()
-        row.addWidget(self._primary_button("Install Now", self.accept))
+        row.addWidget(self._primary_button(
+            I18N.tr("office_wizard.confirm.install_btn", self._lang), self.accept))
         lay.addLayout(row)
 
     # -- file-system detection (client-side, no PowerShell spawned) --
@@ -10182,7 +10158,7 @@ class ToolInstallWizardDialog(PulseDialog):
     """
 
     def __init__(self, parent: QWidget, app_id: str, app_name: str,
-                 desc: str, url: str, t: dict):
+                 desc: str, url: str, t: dict, lang: str = "en"):
         super().__init__(parent)
         self.app_id = app_id
         self.mode: str | None = None
@@ -10206,9 +10182,7 @@ class ToolInstallWizardDialog(PulseDialog):
             sub.setStyleSheet(TH.label_qss(t, "body"))
             lay.addWidget(sub)
 
-        note = QLabel(
-            "Pulse installs this silently with winget — the same path it "
-            "uses everywhere else.")
+        note = QLabel(I18N.tr("tool_install.note", lang))
         note.setWordWrap(True)
         note.setStyleSheet(TH.label_qss(t, "caption"))
         lay.addWidget(note)
@@ -10219,7 +10193,7 @@ class ToolInstallWizardDialog(PulseDialog):
         # It carries the same accent treatment as every other dialog's
         # confirming action (dialog_go_qss), so "the thing this sheet is
         # for" looks the same here as it does in the catalog behind it.
-        self.install_btn = QPushButton("Automated Install (winget)")
+        self.install_btn = QPushButton(I18N.tr("tool_install.install_btn", lang))
         size_dialog_button(self.install_btn)
         self.install_btn.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         self.install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -10231,18 +10205,18 @@ class ToolInstallWizardDialog(PulseDialog):
         # anything — it opens a browser and closes this sheet. Giving it
         # button weight is what made the old Path B card read as a second
         # way to install, which it never was.
-        self.website_btn = QPushButton("Visit Official Website")
+        self.website_btn = QPushButton(I18N.tr("tool_install.website_btn", lang))
         self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.website_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self.website_btn.setToolTip(
-            f"Opens {app_name}'s official download page in your browser."
-            if url else "Opens a web search for the official download page.")
+            I18N.tr("tool_install.website_tooltip_named", lang).format(name=app_name)
+            if url else I18N.tr("tool_install.website_tooltip_generic", lang))
         self.website_btn.clicked.connect(lambda: self._choose_url(url, app_name))
         lay.addWidget(self.website_btn, 0, Qt.AlignmentFlag.AlignHCenter)
 
         row = QHBoxLayout()
         row.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", lang))
         size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
@@ -10589,9 +10563,9 @@ class UpdateRow(QFrame):
         self._id_label.setStyleSheet(TH.label_qss(t, "caption"))
         if self._running_chip is not None:
             # WARN, not ERR. A running app is a heads-up the user acts on,
-            # not the failure of anything — the same distinction the status
-            # rail's unelevated session shield makes (see StatusRail, and
-            # theme.rail_state_qss for the tone pair).
+            # not the failure of anything — the same distinction an
+            # unelevated session gets in Settings' own Session group
+            # (widgets.SettingsView._build_session).
             self._running_chip.setStyleSheet(TH.micro_chip_qss(t, "warn"))
 
     def is_running(self) -> bool:
@@ -11650,20 +11624,21 @@ class LeftoverRow(QFrame):
     all of it.
     """
 
-    _KIND_LABELS = {
-        "startup-run": "Startup entry",
-        "startup-folder": "Startup shortcut",
-        "task": "Scheduled task",
-        "residue": "App folder",
-        "shell-handler": "Right-click extension",
-        "shell-verb": "Right-click entry",
+    #: kind -> its i18n.py key, not literal text (v10.17.2).
+    _KIND_KEYS = {
+        "startup-run": "leftovers.kind.startup_run",
+        "startup-folder": "leftovers.kind.startup_folder",
+        "task": "leftovers.kind.task",
+        "residue": "leftovers.kind.residue",
+        "shell-handler": "leftovers.kind.shell_handler",
+        "shell-verb": "leftovers.kind.shell_verb",
     }
 
     #: What the evidence line may ASK for; it takes less when the row has
     #: less, and elides in the middle past it.
     TARGET_MAX_W = 640
 
-    def __init__(self, item: dict, t: dict):
+    def __init__(self, item: dict, t: dict, lang: str = "en"):
         super().__init__()
         self.item_id = str(item.get("id") or "")
         self.kind = str(item.get("kind") or "")
@@ -11686,20 +11661,22 @@ class LeftoverRow(QFrame):
         self.checkbox = QCheckBox(self._name.replace("&", "&&"))
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         name_row.addWidget(self.checkbox)
-        self._kind_badge = QLabel(self._KIND_LABELS.get(self.kind, self.kind).upper())
+        kind_key = self._KIND_KEYS.get(self.kind)
+        kind_text = I18N.tr(kind_key, lang) if kind_key else self.kind
+        self._kind_badge = QLabel(kind_text.upper())
         name_row.addWidget(self._kind_badge)
         self._size_badge: QLabel | None = None
         if self.size_bytes > 0:
             self._size_badge = QLabel(_leftover_size_text(self.size_bytes))
-            self._size_badge.setToolTip(
-                "Disk space this frees once the cleanup's backup folder is "
-                "emptied — a purge moves folders aside rather than deleting "
-                "them, so it can be undone.")
+            self._size_badge.setToolTip(I18N.tr("leftovers.size_tooltip", lang))
             name_row.addWidget(self._size_badge)
         name_row.addStretch()
         col.addLayout(name_row)
 
-        self._note = QLabel(str(item.get("reason") or ""))
+        # Pulse's own deterministic copy (17-Leftovers.ps1's -Reason
+        # literals), translated via i18n_catalog exactly like BloatRow's
+        # Note/StartupRow's Reason.
+        self._note = QLabel(I18N_CAT.tr_desc(str(item.get("reason") or ""), lang))
         self._note.setWordWrap(True)
         self._note.setToolTip(str(item.get("location") or ""))
         col.addWidget(self._note)
@@ -11747,16 +11724,19 @@ class LeftoversDialog(PulseDialog):
     Restore Last Purge.
     """
 
+    #: (group, i18n.py key), not literal text (v10.17.2).
     SECTIONS = [
-        ("startup", "Startup entries"),
-        ("tasks", "Scheduled tasks"),
-        ("residue", "Abandoned app folders"),
-        ("shell", "Right-click menu"),
+        ("startup", "leftovers.section.startup"),
+        ("tasks", "leftovers.section.tasks"),
+        ("residue", "leftovers.section.residue"),
+        ("shell", "leftovers.section.shell"),
     ]
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict,
+                 lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1_path = ps1_path
         self.selected_ids: list[str] = []
         self._rows: dict[str, LeftoverRow] = {}
@@ -11769,10 +11749,10 @@ class LeftoversDialog(PulseDialog):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(TH.SPACE["xxs"])
-        title = QLabel("🧽  Leftovers Cleaner")
+        title = QLabel(I18N.tr("leftovers.title", lang))
         title.setStyleSheet(TH.label_qss(t, "dialog"))
         title_col.addWidget(title)
-        self._subtitle = QLabel("Looking for what uninstalled software left behind…")
+        self._subtitle = QLabel(I18N.tr("leftovers.subtitle.scanning", lang))
         self._subtitle.setWordWrap(True)
         self._subtitle.setStyleSheet(TH.label_qss(t, "body"))
         title_col.addWidget(self._subtitle)
@@ -11805,9 +11785,7 @@ class LeftoversDialog(PulseDialog):
         self._shimmer = ShimmerBar(height=6)
         self._shimmer.set_theme(t)
         lay.addWidget(self._shimmer)
-        label = QLabel("Checking startup entries, scheduled tasks, app folders and "
-                       "the right-click menu for anything pointing at software "
-                       "that is gone…")
+        label = QLabel(I18N.tr("leftovers.loading", self._lang))
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
         label.setStyleSheet(TH.label_qss(t, "body"))
@@ -11862,12 +11840,11 @@ class LeftoversDialog(PulseDialog):
         row.addStretch()
         lay.addLayout(row)
 
-        headline = QLabel("Nothing left behind")
+        headline = QLabel(I18N.tr("leftovers.clean.headline", self._lang))
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         headline.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(headline)
-        note = QLabel("No startup entry, scheduled task, app folder or right-click "
-                      "entry on this PC points at software that has been removed.")
+        note = QLabel(I18N.tr("leftovers.clean.note", self._lang))
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         note.setWordWrap(True)
         note.setStyleSheet(TH.label_qss(t, "body"))
@@ -11882,20 +11859,21 @@ class LeftoversDialog(PulseDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(TH.SPACE["sm"])
 
+        lang = self._lang
         bar = QHBoxLayout()
         bar.setSpacing(TH.SPACE["lg"])
-        self._all_btn = QPushButton("Select All")
+        self._all_btn = QPushButton(I18N.tr("catalog.select_all", lang))
         self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._all_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._all_btn.clicked.connect(lambda: self._select_all(True))
         bar.addWidget(self._all_btn)
-        self._none_btn = QPushButton("Deselect All")
+        self._none_btn = QPushButton(I18N.tr("catalog.deselect_all", lang))
         self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._none_btn.setStyleSheet(TH.link_button_qss(t, t["accent"]))
         self._none_btn.clicked.connect(lambda: self._select_all(False))
         bar.addWidget(self._none_btn)
         bar.addStretch()
-        self._count = QLabel("0 selected")
+        self._count = QLabel(I18N.tr("bloatware.count.selected", lang).format(count=0))
         self._count.setStyleSheet(TH.label_qss(t, "caption"))
         bar.addWidget(self._count)
         lay.addLayout(bar)
@@ -11909,10 +11887,10 @@ class LeftoversDialog(PulseDialog):
         self._scroll.setWidget(host)
         lay.addWidget(self._scroll, 1)
 
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = QPushButton(I18N.tr("dialog.cancel", lang))
         self._cancel_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._cancel_btn.clicked.connect(self.reject)
-        self._purge_btn = QPushButton("Safe Purge")
+        self._purge_btn = QPushButton(I18N.tr("bloatware.purge_btn", lang))
         self._purge_btn.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
         self._purge_btn.setEnabled(False)
         self._purge_btn.clicked.connect(self._accept_selection)
@@ -11941,7 +11919,9 @@ class LeftoversDialog(PulseDialog):
         self._shimmer.stop()
         report = result.data if isinstance(result.data, dict) else None
         if not result.success or report is None:
-            self._on_scan_failed(result.message or "The leftovers scan returned nothing.")
+            self._on_scan_failed(
+                result.message
+                or I18N.tr("leftovers.error.scan_failed", self._lang))
             return
         items = [it for it in (report.get("items") or [])
                  if isinstance(it, dict) and it.get("id")]
@@ -11950,7 +11930,8 @@ class LeftoversDialog(PulseDialog):
 
     def _on_scan_failed(self, message: str):
         self._shimmer.stop()
-        self._error_label.setText(f"{message}\n\nNothing was changed.")
+        self._error_label.setText(
+            message + I18N.tr("leftovers.error.suffix", self._lang))
         self._stack.setCurrentWidget(self._error_page)
         self._purge_btn.setEnabled(False)
 
@@ -11964,14 +11945,15 @@ class LeftoversDialog(PulseDialog):
 
     # -- rendering -----------------------------------------------------
     def _render(self, items: list, elevated: bool, total_bytes: int):
+        lang = self._lang
         if not items:
             # THE FOOTER FOLLOWS THE PAGE, as it does in the bloatware
             # purge: a disabled destructive button under "Nothing left
             # behind" offers to do the one thing the page just ruled out.
             self._purge_btn.setVisible(False)
-            self._cancel_btn.setText("Close")
-            self._subtitle.setText("Checked startup entries, scheduled tasks, app "
-                                   "folders and the right-click menu.")
+            self._cancel_btn.setText(I18N.tr("dialog.close", lang))
+            self._subtitle.setText(
+                I18N.tr("leftovers.clean.checked_subtitle", lang))
             self._stack.setCurrentWidget(self._clean_page)
             return
 
@@ -11982,30 +11964,34 @@ class LeftoversDialog(PulseDialog):
         # A group a newer engine emits that this GUI has no title for still
         # renders - under a generic heading, never silently dropped, because
         # a leftover the user cannot see is one they cannot untick.
-        sections += [(key, "Other") for key in by_group
-                     if key not in {k for k, _title in self.SECTIONS}]
-        for key, title in sections:
+        sections += [(key, "leftovers.section.other") for key in by_group
+                     if key not in {k for k, _key in self.SECTIONS}]
+        for key, title_key in sections:
             rows = by_group.get(key) or []
             if not rows:
                 continue
-            header = QLabel(f"{title}  ·  {len(rows)}".upper())
+            header = QLabel(
+                I18N.tr("leftovers.section_header", lang)
+                    .format(title=I18N.tr(title_key, lang), count=len(rows))
+                    .upper())
             header.setStyleSheet(TH.label_qss(self._t, "section"))
             header.setContentsMargins(TH.SPACE["xs"], TH.SPACE["sm"], TH.SPACE["xs"], 0)
             self._insert(header)
             for item in sorted(rows, key=lambda it: str(it.get("name") or "").lower()):
-                row = LeftoverRow(item, self._t)
+                row = LeftoverRow(item, self._t, lang=lang)
                 row.checkbox.toggled.connect(self._sync_count)
                 self._rows[row.item_id] = row
                 self._insert(row)
 
-        noun = "item points" if len(items) == 1 else "items point"
-        summary = f"{len(items)} {noun} at software that is no longer installed"
+        summary_key = ("leftovers.summary.singular" if len(items) == 1
+                       else "leftovers.summary.plural")
+        summary = I18N.tr(summary_key, lang).format(count=len(items))
         if total_bytes > 0:
-            summary += f", holding {_leftover_size_text(total_bytes)}"
-        summary += (". Everything you purge is backed up first — Restore Last "
-                    "Purge puts it back.")
+            summary += I18N.tr("leftovers.summary.holding_suffix", lang).format(
+                size=_leftover_size_text(total_bytes))
+        summary += I18N.tr("leftovers.summary.backup_note", lang)
         if not elevated and any(row.needs_admin for row in self._rows.values()):
-            summary += " Removing some of these needs administrator; Pulse will ask."
+            summary += I18N.tr("leftovers.summary.needs_admin_suffix", lang)
         self._subtitle.setText(summary)
         self._select_all(True)
         self._stack.setCurrentWidget(self._results_page)
@@ -12021,11 +12007,14 @@ class LeftoversDialog(PulseDialog):
         self._sync_count()
 
     def _sync_count(self):
+        lang = self._lang
         chosen = [row for row in self._rows.values() if row.is_selected()]
-        self._count.setText(f"{len(chosen)} selected")
+        self._count.setText(
+            I18N.tr("bloatware.count.selected", lang).format(count=len(chosen)))
         self._purge_btn.setEnabled(bool(chosen))
         self._purge_btn.setText(
-            "Safe Purge" if not chosen else f"Safe Purge ({len(chosen)})")
+            I18N.tr("bloatware.purge_btn", lang) if not chosen
+            else I18N.tr("bloatware.purge_btn_count", lang).format(count=len(chosen)))
 
     def _accept_selection(self):
         self.selected_ids = [row.item_id for row in self._rows.values()
@@ -12075,6 +12064,7 @@ class SettingsView(QWidget):
     export_requested = Signal()
     import_requested = Signal()
     update_check_requested = Signal()
+    elevate_requested = Signal()
 
     language_requested = Signal(str)
 
@@ -12091,13 +12081,14 @@ class SettingsView(QWidget):
     )
 
     GROUPS = ("General", "System Protection", "Configuration Management",
-              "Updates")
+              "Updates", "Session")
 
     def __init__(self, t: dict, is_admin: bool = False, lang: str = "en",
-                 parent: QWidget | None = None):
+                 engine_ok: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
         self._t = t
         self._is_admin = is_admin
+        self._engine_ok = engine_ok
         self._lang = lang if lang in I18N.LANGUAGES else "en"
         self._mode = "dark"
         #: None until the probe answers — which is NOT the same as "no
@@ -12144,6 +12135,7 @@ class SettingsView(QWidget):
         self._build_protection()
         self._build_configuration()
         self._build_updates()
+        self._build_session()
         self._host_lay.addStretch()
 
         self.apply_theme(t)
@@ -12290,6 +12282,50 @@ class SettingsView(QWidget):
         self._update_caption.setText(UPDATE_STATE_TEXTS.get(state, state.upper()))
         self._update_caption.setToolTip(tooltip)
 
+    # -- Session (v10.17.2) -----------------------------------------------
+    def _build_session(self):
+        """Elevation/engine state, relocated here from the sidebar footer's
+        widgets.StatusRail — a standalone icon-only shield in the busiest
+        real estate in the window, clicked maybe once a session, now read
+        alongside every other "how this session is set up" fact instead of
+        permanently occupying chrome. Same three states StatusRail always
+        carried (settings.session.*_detail carries the same sentences
+        StatusRail's own footer.elevation.*_detail keys used to): engine
+        missing, elevated (nothing to do), or not elevated (a live action).
+
+        THE BUTTON IS THE ACTION, THE CAPTION IS THE STATE — same split as
+        System Protection's restore button/note above: a caption says what
+        is true, a button appears only when clicking it would change
+        anything (engine ok and not already elevated). Relaunching when
+        already elevated, or when there is no engine to relaunch into,
+        offers a control that cannot do anything, so it is not offered."""
+        inner = self._group("settings.group.session")
+        self._session_caption = self._caption()
+        inner.addWidget(self._session_caption)
+
+        row = QHBoxLayout()
+        row.setSpacing(TH.SPACE["sm"])
+        self._elevate_btn = QPushButton()
+        self._elevate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._elevate_btn.setFixedHeight(TH.CONTROL_H)
+        self._elevate_btn.clicked.connect(self.elevate_requested.emit)
+        row.addWidget(self._elevate_btn)
+        row.addStretch()
+        inner.addLayout(row)
+
+    def _sync_session(self):
+        tr, lang = I18N.tr, self._lang
+        if not self._engine_ok:
+            detail = tr("settings.session.engine_missing_detail", lang)
+        elif self._is_admin:
+            detail = tr("settings.session.admin_detail", lang)
+        else:
+            detail = tr("settings.session.not_admin_detail", lang)
+        self._session_caption.setText(detail)
+        actionable = bool(self._engine_ok and not self._is_admin)
+        self._elevate_btn.setText(tr("settings.session.relaunch_btn", lang))
+        self._elevate_btn.setVisible(actionable)
+
     # -- theme choice ----------------------------------------------------
     def theme_modes(self) -> tuple:
         return tuple(mode for mode, _label_key, _hint_key in self.THEME_CHOICES)
@@ -12386,6 +12422,8 @@ class SettingsView(QWidget):
         # _update_caption's own text is UPDATE_STATE_TEXTS-driven, not
         # retranslated here — see _build_updates.
 
+        self._sync_session()
+
     # -- restore points --------------------------------------------------
     def set_restore_points(self, report: dict | None):
         self._report = report if isinstance(report, dict) else None
@@ -12460,7 +12498,7 @@ class SettingsView(QWidget):
         for label in self._captions:
             label.setStyleSheet(TH.label_qss(t, "caption"))
         for button in (self._restore_btn, self._export_btn, self._import_btn,
-                       self._update_btn):
+                       self._update_btn, self._elevate_btn):
             button.setStyleSheet(TH.action_button_qss(t, accent))
         self._sync_theme_buttons()
         self._sync_language_buttons()

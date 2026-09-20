@@ -853,10 +853,12 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # MOVE, not a fixed icon.
     # v15 — the theme toggle moved out of the title bar (which drew its
     # glyphs from the CAPTION font, a different family with different
-    # metrics) into the sidebar's status rail, which draws from this table
-    # like every other glyph in the app. 'sun' is its light-mode face; the
-    # existing 'moon' below is its dark one, and the rail's session-state
-    # button reuses 'shieldplain'.
+    # metrics) into the sidebar, drawing from this table like every other
+    # glyph in the app. 'sun' is its light-mode face; the existing 'moon'
+    # below is its dark one. Both the toggle and the elevation control
+    # (formerly widgets.StatusRail) have since moved into Settings
+    # (v16, v10.17.2) as plain text rows — 'shieldplain' now lives on
+    # only as the "Disable Telemetry" card's own glyph.
     'sun':           ("\uE706", "\u2600\ufe0f"),   # Brightness — light theme
     'lock':          ("\uE72E", "\U0001f512"),    # Lock — admin-gated affordance
     # --- modules (sidebar) ---
@@ -1031,10 +1033,11 @@ def glyph_icon(name: str, px: int, color: str) -> QIcon | None:
 
     Everywhere else in the app an icon is either PAINTED (widgets.NavButton,
     widgets.IconPlaque) or IS the entire control, in which case the glyph is
-    simply the button's text and icon_font() its font (widgets.StatusRail).
-    The sidebar's search doorway can do neither: one QWidget has one font, so
-    putting the codepoint in the label would render "Search everything…" in
-    the icon family too. That is why it shipped wearing a literal colour
+    simply the button's text and icon_font() its font (the activity drawer's
+    tool buttons, e.g.). The sidebar's search doorway can do neither: one
+    QWidget has one font, so putting the codepoint in the label would
+    render "Search everything…" in the icon family too. That is why it
+    shipped wearing a literal colour
     emoji — the only one left in the app's persistent chrome, at the top of
     the rail, next to fourteen monochrome line icons.
 
@@ -2257,92 +2260,6 @@ def empty_state_qss(t: dict) -> str:
             "background: transparent; border: none;")
 
 
-#: The one icon-only control size in the app's chrome. A 28px square
-#: inside a CONTROL_H rail leaves 4px of air above and below, which is
-#: what keeps the rail reading as one object rather than as a button with
-#: a border drawn around it.
-RAIL_BUTTON = 28
-
-#: The rail's own content inset, DERIVED rather than picked: it is exactly
-#: the air left over once a RAIL_BUTTON control is centred in a CONTROL_H
-#: row, less the container's 1px border on each side. Written as an
-#: expression because it is not a GAP between two things (which is what
-#: SPACE measures) but the thickness of a frame around one — and because a
-#: literal here would be the first hand-picked pixel back in the layout
-#: after the scale was enforced.
-RAIL_INSET = (CONTROL_H - RAIL_BUTTON) // 2 - 1
-
-
-def status_rail_qss(t: dict) -> str:
-    """THE SIDEBAR'S BOTTOM STATUS RAIL — one container holding the ONE
-    thing that describes the SESSION rather than the work: whether this
-    process holds an Administrator token.
-
-    v15 consolidated four controls (a theme toggle that had lived in the
-    title bar, an elevation CTA/chip, a version/"check for updates" line,
-    and the update badge) into one 36px row. v16 goes further and removes
-    the theme toggle and the version line from chrome entirely — both now
-    live exclusively in Settings — on the reasoning that a control for
-    something touched once a session, if ever, does not earn a permanent
-    seat in the busiest real estate in the window. What is left is
-    session state a technician genuinely glances at repeatedly.
-
-    The container itself is deliberately quiet — the plaque well's neutral
-    fill and the chrome hairline, no accent anywhere. Colour in this row
-    belongs to the session-state button alone (see rail_state_qss), which
-    is the only part of it that can ever be reporting something.
-    """
-    return f"""
-        QFrame#statusRail {{
-            background: {t['plaque_well']};
-            border: 1px solid {t['panel_line']};
-            border-radius: {RADIUS['plaque']}px;
-        }}
-    """
-
-
-def rail_state_qss(t: dict, elevated: bool) -> str:
-    """The session-state button that closes the status rail: emerald while
-    Pulse holds an Administrator token, amber while it does not.
-
-    ONE CONTROL, TWO STATES — which is the whole reason the elevation UI
-    could shrink to this. The packaged app ships `requireAdministrator`
-    (see main.spec), so the unelevated state is one Windows can no longer
-    put a *packaged* Pulse into; what remains of it is a developer running
-    `python src/frontend/main.py` at their own level, and a
-    policy-restricted account that can be denied the token. Neither
-    deserves a standing full-width amber call-to-action in the rail, and
-    the app was carrying THREE surfaces that announced elevation (this
-    footer, the masthead's pills, and the per-task prompt) for a fact that
-    is now true on essentially every real launch.
-
-    Tinted fill rather than a wireframe, at the weight every other
-    semantic surface in the app uses (0.12 plate / 0.34 line) — see the
-    destructive rows in action_row_qss for the same construction. A bare
-    coloured outline is the "harsh wireframe" register this pass is
-    removing everywhere it appears.
-    """
-    tone = t["ok"] if elevated else t["warn"]
-    return f"""
-        QPushButton {{
-            background: {alpha(tone, 0.12)};
-            border: 1px solid {alpha(tone, 0.34)};
-            border-radius: {inner_radius(RADIUS['plaque'], 2)}px;
-            color: {tone}; font-size: {TYPE['label']}px;
-        }}
-        QPushButton:hover {{
-            background: {alpha(tone, 0.22)};
-            border: 1px solid {alpha(tone, 0.55)};
-        }}
-        QPushButton:pressed {{ background: {alpha(tone, 0.32)}; }}
-        QPushButton:disabled {{
-            background: {alpha(tone, 0.12)};
-            border: 1px solid {alpha(tone, 0.34)};
-            color: {tone};
-        }}
-    """
-
-
 def titlebar_button_qss(t: dict, hover: str) -> str:
     """Caption buttons (theme / minimize / maximize). The `nchover`
     dynamic property mirrors :hover for the maximize button, whose mouse
@@ -2630,8 +2547,9 @@ def chip_strip_qss(t: dict) -> str:
 # (chip_qss was removed in v1.0: its only caller was the hero banner's
 # Engine/Admin chip column. That pill passed to strip_status_qss, which
 # v15 retired in turn — the two session facts it carried are a caption on
-# the dashboard's footer rule now, and the elevation half of the pair has
-# a permanent home in the status rail. See rail_state_qss.)
+# the dashboard's footer rule now, and the elevation half of the pair
+# moved from the sidebar's status rail into Settings' own Session group
+# in v10.17.2 — see widgets.SettingsView._build_session.)
 
 
 def badge_qss(t: dict) -> str:
