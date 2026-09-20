@@ -1673,6 +1673,15 @@ def clamp_maximized_client(hwnd, rect, work=None) -> bool:
 #  MAIN WINDOW
 # ============================================================
 class PulseApp(QMainWindow):
+    #: The sidebar's two widths (v16, the collapsible rail). Expanded is
+    #: the pre-existing 250px. Compact is sized around the plaque alone:
+    #: two TH.PAD["surface"] margins (32px) either side of a centred
+    #: TH.PLAQUE_SIZE (36px) icon, plus enough slack either side of the
+    #: well (16px) that a collapsed row still reads as a padded button
+    #: rather than an icon jammed against the rail's own edge.
+    SIDEBAR_WIDTH_EXPANDED = 250
+    SIDEBAR_WIDTH_COMPACT = 2 * TH.PAD["surface"] + TH.PLAQUE_SIZE + 16
+
     def __init__(self):
         super().__init__()
         # Must be the very first assignment: Qt can deliver events (notably
@@ -1794,6 +1803,12 @@ class PulseApp(QMainWindow):
         #: persisted there directly rather than via a signal, since there
         #: is only ever one writer.
         self._language = prefs.language("en")
+
+        #: Sidebar expanded/collapsed (v16) — same "plain attribute,
+        #: persisted where it's written" shape as _language, for the same
+        #: reason: one writer (_on_sidebar_toggle_clicked), no live-follow
+        #: behaviour to justify a signal-bearing manager object.
+        self._sidebar_collapsed = prefs.sidebar_collapsed(False)
 
         #: ONE read-only reader at a time — restore points, catalog
         #: inventory. Separate from the applied-state probe because it
@@ -1951,11 +1966,27 @@ class PulseApp(QMainWindow):
         # Named, because its surface rule is ID-scoped and lives in the
         # shell's sheet now — see theme.chrome_qss.
         self._sidebar.setObjectName("sidebar")
-        self._sidebar.setFixedWidth(250)
+        self._sidebar.setFixedWidth(
+            self.SIDEBAR_WIDTH_COMPACT if self._sidebar_collapsed
+            else self.SIDEBAR_WIDTH_EXPANDED)
         pad_side = TH.PAD["surface"]
         side = QVBoxLayout(self._sidebar)
         side.setContentsMargins(pad_side, pad_side, pad_side, pad_side)
         side.setSpacing(TH.SPACE["sm"])
+
+        # -- collapse / expand toggle (v16) ----------------------
+        # First in the rail, above search: the Notion/VS-Code-activity-bar
+        # placement, and the one control whose own meaning does not
+        # collapse (it IS the thing that toggles collapse), so it is the
+        # one thing in this rail that never loses its label to compact
+        # mode — only its glyph changes, to the direction the rail is
+        # about to move.
+        self._sidebar_toggle = QPushButton()
+        self._sidebar_toggle.setFixedHeight(TH.CONTROL_H)
+        self._sidebar_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._sidebar_toggle.clicked.connect(self._on_sidebar_toggle_clicked)
+        side.addWidget(self._sidebar_toggle)
+        side.addSpacing(TH.SPACE["sm"])
 
         # -- global search doorway (v1.0) ----------------------
         # The Linear/Raycast sidebar pattern: a quiet input-shaped button
@@ -2054,6 +2085,26 @@ class PulseApp(QMainWindow):
         side.addWidget(self.status_rail)
         body.addWidget(self._sidebar)
 
+        # -- apply persisted language + collapse state -----------
+        # A PRE-EXISTING GAP, closed here rather than left for later: the
+        # rail was built above in English/expanded regardless of what
+        # prefs.language()/prefs.sidebar_collapsed() had just loaded into
+        # self._language/self._sidebar_collapsed, and _apply_language had
+        # exactly one caller — the Settings page's own language picker —
+        # so a session that chose Arabic last time opened to an untranslated,
+        # LTR sidebar until the user opened Settings and picked it again.
+        # _sync_sidebar_toggle is unconditional: the toggle button is
+        # built blank above (no initial text/tooltip), so even the
+        # common English/expanded case needs this one call to show its
+        # first glyph at all. The other two stay conditional — they are
+        # true no-ops in the common case, and English/expanded is what
+        # construction already produced.
+        self._sync_sidebar_toggle()
+        if self._language != "en":
+            self._apply_language(self._language)
+        if self._sidebar_collapsed:
+            self._apply_sidebar_collapsed(self._sidebar_collapsed)
+
         # -- content ------------------------------------------
         self._content = QFrame()
         self._content.setObjectName("content")   # see theme.chrome_qss
@@ -2149,6 +2200,7 @@ class PulseApp(QMainWindow):
         # three sheets on three NESTED containers walked the same 500-widget
         # tree three times for three rectangles.
         self._shell.setStyleSheet(TH.chrome_qss(t))
+        self._sidebar_toggle.setStyleSheet(TH.sidebar_toggle_qss(t))
         self._search_btn.setStyleSheet(TH.sidebar_search_qss(t))
         if self._search_fluent:
             self._search_btn.setIcon(
@@ -2249,13 +2301,11 @@ class PulseApp(QMainWindow):
                      else Qt.LayoutDirection.LeftToRight)
         self._sidebar.setLayoutDirection(direction)
 
-        search_text = i18n.tr("sidebar.search", lang)
-        self._search_btn.setText(
-            search_text if self._search_fluent
-            else f"{self._search_glyph}  {search_text}")
+        self._sync_search_text()
         self._search_btn.setToolTip(i18n.tr("sidebar.search_tooltip", lang))
         self._section.setText(i18n.tr("sidebar.section", lang))
-        self._settings_btn.setText(i18n.tr("sidebar.settings", lang))
+        self._settings_btn.set_title(i18n.tr("sidebar.settings", lang))
+        self._sync_sidebar_toggle()
 
         for btn in (*self._nav_buttons, self._settings_btn):
             btn.set_rtl(rtl)
@@ -2263,6 +2313,60 @@ class PulseApp(QMainWindow):
         # The elevation indicator is the only thing left in the footer
         # (v16) and is fully bilingual — retranslate covers it.
         self.status_rail.retranslate(lang)
+
+    def _sync_search_text(self):
+        """The search doorway's visible text — considers language AND
+        collapse state independently, so a caller changing either one
+        does not have to know about the other. Collapsed shows the glyph
+        alone (or, lacking a real icon font, just the fallback character);
+        the tooltip already carries the full sentence regardless."""
+        if self._sidebar_collapsed:
+            text = "" if self._search_fluent else self._search_glyph
+        else:
+            search_text = i18n.tr("sidebar.search", self._language)
+            text = (search_text if self._search_fluent
+                    else f"{self._search_glyph}  {search_text}")
+        self._search_btn.setText(text)
+
+    def _sync_sidebar_toggle(self):
+        """The toggle's own glyph and tooltip — points the direction the
+        rail is about to MOVE (chevron_left "close this way" when
+        expanded, chevron "open this way" when collapsed), and this is
+        the one control in the rail whose meaning does not collapse away,
+        so it keeps a real tooltip in both states rather than losing one
+        the way the module buttons do."""
+        key = "chevron" if self._sidebar_collapsed else "chevron_left"
+        glyph, fallback = TH.glyph(key)
+        font = TH.icon_font(TH.ICON["micro"]) if glyph else None
+        if font is not None:
+            self._sidebar_toggle.setFont(font)
+        self._sidebar_toggle.setText(glyph or fallback)
+        tooltip_key = ("sidebar.expand_tooltip" if self._sidebar_collapsed
+                       else "sidebar.collapse_tooltip")
+        label = i18n.tr(tooltip_key, self._language)
+        self._sidebar_toggle.setToolTip(label)
+        self._sidebar_toggle.setAccessibleName(label)
+
+    def _on_sidebar_toggle_clicked(self):
+        self._sidebar_collapsed = not self._sidebar_collapsed
+        prefs.set_sidebar_collapsed(self._sidebar_collapsed)
+        self._apply_sidebar_collapsed(self._sidebar_collapsed)
+
+    def _apply_sidebar_collapsed(self, collapsed: bool):
+        """Expanded <-> compact: icons and text, or icons alone. An
+        instant snap rather than an animated width tween — the crossfade
+        machinery elsewhere in this file exists for colour transitions,
+        and a resizing QFrame drags every layout inside it through
+        several intermediate geometries a width animation would only
+        multiply."""
+        self._sidebar.setFixedWidth(
+            self.SIDEBAR_WIDTH_COMPACT if collapsed
+            else self.SIDEBAR_WIDTH_EXPANDED)
+        self._section.setVisible(not collapsed)
+        self._sync_search_text()
+        self._sync_sidebar_toggle()
+        for btn in (*self._nav_buttons, self._settings_btn):
+            btn.set_compact(collapsed)
 
     def _crossfade(self, apply_change):
         """Run `apply_change` under a 160ms cross-fade: a snapshot of the

@@ -148,6 +148,20 @@ def set_drawer_pinned(pinned: bool):
 
 
 # ============================================================
+#  SIDEBAR
+# ============================================================
+def sidebar_collapsed(default: bool = False) -> bool:
+    value = _settings().value("ui/sidebar_collapsed", default)
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("true", "1", "yes")
+
+
+def set_sidebar_collapsed(collapsed: bool):
+    _settings().setValue("ui/sidebar_collapsed", bool(collapsed))
+
+
+# ============================================================
 #  PER-TASK HISTORY  (last run + typical duration)
 # ============================================================
 def task_history() -> dict[str, dict]:

@@ -846,6 +846,11 @@ GLYPHS: dict[str, tuple[str, str]] = {
     # same rule: 'code', 'puzzle', 'shield' and 'tools' had no call site,
     # and 'shield' was in any case the same U+E72E as 'lock'.)
     'chevron':       ("\uE76C", "\u203a"),        # ChevronRight
+    'chevron_left':  ("\uE76B", "\u2039"),        # ChevronLeft — the sidebar
+                                                  # collapse/expand toggle
+                                                  # (v16); shown pointing the
+                                                  # direction the rail will
+                                                  # MOVE, not a fixed icon.
     # v15 — the theme toggle moved out of the title bar (which drew its
     # glyphs from the CAPTION font, a different family with different
     # metrics) into the sidebar's status rail, which draws from this table
@@ -2151,6 +2156,28 @@ def sidebar_search_qss(t: dict) -> str:
             padding: 0 {SIDEBAR_GUTTER - 1}px;
             color: {t['text_muted']};
         }}
+    """
+
+
+def sidebar_toggle_qss(t: dict) -> str:
+    """The sidebar's own expand/collapse affordance (v16) — a small ghost
+    icon button in the same quiet register as the search doorway beneath
+    it. Not NavButton's QSS: this control has no accent, no plaque and
+    nothing to select, just a glyph that changes with the state it is
+    about to switch to."""
+    return f"""
+        QPushButton {{
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: {RADIUS['control']}px;
+            color: {t['text_muted']};
+        }}
+        QPushButton:hover {{
+            background: {t['card_hover']};
+            border: 1px solid {alpha(t['accent'], 0.24)};
+            color: {t['text']};
+        }}
+        QPushButton:pressed {{ background: {alpha(t['accent'], 0.18)}; }}
     """
 
 

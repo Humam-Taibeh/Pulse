@@ -69,6 +69,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Settings",
         "ar": "الإعدادات",
     },
+    "sidebar.collapse_tooltip": {
+        "en": "Collapse sidebar",
+        "ar": "طي الشريط الجانبي",
+    },
+    "sidebar.expand_tooltip": {
+        "en": "Expand sidebar",
+        "ar": "توسيع الشريط الجانبي",
+    },
 
     # -- settings: page chrome ----------------------------------------
     "settings.title": {

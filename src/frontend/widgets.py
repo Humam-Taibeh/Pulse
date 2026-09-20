@@ -1950,6 +1950,9 @@ class NavButton(QPushButton):
         # "&&" or the button renders "Maintenance _Repair". The icon is now
         # PAINTED (a plaque), so only the title is button text.
         super().__init__(title.replace("&", "&&"))
+        #: The processed title text, kept so set_compact can blank and
+        #: restore it without re-deriving the "&" escape.
+        self._title_text = title.replace("&", "&&")
         # PINNED TO LTR AT THE QT LEVEL, ALWAYS — set_rtl (not inherited
         # layoutDirection) is the one source of truth for this button's own
         # mirroring, in both its QSS and its painted plaque. The sidebar
@@ -1989,6 +1992,14 @@ class NavButton(QPushButton):
         #: which is why both nav_button_qss and _paint_plaque take it
         #: explicitly instead of relying on isRightToLeft().
         self._rtl = False
+        #: Set by set_compact (v16, the collapsible sidebar). Compact
+        #: overrides RTL for the plaque's anchor — CENTERED either way,
+        #: since there is no label left to clear space for on either
+        #: side — but the two flags are otherwise independent: a
+        #: collapsed rail still mirrors direction-sensitive chrome
+        #: elsewhere, and RTL still applies the moment the rail expands
+        #: again.
+        self._compact = False
         self.apply_theme(t)
 
     def apply_theme(self, t: dict):
@@ -2038,6 +2049,43 @@ class NavButton(QPushButton):
         self.setStyleSheet(TH.nav_button_qss(self._t, rtl=self._rtl))
         self.update()
 
+    def set_title(self, text: str):
+        """The one place this button's label is EVER supposed to change
+        (a language switch on the Settings entry — the four module
+        buttons never call this, see i18n.py's own note on why). Routes
+        through this rather than setText() directly so set_compact has a
+        single stored value to restore: a caller that used setText() on a
+        collapsed button would silently paint text over a centred plaque
+        the moment the rail expanded again, because nothing would have
+        remembered the collapse should keep suppressing it."""
+        self._title_text = text
+        if not self._compact:
+            super().setText(text)
+        else:
+            self.setToolTip(text)
+
+    def set_compact(self, compact: bool):
+        """Icon-only, centred — the collapsed sidebar's row shape (v16).
+        The label is not elided or hidden by width alone: at the rail's
+        collapsed width there is barely room for the plaque itself, and a
+        sliver of clipped text reads as a rendering bug, not a design.
+        Blanking it and moving the label into the tooltip is the same
+        trade a toolbar with icon-only buttons already makes everywhere
+        else in Windows."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        if compact:
+            self.setToolTip(self._title_text)
+            super().setText("")
+        else:
+            super().setText(self._title_text)
+            self.setToolTip("")
+        # No QSS change: nav_button_qss's text-align/padding position TEXT,
+        # which is empty either way here — the visible move is entirely
+        # _paint_plaque's, driven by self._compact directly.
+        self.update()
+
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             # See GlassCard.mousePressEvent: a re-focus of the widget that
@@ -2082,13 +2130,20 @@ class NavButton(QPushButton):
         """
         selected = bool(self.property("selected"))
         y = (self.height() - self._PLAQUE) / 2.0
-        # RTL anchors the well from the right edge — the mirror image of
-        # the LTR box, not a different inset — so the plaque sits under
-        # the label's now-right-aligned text exactly as it does on the
-        # left in LTR (see nav_button_qss's matching text-align/padding
-        # flip).
-        x = (self.width() - self._PLAQUE_X - self._PLAQUE if self._rtl
-             else self._PLAQUE_X)
+        # COMPACT WINS OVER RTL: with no label to clear space for on
+        # either side, the well centres regardless of direction — the
+        # collapsed rail looks identical in English and Arabic, which is
+        # the point of an icon-only row. Otherwise RTL anchors the well
+        # from the right edge, the mirror image of the LTR box, so the
+        # plaque sits under the label's now-right-aligned text exactly as
+        # it does on the left in LTR (see nav_button_qss's matching
+        # text-align/padding flip).
+        if self._compact:
+            x = (self.width() - self._PLAQUE) / 2.0
+        elif self._rtl:
+            x = self.width() - self._PLAQUE_X - self._PLAQUE
+        else:
+            x = self._PLAQUE_X
         box = QRectF(x, y, self._PLAQUE, self._PLAQUE)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
