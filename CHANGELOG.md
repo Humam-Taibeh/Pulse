@@ -15,6 +15,131 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.16.0] — 2026-09-20
+
+### Added — a collapsible compact sidebar
+
+- **A chevron toggle, pinned above search** (the Notion / VS Code activity-
+  bar placement), switches the rail between the existing 250px expanded
+  layout and an 84px compact one — icons alone, centred. Persisted the
+  same way theme/language already are
+  (`utils.prefs.sidebar_collapsed`/`set_sidebar_collapsed`).
+- **Compact is a third painted state on `NavButton`**, alongside theme and
+  RTL, not a width-driven text clip — at 84px there is barely room for the
+  icon plaque itself, so clipped text would read as a bug rather than a
+  design. `set_compact` blanks the label outright and moves it into the
+  tooltip, the same trade every icon-only Windows toolbar makes, and
+  `_paint_plaque` centres the icon well when compact regardless of
+  direction, since there is no label left to clear space for on either
+  side — compact deliberately overrides RTL's own left/right anchoring.
+
+### Removed — the sidebar footer's synced shortcuts
+
+- **The theme toggle, update badge and version/identity line are gone from
+  the footer entirely**, rather than kept as shortcuts synced to Settings.
+  Revisiting v10.15.0's own "keep chrome shortcuts in sync" decision: a
+  control for something touched once a session, if ever, does not earn a
+  permanent seat in the busiest real estate in the window. What remains in
+  the footer is `StatusRail`'s elevation indicator alone — the one thing
+  that is genuinely session state a technician glances at repeatedly
+  rather than a choice made once, all three now living exclusively in
+  Settings.
+- **`UpdateBadge` (the class) is deleted outright**, not left unused —
+  nothing else instantiated it. Its state vocabulary survives as a bare
+  module-level constant, `UPDATE_STATE_TEXTS`, since `SettingsView` is now
+  its only reader.
+
+### Added — Arabic translation extended past the v10.15.0 foundation
+
+v10.15.0 shipped a foundation scoped to "the surfaces a user reaches
+before choosing what to do" and named everything else as deliberate,
+tracked follow-up. This release closes most of that follow-up — the
+sidebar's four module labels, every category page and task card, status
+badges, meta-footer pills, run-history timestamps, the Settings
+restore-point summary, the Ctrl+K command palette, and the Software
+Catalog dialog's 46 tool entries all translate now, reversing two of
+v10.15.0's own scope boundaries along the way.
+
+- **`frontend.i18n_catalog`, a second table apart from `frontend.i18n`.**
+  The catalog is an order of magnitude larger than the UI-chrome string
+  table and looked up differently — by the card's own English text, not
+  a stable key — because `menu_structure.py`'s `task` field is already
+  the real identifier prefs/history key against, and a second i18n-only
+  key per card would be one more place for the two to drift. A missing
+  entry degrades to the English text, the same "never crash, never block"
+  contract `i18n.tr()` already holds the app to.
+- **The four sidebar module buttons now translate**, reversing v10.15.0's
+  explicit "keep them English until their destination page does too"
+  call — the destination pages translate now, so the button no longer has
+  to lag behind them.
+- **The dashboard, every category page, and every task card** — titles,
+  descriptions, status badges (`APPLIED`/`MIXED`/`DEFAULT`/`ACTION DUE`),
+  meta-footer pills ("2 options", "Live scan", "Guided setup"), filter
+  labels, count chips — all translate live, including a language switch
+  mid-session: `WelcomePage`/`CategoryPage`/`GlassCard` are built once and
+  kept alive for the app's lifetime, so each gained a `retranslate(lang)`
+  that walks its own already-built children, the same shape
+  `NavButton.set_rtl`/`StatusRail.retranslate` already used.
+- **Run-history captions and the restore-point summary — the two strings
+  the request named explicitly** ("3d ago · ~2m", "Newest checkpoint...",
+  "0.2 day(s) ago") — now translate. `format_relative_age`/
+  `format_duration`/`format_history_caption` take a `lang` parameter and
+  route every unit through `i18n.tr()`;
+  `SettingsView._sync_restore_summary` does the same for its four states,
+  while the checkpoint's own date and description — Windows' values, not
+  Pulse's copy — stay exactly as Windows reported them.
+- **The Ctrl+K command palette translates its chrome and every result
+  row** — the search field placeholder, the empty state, the footer
+  hints, group headers (category names) and each row's title/hint all
+  route through `i18n`/`i18n_catalog`. Matching itself stays keyed to the
+  English source text regardless of display language, so one search
+  index serves both languages and a translation edit can never quietly
+  break search; only the rendered row changes.
+- **The Software Catalog dialog — pillar title/blurb, all 10 group
+  names, the tab strip, Select All/Deselect All, the live counter, the
+  runtimes pillar's bulk-install button and footnote, and all 46 tools'
+  "why you need it" line.** A tool's own DisplayName ("Google Chrome",
+  "Docker Desktop") is deliberately never translated, matching how
+  Arabic Windows itself keeps trademarked product names in Latin script;
+  technical terms inside a translated description (file names, API
+  names, version numbers) stay in Latin script for the same reason —
+  translating "MSVCR100.dll" would make the sentence less precise, not
+  more accessible.
+
+### Fixed — two real bugs the translation pass surfaced
+
+- **A tab label could lose its first word under Arabic.**
+  `_plain_tab_label` decided "does this label start with an emoji?" by
+  checking `not head.isascii()` — which is also true of the first WORD
+  of an Arabic sentence. A pillar tab with no emoji prefix in the
+  Software Catalog's combined view ("البرامج الأساسية اليومية") would
+  have its first word silently stripped, worse than staying English.
+  Fixed to test `isalpha()` instead: an emoji is never alphabetic in
+  either script, which is the one test both languages agree on. Caught
+  by `test_the_combined_view_arabic_tab_keeps_its_first_word` before it
+  shipped, not after.
+- **The dashboard's storage tile said "394 GB free free on the system
+  drive."** `utils.helpers.SystemPulseSampler` pre-formatted the free-
+  space figure as an English string below the i18n layer entirely, so it
+  stayed "394 GB free" under Arabic regardless of language — and the
+  tooltip template then appended its *own* "free" after that already-
+  English text. Caught visually in the v10.16.0 Arabic smoke test, not
+  by any of the tests above it. Fixed by having the sampler return the
+  raw `disk_free_gb` float and formatting it at the call site through
+  `i18n.tr()`, the same shape every other dashboard figure already uses.
+
+### Not translated yet, and said so rather than left to be discovered
+
+Toast notifications, the bottom status bar, the live PowerShell console
+log, playbooks, the Health Report, and dialogs reached FROM a card
+rather than shown directly — the Restore Point Browser, Startup
+Manager, Bloatware Purge internals, Update Center, the Office setup
+wizard, and `ToolInstallWizardDialog`'s own per-app install-option
+picker. See `frontend/i18n.py`'s and `frontend/i18n_catalog.py`'s own
+module docstrings for the exact, current boundary.
+
+---
+
 ## [10.15.0] — 2026-09-20
 
 ### Added — Updates, one source of truth in two places
