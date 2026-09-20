@@ -221,21 +221,27 @@ class TestShellLanguageSwitch:
             window._on_language_chosen(before)
             qapp.processEvents()
 
-    def test_the_four_module_buttons_keep_english_labels(self, window, qapp):
-        """Deliberate: each module button is also its destination page's
-        own header, and that page's tagline/filter/cards are still
-        English — see i18n.py's note on why the label does not move
-        while the layout direction still does."""
+    def test_the_four_module_buttons_translate_with_their_pages(
+            self, window, qapp):
+        """v16: the boundary v10.15 drew here (module label stays English
+        because its destination page was still all-English) is closed —
+        the destination pages translate now too (see
+        TestCategoryPageTranslation), so the button does not have to lag
+        behind them anymore."""
         before = window._language
         titles_before = [btn.text() for btn in window._nav_buttons]
         try:
             window._on_language_chosen("ar")
             qapp.processEvents()
             titles_after = [btn.text() for btn in window._nav_buttons]
-            assert titles_after == titles_before
+            assert titles_after == [
+                "إدارة البرامج", "النظام والتعديلات",
+                "الصيانة والأمان", "الأدوات والمرافق"]
+            assert titles_after != titles_before
         finally:
             window._on_language_chosen(before)
             qapp.processEvents()
+            assert [btn.text() for btn in window._nav_buttons] == titles_before
 
     def test_the_choice_is_persisted(self, window, qapp, monkeypatch):
         from utils import prefs

@@ -1365,7 +1365,7 @@ class SystemPulseSampler:
 
     def sample(self) -> dict:
         out = {"cpu": None, "mem": None, "mem_text": "",
-               "disk": None, "disk_text": ""}
+               "disk": None, "disk_free_gb": None}
         if sys.platform != "win32":
             return out
         k32 = ctypes.windll.kernel32
@@ -1424,8 +1424,10 @@ class SystemPulseSampler:
                                        ctypes.byref(total), None):
                 if total.value > 0:
                     out["disk"] = 1.0 - free.value / total.value
-                    out["disk_text"] = (
-                        f"{free.value / (1024 ** 3):.0f} GB free")
+                    # Formatted for display at the call site, in the
+                    # user's chosen language — see main.py's
+                    # dashboard.tile.storage_value/_tooltip.
+                    out["disk_free_gb"] = free.value / (1024 ** 3)
         except (OSError, AttributeError):
             pass
 

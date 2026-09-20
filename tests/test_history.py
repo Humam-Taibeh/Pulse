@@ -189,6 +189,70 @@ class TestFormatting:
 
 
 # ============================================================
+#  FORMATTING — ARABIC (v16)
+# ============================================================
+class TestFormattingArabic:
+    """v16: 'natural Arabic phrasing' for timestamps was an explicit part
+    of the 100%-translation request, called out by name alongside the
+    restore-point summary — see TestSystemProtectionArabic in
+    test_settings_view.py for that half."""
+
+    @pytest.mark.parametrize("seconds,expected", [
+        (5, "الآن"),
+        (89, "الآن"),
+        (60 * 5, "قبل 5 د"),
+        (60 * 90, "قبل 1 س"),
+        (3600 * 30, "قبل 1 يوم"),
+        (86400 * 3, "قبل 3 يوم"),
+        (86400 * 10, "قبل 1 أ"),
+        (86400 * 60, "قبل 2 ش"),
+        (86400 * 400, "قبل 1 سنة"),
+    ])
+    def test_relative_age(self, seconds, expected):
+        now = 1_000_000.0
+        assert format_relative_age(now - seconds, now=now, lang="ar") == expected
+
+    def test_a_future_timestamp_does_not_produce_nonsense(self):
+        now = 1_000_000.0
+        assert format_relative_age(now + 5000, now=now, lang="ar") == "الآن"
+
+    @pytest.mark.parametrize("ms,expected", [
+        (1500, "2 ث"),
+        (90_000, "2 د"),
+        (5_400_000, "1.5 س"),
+    ])
+    def test_duration(self, ms, expected):
+        assert format_duration(ms, lang="ar") == expected
+
+    def test_caption_withholds_duration_after_a_single_run(self):
+        entry = {"last_ts": time.time() - 3600, "runs": 1,
+                 "avg_ms": 90_000, "last_ms": 90_000, "outcome": "ok"}
+        text, tooltip = format_history_caption(entry, lang="ar")
+        assert "~" not in text
+        assert "قبل 1 س" in text
+        assert tooltip
+
+    def test_caption_includes_duration_once_there_are_several_runs(self):
+        entry = {"last_ts": time.time() - 3600, "runs": 4,
+                 "avg_ms": 90_000, "last_ms": 90_000, "outcome": "ok"}
+        text, _ = format_history_caption(entry, lang="ar")
+        assert "~2 د" in text
+
+    def test_a_failed_last_run_is_surfaced_in_the_tooltip(self):
+        entry = {"last_ts": time.time() - 60, "runs": 3,
+                 "avg_ms": 1000, "last_ms": 1000, "outcome": "err"}
+        _, tooltip = format_history_caption(entry, lang="ar")
+        assert "خطأ" in tooltip
+
+    def test_english_is_unaffected_by_the_default_argument(self):
+        """`lang` defaults to "en" — every pre-v16 call site (and every
+        test above this class) must keep reading exactly as before."""
+        now = 1_000_000.0
+        assert format_relative_age(now - 60 * 5, now=now) == "5m ago"
+        assert format_duration(90_000) == "2m"
+
+
+# ============================================================
 #  THE CARD FOOTER
 # ============================================================
 def _card_for(window, task: str):
@@ -217,6 +281,44 @@ class TestCardFooter:
             assert card._history_pill.isVisibleTo(card)
             assert "3d ago" in card._history_pill.fullText()
             assert card._history_pill.toolTip()
+        finally:
+            card.set_history(None)
+
+    def test_a_card_built_in_arabic_shows_an_arabic_caption(self, window, qapp):
+        from frontend.widgets import GlassCard
+
+        t = window.theme.t
+        card = GlassCard({"glyph": "moon", "title": "Global Dark Mode",
+                          "desc": "x", "task": "DarkMode"}, "software", t,
+                          lang="ar")
+        try:
+            card.set_history({"last_ts": time.time() - 86400 * 3, "runs": 4,
+                              "avg_ms": 120_000, "last_ms": 118_000,
+                              "outcome": "ok"})
+            qapp.processEvents()
+            assert "قبل 3 يوم" in card._history_pill.fullText()
+        finally:
+            card.set_history(None)
+
+    def test_a_live_language_switch_retranslates_an_already_shown_caption(
+            self, window, qapp):
+        """The real scenario: window.pages' cards are built once in
+        English and kept alive — set_history was called long before any
+        language switch, so retranslate() must re-render from the cached
+        entry, not just skip a card with nothing new to apply."""
+        card = _card_for(window, "DarkMode")
+        card.set_history({"last_ts": time.time() - 86400 * 3, "runs": 4,
+                          "avg_ms": 120_000, "last_ms": 118_000,
+                          "outcome": "ok"})
+        qapp.processEvents()
+        try:
+            assert "3d ago" in card._history_pill.fullText()
+            card.retranslate("ar")
+            qapp.processEvents()
+            assert "قبل 3 يوم" in card._history_pill.fullText()
+            card.retranslate("en")
+            qapp.processEvents()
+            assert "3d ago" in card._history_pill.fullText()
         finally:
             card.set_history(None)
 

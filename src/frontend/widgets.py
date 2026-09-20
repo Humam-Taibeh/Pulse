@@ -51,6 +51,10 @@ from frontend import theme as TH
 from frontend import menu_structure as MS
 # Also data-only (a string table + is_rtl()), for the same reason.
 from frontend import i18n as I18N
+# The catalog's own Arabic — kept apart from i18n.py on size (see its
+# own module docstring); every GlassCard/ConfirmDialog title+desc routes
+# through this rather than i18n.STRINGS.
+from frontend import i18n_catalog as I18N_CAT
 # Update Center / Startup Manager (v6.3) run their own background scans and
 # per-item actions independently of main.py's single-task console pipeline
 # (both are modal dialogs that fully cover it anyway) - the one deliberate
@@ -2247,7 +2251,8 @@ class NavButton(QPushButton):
 # ============================================================
 #  GLASS CARD — one operation, painted glow, live re-skin
 # ============================================================
-def format_relative_age(timestamp: float, now: float | None = None) -> str:
+def format_relative_age(timestamp: float, now: float | None = None,
+                         lang: str = "en") -> str:
     """A short, honest "how long ago" for a card caption.
 
     Deliberately COARSE and rounded down: "3 days ago" is what someone
@@ -2257,51 +2262,54 @@ def format_relative_age(timestamp: float, now: float | None = None) -> str:
     """
     if not timestamp:
         return ""
+    tr = I18N.tr
     now = time.time() if now is None else now
     seconds = now - timestamp
     if seconds < 0:
         # Clock moved backwards (DST, NTP correction, a restored profile).
         # "Just now" is the only claim still defensible.
-        return "just now"
+        return tr("time.just_now", lang)
     if seconds < 90:
-        return "just now"
+        return tr("time.just_now", lang)
     minutes = seconds / 60
     if minutes < 60:
-        return f"{int(minutes)}m ago"
+        return tr("time.minutes_ago", lang).format(n=int(minutes))
     hours = minutes / 60
     if hours < 24:
-        return f"{int(hours)}h ago"
+        return tr("time.hours_ago", lang).format(n=int(hours))
     days = hours / 24
     if days < 7:
-        return f"{int(days)}d ago"
+        return tr("time.days_ago", lang).format(n=int(days))
     weeks = days / 7
     if weeks < 5:
-        return f"{int(weeks)}w ago"
+        return tr("time.weeks_ago", lang).format(n=int(weeks))
     months = days / 30
     if months < 12:
-        return f"{int(months)}mo ago"
-    return f"{int(days / 365)}y ago"
+        return tr("time.months_ago", lang).format(n=int(months))
+    return tr("time.years_ago", lang).format(n=int(days / 365))
 
 
-def format_duration(milliseconds: float) -> str:
+def format_duration(milliseconds: float, lang: str = "en") -> str:
     """Compact duration for the "typically ~Ns" hint."""
     if milliseconds <= 0:
         return ""
+    tr = I18N.tr
     seconds = milliseconds / 1000.0
     if seconds < 60:
-        return f"{max(1, int(round(seconds)))}s"
+        return tr("time.duration.seconds", lang).format(
+            n=max(1, int(round(seconds))))
     minutes = seconds / 60
     if minutes < 60:
-        return f"{int(round(minutes))}m"
+        return tr("time.duration.minutes", lang).format(n=int(round(minutes)))
     hours = minutes / 60
     if hours < 10:
         # One decimal only where it carries information (1.5h, not 1.0h).
         text = f"{hours:.1f}".rstrip("0").rstrip(".")
-        return f"{text}h"
-    return f"{int(round(hours))}h"
+        return tr("time.duration.hours", lang).format(n=text)
+    return tr("time.duration.hours", lang).format(n=int(round(hours)))
 
 
-def format_history_caption(entry: dict | None) -> tuple[str, str]:
+def format_history_caption(entry: dict | None, lang: str = "en") -> tuple[str, str]:
     """(pill text, tooltip) for a task's run history — ("", "") when there
     is nothing truthful to say.
 
@@ -2311,38 +2319,42 @@ def format_history_caption(entry: dict | None) -> tuple[str, str]:
     """
     if not entry:
         return "", ""
-    age = format_relative_age(entry.get("last_ts", 0.0))
+    age = format_relative_age(entry.get("last_ts", 0.0), lang=lang)
     if not age:
         return "", ""
 
+    tr = I18N.tr
     runs = int(entry.get("runs", 0))
-    duration = format_duration(entry.get("avg_ms", 0.0)) if runs > 1 else ""
+    duration = format_duration(entry.get("avg_ms", 0.0), lang=lang) if runs > 1 else ""
     # Terse by design. "Ran 3 days ago" reads better in isolation but this
     # sits in a card footer beside the APPLIED chip, and every character
     # here is width the responsive grid has to find (see ElidedCaption).
     # The full sentence lives in the tooltip.
     text = age + (f" · ~{duration}" if duration else "")
 
-    detail = [f"Last run {age}"]
+    detail = [tr("time.detail.last_run", lang).format(age=age)]
     last_ms = entry.get("last_ms", 0.0)
     if last_ms:
-        detail.append(f"took {format_duration(last_ms)}")
+        detail.append(tr("time.detail.took", lang).format(
+            duration=format_duration(last_ms, lang=lang)))
     if runs > 1:
-        detail.append(f"{runs} runs recorded, averaging {duration}")
+        detail.append(tr("time.detail.runs_recorded", lang).format(
+            runs=runs, duration=duration))
     if entry.get("outcome") == "err":
-        detail.append("the last run reported an error")
+        detail.append(tr("time.detail.error", lang))
     return text, " · ".join(detail)
 
 
-def _derive_card_meta(item: dict) -> list[str]:
+def _derive_card_meta(item: dict, lang: str = "en") -> list[str]:
     """The count/hint pills a card shows in its v7 meta footer — derived
     from the item's own shape so the footer stays truthful without any
     hand-authored metadata. A hub reports how many options it holds; a
     selector reports its app count; the specialised launchers name their
-    action. Plain one-shot actions return [] (no footer, no chevron)."""
-    # Explicit override — the Welcome dashboard's module launchpad cards
-    # pass their own 'N operations' label so they read as enterable modules
-    # (pill + drill-in chevron) without being a hub/selector themselves.
+    action. Plain one-shot actions return [] (no footer, no chevron).
+
+    "apps"/"devhub"/"meta_label" are checked but not translated: none has
+    a live caller left in menu_structure.py (confirmed by grep), so
+    translating dead branches would test nothing real."""
     if item.get("meta_label"):
         return [item["meta_label"]]
     if item.get("hub"):
@@ -2350,18 +2362,20 @@ def _derive_card_meta(item: dict) -> list[str]:
         if not subs and item.get("groups"):
             subs = [s for g in item["groups"] for s in g.get("items", [])]
         n = len(subs or [])
-        return [f"{n} options" if n != 1 else "1 option"]
+        if n == 1:
+            return [I18N.tr("meta.options_singular", lang)]
+        return [I18N.tr("meta.options_plural", lang).format(n=n)]
     if item.get("apps"):
         n = len(item["apps"])
         return [f"{n} apps"]
     if item.get("devhub"):
         return ["Pick & deploy"]
     if item.get("update_center"):
-        return ["Live scan"]
+        return [I18N.tr("meta.live_scan", lang)]
     if item.get("startup_manager"):
-        return ["Audit & toggle"]
+        return [I18N.tr("meta.audit_toggle", lang)]
     if item.get("wizard"):
-        return ["Guided setup"]
+        return [I18N.tr("meta.guided_setup", lang)]
     return []
 
 
@@ -2887,9 +2901,16 @@ class GlassCard(QFrame):
     CARD_MAX_H = CARD_STEPS[-1]
 
     def __init__(self, item: dict, accent: str, t: dict,
-                 featured: bool = False, locked: bool = False):
+                 featured: bool = False, locked: bool = False,
+                 lang: str = "en"):
         super().__init__()
         self.item = item
+        #: English is the catalog's own ground truth (item["title"]/
+        #: item["desc"], read fresh on every retranslate rather than
+        #: cached, so a caller that mutates self.item after construction
+        #: — nothing does today, but see set_applied's own note on why
+        #: this class stays a pure renderer — still retranslates correctly).
+        self._lang = lang
         # v10: `accent` is a module KEY ("software") for category/dashboard
         # cards, or a literal hex when a dialog passes t["accent"] directly.
         # Both are stored unresolved and turned into a real colour inside
@@ -2906,6 +2927,10 @@ class GlassCard(QFrame):
         # verdict string ("applied" / "mixed" / "default") or None — see
         # set_applied; legacy booleans are normalised there.
         self._applied: str | None = None
+        # the raw history record last pushed by set_history, kept so
+        # retranslate() can re-render its caption/tooltip under a new
+        # language the same way set_applied's verdict is re-rendered.
+        self._history_entry: dict | None = None
         self._tokens = t
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # v10 ACCESSIBILITY: cards were QFrames with mouse handlers only —
@@ -2918,8 +2943,8 @@ class GlassCard(QFrame):
         #: Whether the CURRENT focus arrived by keyboard. Read by
         #: paintEvent, written by focusInEvent — see focus_ring_visible.
         self._focus_ring = False
-        self.setAccessibleName(item.get("title", ""))
-        self.setAccessibleDescription(item.get("desc", ""))
+        self.setAccessibleName(I18N_CAT.tr_title(item.get("title", ""), lang))
+        self.setAccessibleDescription(I18N_CAT.tr_desc(item.get("desc", ""), lang))
         # v8 proportion fix: a min AND a max so cards never balloon. The
         # equal-row-stretch grid (main.CategoryPage._relayout) still fills the
         # canvas, but a capped card can't grow into a tall, empty slab — it
@@ -3013,7 +3038,8 @@ class GlassCard(QFrame):
         # v10 line budget: title 2 lines, description 3. Both are
         # ClampedLabels, so a long string elides with its full text in the
         # tooltip instead of being painted outside the card.
-        self._title = ClampedLabel(item["title"], max_lines=2)
+        self._title = ClampedLabel(I18N_CAT.tr_title(item["title"], lang),
+                                   max_lines=2)
         head.addWidget(self._title, 1)
         # v9.1 density fix: the note badge ('Windows 11 only') used to sit on
         # the TITLE's row, so a card's minimum width became plaque + title +
@@ -3027,7 +3053,7 @@ class GlassCard(QFrame):
             self._badge = QLabel(item["note"])
         # Drill-in chevron — shown only for cards that open a further screen
         # (hubs / selectors), i.e. exactly the cards that have a meta footer.
-        self._meta_texts = _derive_card_meta(item)
+        self._meta_texts = _derive_card_meta(item, lang)
         self._chevron: QLabel | None = None
         if self._meta_texts:
             self._chevron = QLabel(TH.glyph("chevron")[0])
@@ -3047,8 +3073,7 @@ class GlassCard(QFrame):
             if lf is not None:
                 lf.setPixelSize(TH.ICON["micro"])
                 self._lock.setFont(lf)
-            self._lock.setToolTip(
-                "Needs Administrator — clicking will offer to relaunch Pulse elevated.")
+            self._lock.setToolTip(I18N.tr("card.lock_tooltip", lang))
             head.addWidget(self._lock, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addLayout(head)
 
@@ -3056,7 +3081,8 @@ class GlassCard(QFrame):
         # A uniform 3-line budget. Combined with the full card width this
         # lets the tightened catalog copy render complete on every card at
         # every column count, with elision left as a pure safety net.
-        self._desc = ClampedLabel(item["desc"], max_lines=3)
+        self._desc = ClampedLabel(I18N_CAT.tr_desc(item["desc"], lang),
+                                  max_lines=3)
         lay.addWidget(self._desc)
         lay.addStretch()
 
@@ -3135,26 +3161,49 @@ class GlassCard(QFrame):
         self._aur2 = QColor(t["accent2"])
         self._aur3 = QColor(t["accent3"])
 
-    #: Badge text + tooltip per probe verdict. None (unknown) renders
-    #: nothing — a card with no badge means "we're not claiming anything",
-    #: which is honest, whereas a wrong badge would actively mislead.
-    _STATE_BADGES = {
-        "applied": ("APPLIED",
-                    "This setting is currently active on your system."),
-        "mixed": ("MODIFIED",
-                  "This setting is partially applied — some of its values "
-                  "match, some don't. It may have been changed outside "
-                  "Pulse. Click the card to re-apply or revert it."),
-        "default": ("DEFAULT",
-                    "This setting is at its Windows default. Click the "
-                    "card to apply the tweak."),
-        # ROUTINE tasks only (menu_structure's `recurring` key). These have
-        # no durable state to probe, so they report timing instead: overdue
-        # or never run reads ACTION DUE, and the card's own "Ran 3d ago"
-        # caption carries the detail.
-        "due": ("ACTION DUE",
-                "This routine hasn't been run recently. Running it "
-                "periodically keeps the system healthy."),
+    def retranslate(self, lang: str):
+        """Re-reads self.item's own English title/desc through the
+        catalog lookup under the new language — WelcomePage and
+        CategoryPage both keep their GlassCards alive for the app's
+        lifetime rather than rebuilding the grid, so a live language
+        switch needs every already-built card told explicitly, the same
+        shape NavButton.set_rtl/StatusRail.retranslate already use for
+        the sidebar."""
+        self._lang = lang
+        self._title.setFullText(I18N_CAT.tr_title(self.item["title"], lang))
+        self._desc.setFullText(I18N_CAT.tr_desc(self.item["desc"], lang))
+        if self._lock is not None:
+            self._lock.setToolTip(I18N.tr("card.lock_tooltip", lang))
+        self._meta_texts = _derive_card_meta(self.item, lang)
+        for pill, text in zip(self._meta_pills, self._meta_texts):
+            pill.setText(text)
+        # The applied badge's OWN text is language-driven too, but only
+        # set_applied knows the current verdict — re-run it rather than
+        # duplicating that lookup here.
+        if self._applied is not None:
+            self.set_applied(self._applied)
+        # Same shape for the run-history caption: only set_history knows
+        # the raw entry, so re-run it against the cached one.
+        if self._history_entry is not None:
+            self.set_history(self._history_entry)
+
+    #: Badge text + tooltip per probe verdict, as (i18n label key, i18n
+    #: tooltip key) rather than literal text — the English/Arabic pairs
+    #: live once, in i18n.py's STRINGS ("card status badges": badge.applied,
+    #: badge.applied_tooltip, etc.), so this table only ever names which
+    #: two keys a verdict reads. None (unknown) renders nothing — a card
+    #: with no badge means "we're not claiming anything", which is
+    #: honest, whereas a wrong badge would actively mislead.
+    #:
+    #: ROUTINE tasks only get "due" (menu_structure's `recurring` key).
+    #: These have no durable state to probe, so they report timing
+    #: instead: overdue or never run reads ACTION DUE, and the card's own
+    #: "Ran 3d ago" caption carries the detail.
+    _BADGE_KEYS = {
+        "applied": ("badge.applied", "badge.applied_tooltip"),
+        "mixed": ("badge.mixed", "badge.mixed_tooltip"),
+        "default": ("badge.default", "badge.default_tooltip"),
+        "due": ("badge.due", "badge.due_tooltip"),
     }
 
     def set_applied(self, verdict: str | bool | None):
@@ -3171,11 +3220,12 @@ class GlassCard(QFrame):
         elif verdict is False:
             verdict = None
         self._applied = verdict
-        badge = self._STATE_BADGES.get(verdict)
-        self._applied_chip.setVisible(badge is not None)
-        if badge is not None:
-            self._applied_chip.setText(badge[0])
-            self._applied_chip.setToolTip(badge[1])
+        keys = self._BADGE_KEYS.get(verdict)
+        self._applied_chip.setVisible(keys is not None)
+        if keys is not None:
+            label_key, tooltip_key = keys
+            self._applied_chip.setText(I18N.tr(label_key, self._lang))
+            self._applied_chip.setToolTip(I18N.tr(tooltip_key, self._lang))
             self._applied_chip.setStyleSheet(
                 TH.state_chip_qss(self._tokens, verdict))
         else:
@@ -3195,7 +3245,8 @@ class GlassCard(QFrame):
         — a card the user ran outside Pulse, or before this feature
         existed, genuinely has no history for us to report.
         """
-        text, tooltip = format_history_caption(entry)
+        self._history_entry = entry
+        text, tooltip = format_history_caption(entry, lang=self._lang)
         self._history_pill.setFullText(text)
         self._history_pill.setToolTip(tooltip)
         self._history_pill.setVisible(bool(text))
@@ -4016,6 +4067,12 @@ class HealthTile(DepthCard):
         lay.addSpacing(TH.SPACE["sm"])
 
         self.apply_theme(t)
+
+    def set_caption(self, caption: str):
+        """Retranslate the tile's own label — WelcomePage keeps its four
+        tiles alive for the app's lifetime, so a live language switch
+        needs this told explicitly rather than rebuilding the row."""
+        self._caption.setText(caption.upper())
 
     def set_value(self, text: str, fraction: float | None = None):
         """Report the tile. `fraction` is the ratio the meter draws, or
@@ -8216,9 +8273,16 @@ def _plain_tab_label(text: str) -> str:
     the titles are ours, the convention is one leading glyph, and a
     codepoint-range test would still be wrong for the next flag or ZWJ
     sequence someone uses.
+
+    TESTS "NOT A LETTER", NOT "NOT ASCII". An Arabic-translated title
+    with no emoji prefix ("البرامج الأساسية اليومية", i18n_catalog.py)
+    is non-ASCII too, and an isascii() check would misread its first
+    WORD as a glyph and strip it — v16's own regression, caught before
+    it shipped. An emoji is never alphabetic in either script, so
+    isalpha() is the one test both languages agree on.
     """
     head, _, rest = text.partition(" ")
-    return rest.strip() if rest and not head.isascii() else text
+    return rest.strip() if rest and not head.isalpha() else text
 
 
 class SoftwareCatalogDialog(PulseDialog):
@@ -8318,9 +8382,10 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
     ALL_KEY = ""
 
     def __init__(self, parent: QWidget, item: dict, t: dict,
-                 sections: list[dict]):
+                 sections: list[dict], lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self.selected_ids: list[str] = []
         self._rows: dict[str, DevHubRow] = {}
         self._row_tab: dict[str, str] = {}                 # id -> its tab key
@@ -8343,18 +8408,18 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         total = sum(len(tools) for s in sections
                     for _g, tools in s["groups"])
 
-        head = QLabel(f"{item['icon']}  {item['title']}")
+        head = QLabel(f"{item['icon']}  "
+                      f"{I18N_CAT.tr_title(item['title'], lang)}")
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
         # The pillar speaks for itself when there is one; the combined view
         # has to explain that it is a combined view.
         self._blurb = QLabel(
-            f"{section['blurb']} Nothing is pre-selected — tick what you "
-            f"want, then deploy all {total} in one pass."
+            I18N.tr("catalog.blurb.scoped", lang).format(
+                blurb=I18N_CAT.tr_desc(section["blurb"], lang), total=total)
             if self._scoped else
-            f"All {total} apps in one place. Nothing is pre-selected — tick "
-            "what you want, filter by sub-category, then deploy in one pass.")
+            I18N.tr("catalog.blurb.combined", lang).format(total=total))
         self._blurb.setWordWrap(True)
         self._blurb.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._blurb)
@@ -8388,9 +8453,11 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
                         for sec in sections]
         if tab_defs:
             tab_strip, tab_lay = _chip_strip(t, _CHIP_H)
-            for key, label, count in ([(self.ALL_KEY, "All", total)] + tab_defs):
+            all_label = I18N.tr("catalog.tab.all", lang)
+            for key, label, count in ([(self.ALL_KEY, all_label, total)] + tab_defs):
+                shown = label if key == self.ALL_KEY else I18N_CAT.tr_title(label, lang)
                 btn = QPushButton(
-                    f"{_plain_tab_label(label)} ({count})".replace("&", "&&"))
+                    f"{_plain_tab_label(shown)} ({count})".replace("&", "&&"))
                 btn.setFixedHeight(_CHIP_H)
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn.clicked.connect(lambda _c=False, k=key: self._set_tab(k))
@@ -8402,13 +8469,13 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         # -- select-all / select-none + live counter -------------
         toolbar = QHBoxLayout()
         toolbar.setSpacing(TH.SPACE["lg"])
-        self._all_btn = QPushButton("Select All")
+        self._all_btn = QPushButton(I18N.tr("catalog.select_all", lang))
         self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._all_btn.setStyleSheet(TH.link_button_qss(t, accent))
         self._all_btn.clicked.connect(lambda: self._set_visible_checked(True))
         toolbar.addWidget(self._all_btn)
 
-        self._none_btn = QPushButton("Deselect All")
+        self._none_btn = QPushButton(I18N.tr("catalog.deselect_all", lang))
         self._none_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._none_btn.setStyleSheet(TH.link_button_qss(t, accent))
         self._none_btn.clicked.connect(lambda: self._set_visible_checked(False))
@@ -8424,16 +8491,18 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         # queue the diagnostics tools nobody asked for.
         self._bulk = (section or {}).get("bulk") if self._scoped else None
         if self._bulk:
-            self._bulk_btn = QPushButton(self._bulk["label"])
+            self._bulk_btn = QPushButton(
+                I18N_CAT.tr_title(self._bulk["label"], lang))
             self._bulk_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._bulk_btn.setStyleSheet(TH.link_button_qss(t, accent))
-            self._bulk_btn.setToolTip(self._bulk["hint"])
+            self._bulk_btn.setToolTip(I18N_CAT.tr_desc(self._bulk["hint"], lang))
             self._bulk_btn.clicked.connect(self._select_bulk_group)
             toolbar.addWidget(self._bulk_btn)
 
         toolbar.addStretch()
 
-        self._count_label = QLabel("0 selected")
+        self._count_label = QLabel(
+            I18N.tr("catalog.count.selected", lang).format(count=0))
         self._count_label.setStyleSheet(TH.label_qss(t, "caption"))
         toolbar.addWidget(self._count_label)
         lay.addLayout(toolbar)
@@ -8467,12 +8536,15 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
                 # the only state this dialog has, and a header that had to
                 # be CREATED on the first chip press would be a second
                 # layout pass in the middle of an interaction.
-                header = QLabel(group_title or f"{sec['icon']}  {sec['title']}")
+                header = QLabel(
+                    I18N_CAT.tr_title(group_title, lang) if group_title else
+                    f"{sec['icon']}  {I18N_CAT.tr_title(sec['title'], lang)}")
                 header.setStyleSheet(TH.label_qss(t, "section"))
                 host_lay.addWidget(header)
                 self._headers.append((header, tab_key, ids))
                 for app_id, name, desc, _url, req_id, req_name in tools:
-                    row = DevHubRow(app_id, name, desc, req_id, req_name, t)
+                    row = DevHubRow(app_id, name, desc, req_id, req_name, t,
+                                    lang=lang)
                     row.checkbox.toggled.connect(
                         lambda checked, aid=app_id: self._on_row_toggled(aid, checked))
                     self._rows[app_id] = row
@@ -8484,7 +8556,7 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         # Empty state — a filter that matches nothing must say so, for the
         # same reason CategoryPage carries one: a blank list is
         # indistinguishable from a broken dialog.
-        self._empty = QLabel("No apps in this category.")
+        self._empty = QLabel(I18N.tr("catalog.empty", lang))
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet(TH.empty_state_qss(t))
         self._empty.hide()
@@ -8499,7 +8571,8 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         # driver already provides them. Below the list rather than in the
         # blurb: it answers "why is X not here?", which is a question you
         # only have after reading the list.
-        footnote = (section or {}).get("footnote") if self._scoped else ""
+        footnote = ((section or {}).get("footnote") if self._scoped else "")
+        footnote = I18N_CAT.tr_desc(footnote, lang) if footnote else ""
         if footnote:
             note = QLabel(footnote)
             note.setWordWrap(True)
@@ -8509,13 +8582,13 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         lay.addSpacing(TH.SPACE["xs"])
         footer = QHBoxLayout()
         footer.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", lang))
         size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
 
-        self._deploy_btn = QPushButton("Deploy Selected")
+        self._deploy_btn = QPushButton(I18N.tr("catalog.deploy", lang))
         size_dialog_button(self._deploy_btn)
         self._deploy_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         self._deploy_btn.clicked.connect(self._accept_selection)
@@ -8642,10 +8715,12 @@ ONE NARROWING CONTROL, and it is the tab strip. There was a second — a
         count = self.checked_count()
         narrowed = bool(self._active_tab)
         self._count_label.setText(
-            f"{count} selected across all categories" if count and narrowed
-            else f"{count} selected")
+            I18N.tr("catalog.count.selected_narrowed", self._lang).format(count=count)
+            if count and narrowed else
+            I18N.tr("catalog.count.selected", self._lang).format(count=count))
         self._deploy_btn.setText(
-            f"Deploy Selected ({count})" if count else "Deploy Selected")
+            I18N.tr("catalog.deploy_count", self._lang).format(count=count)
+            if count else I18N.tr("catalog.deploy", self._lang))
         self._deploy_btn.setEnabled(count > 0)
 
     def checked_count(self) -> int:
@@ -8709,19 +8784,22 @@ def normalise_query(text: str) -> str:
 
 #: Query term -> the English words it should ALSO search for.
 #:
-#: This is the multi-language half, and it is a translation table rather
-#: than a translated UI on purpose. Pulse's interface is English: the cards
-#: say "Aggressive Cache Clean", and translating those strings is a
-#: different, much larger project with its own review burden. What an
-#: Arabic-speaking user needs first is not a translated card — it is to be
-#: able to FIND it. So the query is translated, once, into the words the
-#: interface already uses, and the result list stays in the language the
-#: rest of the app is written in.
+#: MATCHING stays keyed to the English source text regardless of display
+#: language — _match_entry reads item["title"]/["desc"] directly, never
+#: the translated form, so one index serves both languages and a
+#: translation edit in i18n_catalog.py can never silently break search.
+#: This table is what lets an Arabic query still reach that English-keyed
+#: index: a user types the VERB they want ("احذف", "remove", "speed up")
+#: far more often than the noun a card happens to be titled with, so the
+#: query is translated, once, into the words the index already uses.
+#: DISPLAY is the separate concern CommandPalette's own `lang` now
+#: covers — a matched row renders through i18n_catalog same as any card,
+#: so the result you see is translated even though the match underneath
+#: it was found in English.
 #:
-#: The English entries are here for the same reason: a user types the VERB
-#: they want ("uninstall", "speed up") far more often than the noun a card
-#: happens to be titled with, and "remove" finding "Purge OneDrive" is the
-#: same lookup as "احذف" finding it.
+#: The English entries exist for the same reason in the other direction:
+#: "remove" finding "Purge OneDrive" is the same lookup as "احذف" finding
+#: it.
 #:
 #: Keys are stored already normalised (see normalise_query).
 SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
@@ -9153,9 +9231,11 @@ class CommandPalette(PulseDialog):
     #: click on it cannot launch anything.
     _HEADER = "__section__"
 
-    def __init__(self, parent: QWidget, t: dict, entries: list[tuple[dict, str]]):
+    def __init__(self, parent: QWidget, t: dict, entries: list[tuple[dict, str]],
+                 lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self.chosen_item: dict | None = None
         self._entries = entries  # (item dict, category title) pairs
         self._rows: dict[int, _PaletteRow] = {}   # list row -> widget
@@ -9185,7 +9265,7 @@ class CommandPalette(PulseDialog):
         field_lay.addWidget(mark)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search apps, tweaks and tools…")
+        self._search.setPlaceholderText(I18N.tr("palette.placeholder", lang))
         self._search.setFrame(False)
         self._search.textChanged.connect(self._refilter)
         self._search.installEventFilter(self)
@@ -9211,7 +9291,7 @@ class CommandPalette(PulseDialog):
         # SoftwareCatalogDialog._empty); this one is now consistent with
         # them, and the list is HIDDEN rather than left blank so the panel
         # shrinks to the message instead of framing a void.
-        self._empty = QLabel("No apps, tweaks or tools match that search.")
+        self._empty = QLabel(I18N.tr("palette.empty", lang))
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet(TH.empty_state_qss(t))
         self._empty.hide()
@@ -9231,11 +9311,13 @@ class CommandPalette(PulseDialog):
         row.setContentsMargins(TH.SPACE["xs"], TH.SPACE["sm"],
                                TH.SPACE["xs"], 0)
         row.setSpacing(TH.SPACE["xs"])
-        for keys, what in (("↑↓", "navigate"), ("↵", "run"), ("esc", "close")):
+        for keys, what_key in (("↑↓", "palette.hint.navigate"),
+                               ("↵", "palette.hint.run"),
+                               ("esc", "palette.hint.close")):
             cap = QLabel(keys)
             cap.setStyleSheet(TH.palette_keycap_qss(t))
             row.addWidget(cap)
-            label = QLabel(what)
+            label = QLabel(I18N.tr(what_key, self._lang))
             row.addWidget(label)
             row.addSpacing(TH.SPACE["sm"])
         row.addStretch()
@@ -9268,7 +9350,8 @@ class CommandPalette(PulseDialog):
         self._list.setVisible(bool(shown))
         self._count.setText(
             "" if not shown else
-            f"{len(shown)} result{'' if len(shown) == 1 else 's'}")
+            I18N.tr("palette.result_singular", self._lang) if len(shown) == 1 else
+            I18N.tr("palette.result_plural", self._lang).format(n=len(shown)))
 
         # GROUPS ORDERED BY THEIR BEST MEMBER, so the top hit stays the top
         # row. Python's dicts keep insertion order and `shown` is already
@@ -9338,7 +9421,7 @@ class CommandPalette(PulseDialog):
         # one are exactly the same height and the rows below them line up.
         column.addSpacing(TH.PALETTE_SECTION_PAD_TOP - 1)
 
-        label = QLabel(title.upper())
+        label = QLabel(I18N_CAT.tr_title(title, self._lang).upper())
         label.setStyleSheet(TH.palette_section_qss(self._t))
         label.setFixedHeight(TH.PALETTE_SECTION_TEXT_H)
         label.setAlignment(Qt.AlignmentFlag.AlignLeft
@@ -9367,9 +9450,12 @@ class CommandPalette(PulseDialog):
         #     the module, deliberately (see _refilter).
         # The content match wins: it answers a question the user is
         # actively asking, where the hub is background.
-        hint = f"installs {matched}" if matched else hub
+        hint = (I18N.tr("palette.hint.installs", self._lang).format(
+                    matched=I18N_CAT.tr_title(matched, self._lang))
+                if matched else I18N_CAT.tr_title(hub, self._lang))
         row = _PaletteRow(item.get("glyph", ""), item.get("icon", ""),
-                          item.get("title", ""), hint, self._t)
+                          I18N_CAT.tr_title(item.get("title", ""), self._lang),
+                          hint, self._t)
         cell = QListWidgetItem()
         cell.setData(Qt.ItemDataRole.UserRole, item)
         cell.setSizeHint(QSize(0, TH.PALETTE_ROW_H))
@@ -10304,11 +10390,12 @@ class DevHubRow(QFrame):
 
     def __init__(self, app_id: str, app_name: str, desc: str,
                  requires_id: str | None, requires_name: str | None, t: dict,
-                 checked: bool = False):
+                 checked: bool = False, lang: str = "en"):
         super().__init__()
         self.app_id = app_id
         self.requires_id = requires_id
         self._app_name = app_name
+        desc = I18N_CAT.tr_desc(desc, lang) if desc else desc
 
         outer = QVBoxLayout(self)
         row_padding(outer)
@@ -10339,9 +10426,9 @@ class DevHubRow(QFrame):
         self.website_btn.setFixedSize(_ROW_LINK_W, _ROW_LINK_H)
         self.website_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.website_btn.setToolTip(
-            f"Open {app_name}'s official download page in your browser")
+            I18N.tr("catalog.row.website_tooltip", lang).format(name=app_name))
         self.website_btn.setAccessibleName(
-            f"Open the official {app_name} download page")
+            I18N.tr("catalog.row.website_accessible", lang).format(name=app_name))
         self.website_btn.clicked.connect(
             lambda: open_official_page(self.app_id, self._app_name))
         row.addWidget(self.website_btn)
@@ -10349,7 +10436,8 @@ class DevHubRow(QFrame):
 
         self._hint_label: QLabel | None = None
         if requires_name:
-            hint = QLabel(f"↳ needs {requires_name}")
+            hint = QLabel(
+                I18N.tr("catalog.row.requires", lang).format(name=requires_name))
             outer.addWidget(hint)
             self._hint_label = hint
 
@@ -12061,7 +12149,6 @@ class SettingsView(QWidget):
 
         self.apply_theme(t)
         self._sync_theme_buttons()
-        self._sync_restore_summary()
         self._retranslate()
         self.setLayoutDirection(
             Qt.LayoutDirection.RightToLeft if I18N.is_rtl(self._lang)
@@ -12286,9 +12373,7 @@ class SettingsView(QWidget):
         self._restore_note.setText(
             tr("settings.restore.note_admin", lang) if self._is_admin
             else tr("settings.restore.note_needs_admin", lang))
-        # restore_summary_label is data-driven (Windows' own checkpoint
-        # dates/descriptions/counts) and stays English in this pass — see
-        # _sync_restore_summary.
+        self._sync_restore_summary()
 
         self._configuration_caption.setText(
             tr("settings.configuration.caption", lang))
@@ -12322,32 +12407,36 @@ class SettingsView(QWidget):
         switched off cannot take one at all, which the button above does
         not fix.
         """
+        tr, lang = I18N.tr, self._lang
         report = self._report
         if report is None:
             self._restore_summary_label.setText(
-                "Checking this PC's restore points…")
+                tr("settings.restore.summary.checking", lang))
             return
         if not report.get("available"):
             self._restore_summary_label.setText(
-                "System Restore appears to be turned off for this PC, so no "
-                "checkpoints can be taken. Turn on protection for the system "
-                "drive in Windows to enable it.")
+                tr("settings.restore.summary.unavailable", lang))
             return
         points = [p for p in (report.get("points") or []) if isinstance(p, dict)]
         if not points:
             self._restore_summary_label.setText(
-                "No restore points on this PC yet. Pulse takes one before "
-                "the first system change of a session.")
+                tr("settings.restore.summary.empty", lang))
             return
         newest = points[0]
         created = str(newest.get("created") or "date unknown")
         description = str(newest.get("description") or "checkpoint")
         total = int(report.get("count") or len(points))
         age = newest.get("ageDays")
-        age_text = f", {float(age):.1f} day(s) ago" if age not in (None, "") else ""
+        age_text = (tr("settings.restore.summary.age_suffix", lang)
+                    .format(days=float(age))
+                    if age not in (None, "") else "")
+        count_text = (
+            tr("settings.restore.summary.count_singular", lang) if total == 1
+            else tr("settings.restore.summary.count_plural", lang).format(n=total))
         self._restore_summary_label.setText(
-            f"Newest checkpoint: {created} — “{description}”{age_text}. "
-            f"{total} checkpoint(s) on this PC.")
+            tr("settings.restore.summary.newest", lang).format(
+                created=created, description=description,
+                age=age_text, count=count_text))
 
     # -- theming ---------------------------------------------------------
     def flush_pending_theme(self):

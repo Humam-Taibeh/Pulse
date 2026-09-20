@@ -61,6 +61,7 @@ from utils.helpers import (  # noqa: E402
 )
 from frontend import theme as TH  # noqa: E402
 from frontend import i18n  # noqa: E402
+from frontend import i18n_catalog  # noqa: E402
 from frontend.animations import (  # noqa: E402
     CASCADE_BUDGET_MS, CASCADE_MS, EASE_INOUT, PAGE_FADE_MS, CascadeAnimator,
     PageFader,
@@ -431,11 +432,14 @@ class WelcomePage(QWidget):
     #: app's minimum width. The first three are the machine's live
     #: pressure; the fourth is the only thing on this page that is about
     #: PULSE rather than about Windows, which is why it closes the row.
+    #: (key, i18n caption key) — a key, not literal text, since
+    #: retranslate() needs to re-look-up each tile's caption by the same
+    #: name construction already keys _tiles by.
     HEALTH_TILES = [
-        ("cpu",     "CPU load"),
-        ("memory",  "Memory"),
-        ("storage", "System drive"),
-        ("due",     "Actions due"),
+        ("cpu",     "dashboard.tile.cpu"),
+        ("memory",  "dashboard.tile.memory"),
+        ("storage", "dashboard.tile.storage"),
+        ("due",     "dashboard.tile.due"),
     ]
 
     #: A health tile's height. Enough for a 26px figure over a 10px label
@@ -449,10 +453,12 @@ class WelcomePage(QWidget):
     # card gets (v9.4); object (not GlassCard) keeps this module import-light.
     action_requested = Signal(dict, object)
 
-    def __init__(self, t: dict, engine_ok: bool, is_admin: bool):
+    def __init__(self, t: dict, engine_ok: bool, is_admin: bool,
+                 lang: str = "en"):
         super().__init__()
         self._action_cards: list[GlassCard] = []
         self._cols = 0
+        self._lang = lang
 
         # THE SAME ROOT PADDING A CategoryPage USES, and that is the whole
         # point of the number rather than a coincidence: both pages are
@@ -514,7 +520,7 @@ class WelcomePage(QWidget):
         # with it: a minimum width of zero, so the tagline stops being a
         # floor the masthead has to honour at all.
         self._tag = ElidedCaption(max_width=self._TAGLINE_W)
-        self._tag.setFullText("Windows Orchestration Toolkit")
+        self._tag.setFullText(i18n.tr("dashboard.tagline", lang))
         id_col.addWidget(self._tag)
         id_col.addStretch()
         hb.addLayout(id_col)
@@ -588,14 +594,15 @@ class WelcomePage(QWidget):
         # than as margin — the eye looks for what used to be there. With
         # a real band back in the slot, the stretch is no longer holding
         # the page together; it only tunes the air BETWEEN the two bands.
-        host.addLayout(self._band_head("SYSTEM HEALTH", health=True))
+        host.addLayout(self._band_head(
+            i18n.tr("dashboard.system_health", lang), health=True))
 
         self._tile_row = tiles = QHBoxLayout()
         tiles.setContentsMargins(0, TH.SPACE["lg"], 0, 0)
         tiles.setSpacing(TH.SPACE["lg"])
         self._tiles: dict[str, HealthTile] = {}
-        for key, caption in self.HEALTH_TILES:
-            tile = HealthTile(caption, t)
+        for key, caption_key in self.HEALTH_TILES:
+            tile = HealthTile(i18n.tr(caption_key, lang), t)
             tile.setFixedHeight(self.TILE_H)
             self._tiles[key] = tile
             tiles.addWidget(tile, 1)
@@ -613,7 +620,8 @@ class WelcomePage(QWidget):
         # the band above it — the opposite failure, reached in one line.
         host.addWidget(top_air, 1)
 
-        host.addLayout(self._band_head("QUICK ACTIONS", health=False))
+        host.addLayout(self._band_head(
+            i18n.tr("dashboard.quick_actions", lang), health=False))
 
         self._grid = QGridLayout()
         # THE SAME GUTTER EVERY CARD GRID IN THE APP USES. It was `xl`,
@@ -646,7 +654,7 @@ class WelcomePage(QWidget):
             for meta_key in ("update_center", "note", "apps", "devhub"):
                 card_item.pop(meta_key, None)
             locked = requires_admin(task) and not is_admin
-            card = GlassCard(card_item, accent, t, locked=locked)
+            card = GlassCard(card_item, accent, t, locked=locked, lang=lang)
             # v10: Quick Actions share the STANDARD card envelope. They used
             # to be capped tighter (104/132) to read as compact buttons, but
             # that cap sits below the 119px the v10 card anatomy needs once a
@@ -791,13 +799,17 @@ class WelcomePage(QWidget):
         # is the reason the tile carries a tooltip rather than a second
         # line: 47% of 8 GB and 47% of 64 GB are different situations.
         self._tiles["memory"].setToolTip(
-            f"{sample['mem_text']} in use" if sample["mem_text"] else "")
+            i18n.tr("dashboard.tile.memory_tooltip", self._lang)
+                .format(mem_text=sample["mem_text"]) if sample["mem_text"] else "")
 
         disk = sample["disk"]
-        self._tiles["storage"].set_value(sample["disk_text"] or "—", disk)
+        disk_gb = sample["disk_free_gb"]
+        self._tiles["storage"].set_value(
+            i18n.tr("dashboard.tile.storage_value", self._lang).format(gb=disk_gb)
+            if disk_gb is not None else "—", disk)
         self._tiles["storage"].setToolTip(
-            f"{sample['disk_text']} free on the system drive"
-            if sample["disk_text"] else "")
+            i18n.tr("dashboard.tile.storage_tooltip", self._lang).format(gb=disk_gb)
+            if disk_gb is not None else "")
 
     def set_pending_actions(self, due: int, total: int):
         """Report how many operations across the WHOLE app are overdue.
@@ -819,8 +831,9 @@ class WelcomePage(QWidget):
         tile.set_value(str(due), (due / total) if total else None)
         tile.set_tone("ok" if due == 0 else "warn")
         tile.setToolTip(
-            "Nothing is overdue." if due == 0 else
-            f"{due} of {total} operations are due to be run again.")
+            i18n.tr("dashboard.tile.due_none", self._lang) if due == 0 else
+            i18n.tr("dashboard.tile.due_some", self._lang)
+                .format(due=due, total=total))
 
     def action_cards(self) -> list[GlassCard]:
         """The dashboard's Quick Action cards — the applied-state probe
@@ -924,9 +937,32 @@ class WelcomePage(QWidget):
         can DO; the engine is a precondition the user cannot influence
         from here. Only the failing half is ever spelled out at length —
         a healthy session says so in three words and stops."""
-        parts = ["Administrator" if self._is_admin else "Not elevated"]
-        parts.append("Engine ready" if self._engine_ok else "Engine missing")
+        parts = [i18n.tr("dashboard.session.admin" if self._is_admin
+                         else "dashboard.session.not_admin", self._lang)]
+        parts.append(i18n.tr("dashboard.session.engine_ok" if self._engine_ok
+                             else "dashboard.session.engine_missing", self._lang))
         return "  ·  ".join(parts)
+
+    def retranslate(self, lang: str):
+        """This page is built once and kept alive for the app's lifetime
+        (PulseApp._build_ui constructs it a single time), so a live
+        language switch has to walk everything it already built rather
+        than relying on fresh construction — the same requirement
+        GlassCard.retranslate exists for, extended to this page's own
+        chrome around the cards."""
+        self._lang = lang
+        self._tag.setFullText(i18n.tr("dashboard.tagline", lang))
+        self._health_section.setText(i18n.tr("dashboard.system_health", lang))
+        self._section.setText(i18n.tr("dashboard.quick_actions", lang))
+        for key, caption_key in self.HEALTH_TILES:
+            self._tiles[key].set_caption(i18n.tr(caption_key, lang))
+        for card in self._action_cards:
+            card.retranslate(lang)
+        self._session.setText(self._session_line())
+        # Tooltips carrying live data (memory/storage/due) resolve fresh
+        # on their own 2s tick — no stale-tooltip window worth chasing
+        # here, since _tick_pulse already reads self._lang each time.
+        self._tick_pulse()
 
 
 class CategoryPage(QWidget):
@@ -968,28 +1004,35 @@ class CategoryPage(QWidget):
     SPARSE_MAX_CARDS = 2
     SPARSE_CARD_W = 430
 
-    #: (label, badge-state key) for the header's status filter. "" is the
-    #: unfiltered default; every other key is a state GlassCard can badge
-    #: (see GlassCard._STATE_BADGES), so no option can be a dead end.
+    #: (i18n label key, badge-state key) for the header's status filter.
+    #: "" is the unfiltered default; every other key is a state GlassCard
+    #: can badge (see GlassCard._BADGE_KEYS), so no option can be a dead
+    #: end. Label is a KEY, not literal text, since the combo box's items
+    #: need retranslating in place — see retranslate().
     FILTERS = [
-        ("All operations", ""),
-        ("Applied", "applied"),
-        ("Not applied", "default"),
-        ("Modified", "mixed"),
-        ("Action due", "due"),
+        ("category.filter.all", ""),
+        ("category.filter.applied", "applied"),
+        ("category.filter.not_applied", "default"),
+        ("category.filter.modified", "mixed"),
+        ("category.filter.action_due", "due"),
     ]
 
     home_requested = Signal()
     task_requested = Signal(dict, object)  # (item, GlassCard)
 
-    def __init__(self, category: dict, t: dict):
+    def __init__(self, category: dict, t: dict, lang: str = "en"):
         super().__init__()
         self.category = category
         self.cards: list[GlassCard] = []
         self._visible: list[GlassCard] = []
         #: (header_widget | None, cards) per section band, render order.
         self._bands: list[tuple[QWidget | None, list[GlassCard]]] = []
+        #: English band title, parallel to _bands (None entries excluded)
+        #: — see retranslate() for why _band_header's own return value
+        #: cannot be re-looked-up by itself.
+        self._band_titles: list[str] = []
         self._t = t
+        self._lang = lang
         self._cols = 0
         self._applied_unit = 0     # see _relayout / _sparse_unit
         #: Highest grid row this page has ever given a stretch factor to.
@@ -1022,8 +1065,8 @@ class CategoryPage(QWidget):
         head = QHBoxLayout()
         head.setSpacing(TH.SPACE["sm"])
 
-        self._home = NavPill("⌂  Home", t, width=88)
-        self._home.setToolTip("Back to the welcome screen")
+        self._home = NavPill(f"⌂  {i18n.tr('category.home', lang)}", t, width=88)
+        self._home.setToolTip(i18n.tr("category.home_tooltip", lang))
         self._home.clicked.connect(self.home_requested)
         head.addWidget(self._home)
 
@@ -1044,9 +1087,9 @@ class CategoryPage(QWidget):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(TH.SPACE["xxs"])
-        self._title = QLabel(category["title"])
+        self._title = QLabel(i18n_catalog.tr_title(category["title"], lang))
         title_col.addWidget(self._title)
-        self._tagline = QLabel(category["tagline"])
+        self._tagline = QLabel(i18n_catalog.tr_desc(category["tagline"], lang))
         title_col.addWidget(self._tagline)
         head.addLayout(title_col)
         head.addStretch()
@@ -1066,8 +1109,8 @@ class CategoryPage(QWidget):
         self._filter = QComboBox()
         self._filter.setFixedSize(190, TH.CONTROL_H)
         self._filter.setCursor(Qt.CursorShape.PointingHandCursor)
-        for label, key in self.FILTERS:
-            self._filter.addItem(label, key)
+        for label_key, key in self.FILTERS:
+            self._filter.addItem(i18n.tr(label_key, lang), key)
         self._filter.currentIndexChanged.connect(lambda _i: self.refresh_filter())
         head.addWidget(self._filter, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -1134,7 +1177,8 @@ class CategoryPage(QWidget):
                 # pages still get the balanced fill grid and no destructive
                 # one-click tweak is ever dressed as the page's centrepiece.
                 featured = idx == 0 and bool(item.get("hub") or item.get("catalog"))
-                card = GlassCard(item, category["accent"], t, featured=featured)
+                card = GlassCard(item, category["accent"], t, featured=featured,
+                                 lang=lang)
                 card.clicked.connect(
                     lambda it=item, c=card: self.task_requested.emit(it, c))
                 card.navigate.connect(
@@ -1143,9 +1187,15 @@ class CategoryPage(QWidget):
                 self.cards.append(card)
                 band_cards.append(card)
                 idx += 1
-            header = (self._band_header(band_title, t, first=not self._bands)
+            header = (self._band_header(
+                          i18n_catalog.tr_title(band_title, lang), t,
+                          first=not self._bands)
                       if band_title else None)
             self._bands.append((header, band_cards))
+            # English source text, parallel to _bands, purely for
+            # retranslate() to re-look-up each header's label by —
+            # _band_header's own return value is an opaque container.
+            self._band_titles.append(band_title)
         # Everything below re-columns over VISIBLE cards only, so filtering
         # reflows the grid instead of leaving holes where hidden cards were.
         self._visible = list(self.cards)
@@ -1156,7 +1206,7 @@ class CategoryPage(QWidget):
 
         # Empty state — a filter that matches nothing must say so; a blank
         # grid is indistinguishable from a broken page.
-        self._empty = QLabel("No operations match that filter.")
+        self._empty = QLabel(i18n.tr("category.empty_unfiltered", lang))
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.hide()
         # PLACED BY _relayout, on the row directly after the last band —
@@ -1261,8 +1311,8 @@ class CategoryPage(QWidget):
         for card in self.cards:
             card.setVisible(id(card) in shown)
         self._empty.setText(
-            "No operations in this module are "
-            f"{self._filter.currentText().lower()}.")
+            i18n.tr("category.empty_filtered", self._lang)
+                .format(filter=self._filter.currentText().lower()))
         self._empty.setVisible(bool(state) and not self._visible)
         # force a rebuild: the column count may not change, but WHICH cards
         # occupy which cells certainly has
@@ -1286,10 +1336,13 @@ class CategoryPage(QWidget):
         total = category_operations(self.category)
         filtering = bool(self._filter.currentData())
         if filtering:
-            self._count_chip.setText(f"{len(self._visible)} OF {len(self.cards)}")
-        else:
             self._count_chip.setText(
-                f"{total} OPERATION{'S' if total != 1 else ''}")
+                i18n.tr("category.count.filtered", self._lang)
+                    .format(visible=len(self._visible), total=len(self.cards)))
+        else:
+            key = ("category.count.singular" if total == 1
+                   else "category.count.plural")
+            self._count_chip.setText(i18n.tr(key, self._lang).format(total=total))
         self._count_chip.setStyleSheet(TH.count_chip_qss(
             self._t, TH.resolve_accent(self._t, self.category["accent"]),
             filtered=filtering))
@@ -1308,11 +1361,12 @@ class CategoryPage(QWidget):
             self._applied_chip.hide()
             return
         applied = [card for card in probed if card.state() == "applied"]
-        self._applied_chip.setText(f"{len(applied)} OF {len(probed)} APPLIED")
+        self._applied_chip.setText(
+            i18n.tr("category.applied_ratio", self._lang)
+                .format(applied=len(applied), probed=len(probed)))
         self._applied_chip.setToolTip(
-            f"{len(probed)} operation(s) in this module report a readable "
-            f"setting; {len(applied)} are currently applied. Routines and "
-            "reports have no such state and are not counted.")
+            i18n.tr("category.applied_ratio_tooltip", self._lang)
+                .format(probed=len(probed), applied=len(applied)))
         self._applied_chip.setStyleSheet(TH.stat_chip_qss(
             self._t, "ok" if len(applied) == len(probed) else "neutral"))
         self._applied_chip.show()
@@ -1591,6 +1645,33 @@ class CategoryPage(QWidget):
                 rule.setStyleSheet(TH.hub_group_rule_qss(t, accent))
         for card in self.cards:
             card.apply_theme(t)
+
+    def retranslate(self, lang: str):
+        """This page is built once per module and kept alive for the
+        app's lifetime (PulseApp._build_ui builds one per CATEGORIES
+        entry up front), so a live language switch has to walk what
+        already exists — the header, the filter combo's items, every
+        band title and every card — the same requirement
+        WelcomePage.retranslate exists for."""
+        self._lang = lang
+        self._home.setText(f"⌂  {i18n.tr('category.home', lang)}")
+        self._home.setToolTip(i18n.tr("category.home_tooltip", lang))
+        self._title.setText(i18n_catalog.tr_title(self.category["title"], lang))
+        self._tagline.setText(i18n_catalog.tr_desc(self.category["tagline"], lang))
+        for i, (label_key, _key) in enumerate(self.FILTERS):
+            self._filter.setItemText(i, i18n.tr(label_key, lang))
+        for (header, _cards), band_title in zip(self._bands, self._band_titles):
+            if header is None:
+                continue
+            label = header.findChild(QLabel, "bandTitle")
+            if label is not None:
+                label.setText(i18n_catalog.tr_title(band_title, lang))
+        for card in self.cards:
+            card.retranslate(lang)
+        # Re-derives the empty-state sentence off the (now retranslated)
+        # filter combo's currentText(), and the count/applied chips —
+        # the same recompute a real filter change already triggers.
+        self.refresh_filter()
 
 
 class _NCCALCSIZE_PARAMS(ctypes.Structure):
@@ -2084,26 +2165,12 @@ class PulseApp(QMainWindow):
         self.status_rail.elevate_requested.connect(self._relaunch_as_admin)
         side.addWidget(self.status_rail)
         body.addWidget(self._sidebar)
-
-        # -- apply persisted language + collapse state -----------
-        # A PRE-EXISTING GAP, closed here rather than left for later: the
-        # rail was built above in English/expanded regardless of what
-        # prefs.language()/prefs.sidebar_collapsed() had just loaded into
-        # self._language/self._sidebar_collapsed, and _apply_language had
-        # exactly one caller — the Settings page's own language picker —
-        # so a session that chose Arabic last time opened to an untranslated,
-        # LTR sidebar until the user opened Settings and picked it again.
-        # _sync_sidebar_toggle is unconditional: the toggle button is
-        # built blank above (no initial text/tooltip), so even the
-        # common English/expanded case needs this one call to show its
-        # first glyph at all. The other two stay conditional — they are
-        # true no-ops in the common case, and English/expanded is what
-        # construction already produced.
-        self._sync_sidebar_toggle()
-        if self._language != "en":
-            self._apply_language(self._language)
-        if self._sidebar_collapsed:
-            self._apply_sidebar_collapsed(self._sidebar_collapsed)
+        # _sync_sidebar_toggle is called unconditionally further down
+        # (after self.welcome/self.pages exist — see the note there),
+        # not here: the toggle button is built blank above with no
+        # initial text/tooltip at all, and _apply_language now also
+        # retranslates those two pages, so both calls wait for the same
+        # point in construction.
 
         # -- content ------------------------------------------
         self._content = QFrame()
@@ -2119,16 +2186,40 @@ class PulseApp(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.setStyleSheet(TH.stack_qss())
-        self.welcome = WelcomePage(t, bool(self.ps1_path), self.is_admin)
+        self.welcome = WelcomePage(t, bool(self.ps1_path), self.is_admin,
+                                   lang=self._language)
         self.welcome.action_requested.connect(self.request_task)
         self.stack.addWidget(self.welcome)
         self.pages: list[CategoryPage] = []
         for cat in CATEGORIES:
-            page = CategoryPage(cat, t)
+            page = CategoryPage(cat, t, lang=self._language)
             page.home_requested.connect(self.go_home)
             page.task_requested.connect(self.request_task)
             self.pages.append(page)
             self.stack.addWidget(page)
+
+        # -- apply persisted language + collapse state -----------
+        # A PRE-EXISTING GAP, closed here rather than left for later: the
+        # sidebar was built above in English/expanded regardless of what
+        # prefs.language()/prefs.sidebar_collapsed() had just loaded into
+        # self._language/self._sidebar_collapsed, and _apply_language had
+        # exactly one caller — the Settings page's own language picker —
+        # so a session that chose Arabic last time opened to an
+        # untranslated, LTR sidebar until the user reopened Settings and
+        # picked it again. welcome/pages above were already constructed
+        # with lang=self._language, so _apply_language retranslating them
+        # again here is a harmless no-op for those two — it still owns
+        # the sidebar's own chrome, which construction left in English.
+        # _sync_sidebar_toggle is unconditional: the toggle button was
+        # built blank (no initial text/tooltip), so even the common
+        # English/expanded case needs this one call to show its first
+        # glyph at all. The other two stay conditional — true no-ops in
+        # the common case, which construction already produced.
+        self._sync_sidebar_toggle()
+        if self._language != "en":
+            self._apply_language(self._language)
+        if self._sidebar_collapsed:
+            self._apply_sidebar_collapsed(self._sidebar_collapsed)
 
         # The settings surface is the last page in the stack rather than a
         # module, so open_category's `index + 1` arithmetic is untouched.
@@ -2284,17 +2375,15 @@ class PulseApp(QMainWindow):
 
     def _apply_language(self, lang: str):
         """Retranslates the sidebar's OWN chrome — the search doorway, the
-        section label, the Settings entry and the footer's tooltips — and
-        flips the sidebar's layout direction.
+        section label, the four module buttons, the Settings entry and
+        the footer's tooltips — flips the sidebar's layout direction, and
+        walks every persistent page (the dashboard, every module's own
+        grid) so their already-built content retranslates too.
 
-        The four module buttons' TEXT stays English on purpose: each one
-        is also its own page's header, and that page's tagline, filter and
-        every card are still English (see i18n.py's own note on this
-        boundary) — translating only the sidebar button would read as
-        broken, not as a foundation. Their LAYOUT still mirrors with
-        everything else, because direction and translation are different
-        questions: a half-mirrored rail would look more broken than a
-        fully-mirrored one still carrying some English labels.
+        v16 extends translation to the module buttons and their
+        destination pages together, closing the gap v10.15 deliberately
+        left open (see i18n.py's own note on that boundary, updated
+        alongside this).
         """
         rtl = i18n.is_rtl(lang)
         direction = (Qt.LayoutDirection.RightToLeft if rtl
@@ -2304,6 +2393,8 @@ class PulseApp(QMainWindow):
         self._sync_search_text()
         self._search_btn.setToolTip(i18n.tr("sidebar.search_tooltip", lang))
         self._section.setText(i18n.tr("sidebar.section", lang))
+        for i, btn in enumerate(self._nav_buttons):
+            btn.set_title(i18n.tr(f"sidebar.module.{CATEGORIES[i]['id']}", lang))
         self._settings_btn.set_title(i18n.tr("sidebar.settings", lang))
         self._sync_sidebar_toggle()
 
@@ -2313,6 +2404,13 @@ class PulseApp(QMainWindow):
         # The elevation indicator is the only thing left in the footer
         # (v16) and is fully bilingual — retranslate covers it.
         self.status_rail.retranslate(lang)
+
+        # Both pages are built once and kept alive for the app's
+        # lifetime — see WelcomePage.retranslate / CategoryPage.retranslate
+        # for why a live switch cannot rely on fresh construction.
+        self.welcome.retranslate(lang)
+        for page in self.pages:
+            page.retranslate(lang)
 
     def _sync_search_text(self):
         """The search doorway's visible text — considers language AND
@@ -3192,7 +3290,7 @@ class PulseApp(QMainWindow):
         # hub) stays searchable even though its category page now shows
         # only the hub card.
         entries = list(iter_leaf_items())
-        palette = CommandPalette(self, self.theme.t, entries)
+        palette = CommandPalette(self, self.theme.t, entries, lang=self._language)
         # Top-anchored VS Code / Slack quick-launcher placement comes from
         # _present_dialog(anchor="top") in the palette's own showEvent.
         if (self._exec_dialog(palette) == QDialog.DialogCode.Accepted
@@ -3427,7 +3525,8 @@ class PulseApp(QMainWindow):
             section = catalog_section(item.get("catalog_section", ""))
             dialog = SoftwareCatalogDialog(
                 self, item, self.theme.t,
-                [section] if section else SOFTWARE_CATALOG)
+                [section] if section else SOFTWARE_CATALOG,
+                lang=self._language)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if dialog.selected_ids:

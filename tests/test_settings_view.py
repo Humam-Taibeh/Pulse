@@ -161,6 +161,120 @@ class TestSystemProtection:
             qapp.processEvents()
 
 
+class TestSystemProtectionArabic:
+    """v16: the restore-point summary line was the one string this page
+    deliberately left English (see the comment that used to sit above
+    _sync_restore_summary) because it mixes app copy with Windows' own
+    checkpoint date/description. The user named it explicitly ("Newest
+    checkpoint...", "0.2 day(s) ago") as still-visible English bleed-
+    through, so the sentence AROUND that data now translates — the data
+    itself (created/description) stays exactly as Windows reported it,
+    by design, not by oversight."""
+
+    def test_it_reports_the_newest_checkpoint_in_arabic(self, window, qapp):
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=True, lang="ar")
+        try:
+            view.set_restore_points({
+                "available": True, "enabled": True, "count": 3,
+                "points": [{"sequence": 42, "description": "Pulse Restore Point",
+                            "created": "2026-09-11 14:05", "ageDays": 0.2,
+                            "typeLabel": "Manual checkpoint"}],
+            })
+            qapp.processEvents()
+            text = view.restore_summary()
+            assert "2026-09-11 14:05" in text
+            assert "Pulse Restore Point" in text
+            assert "أحدث نقطة استعادة" in text
+            assert "0.2" in text and "قبل" in text
+            assert "Newest checkpoint" not in text
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_a_single_checkpoint_and_several_read_differently_in_arabic(
+            self, window, qapp):
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=True, lang="ar")
+        try:
+            view.set_restore_points({
+                "available": True, "enabled": True, "count": 1,
+                "points": [{"description": "x", "created": "2026-01-01",
+                            "ageDays": None}],
+            })
+            qapp.processEvents()
+            singular = view.restore_summary()
+            assert "نقطة استعادة واحدة" in singular
+
+            view.set_restore_points({
+                "available": True, "enabled": True, "count": 5,
+                "points": [{"description": "x", "created": "2026-01-01",
+                            "ageDays": None}],
+            })
+            qapp.processEvents()
+            plural = view.restore_summary()
+            assert "5 نقاط استعادة" in plural
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_the_four_states_are_distinct_in_arabic(self, window, qapp):
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=True, lang="ar")
+        try:
+            checking = view.restore_summary()
+            assert "…" in checking
+
+            view.set_restore_points({"available": True, "enabled": True,
+                                     "count": 0, "points": []})
+            qapp.processEvents()
+            none_yet = view.restore_summary()
+
+            view.set_restore_points({"available": False, "enabled": False,
+                                     "count": 0, "points": []})
+            qapp.processEvents()
+            disabled = view.restore_summary()
+
+            assert len({checking, none_yet, disabled}) == 3
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+    def test_a_live_language_switch_retranslates_an_already_read_report(
+            self, window, qapp):
+        """The real scenario: set_restore_points() is driven by main.py's
+        startup probe, long before the user ever opens the language
+        picker — set_language() must re-render the CACHED report, not
+        just whatever ran at construction time."""
+        from frontend.widgets import SettingsView
+
+        view = SettingsView(window.theme.t, is_admin=True)
+        try:
+            view.set_restore_points({
+                "available": True, "enabled": True, "count": 2,
+                "points": [{"description": "Pulse Restore Point",
+                            "created": "2026-09-11 14:05", "ageDays": 0.2}],
+            })
+            qapp.processEvents()
+            assert "Newest checkpoint" in view.restore_summary()
+
+            view.set_language("ar")
+            qapp.processEvents()
+            arabic = view.restore_summary()
+            assert "أحدث نقطة استعادة" in arabic
+            assert "2026-09-11 14:05" in arabic
+
+            view.set_language("en")
+            qapp.processEvents()
+            assert "Newest checkpoint" in view.restore_summary()
+        finally:
+            view.deleteLater()
+            qapp.processEvents()
+
+
 class TestConfigurationManagement:
 
     def test_both_actions_ask_main(self, settings, qapp):
