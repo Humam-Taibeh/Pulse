@@ -714,6 +714,7 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] A collapsible compact sidebar — a chevron toggle switches the 250px labelled rail for an 84px icons-only one, state persisted like theme/language *(v10.16.0)*
 - [x] The sidebar footer stripped to just the elevation indicator — the theme toggle, update badge and version line now live exclusively in Settings rather than as synced shortcuts *(v10.16.0)*
 - [x] Arabic translation extended from the v10.15.0 foundation to the dashboard, every category page, every task card's title/description, status badges, run-history timestamps ("3d ago · ~2m"), the Settings restore-point summary, the Ctrl+K command palette, and the Software Catalog dialog's 46 tool entries — see [frontend/i18n_catalog.py](src/frontend/i18n_catalog.py) for what's covered and what's still deliberately deferred *(v10.16.0)*
+- [x] Arabic translation extended again to the three remaining primary interactive dialogs — Update Center, Bloatware Purge and Startup Manager translate in full, including two backend-authored data tables (the bloatware catalog's per-package `Note`, the startup audit's per-rule `Reason`) routed through the same catalog mechanism as everything else *(v10.17.0)*
 
 **Planned**
 
@@ -722,7 +723,7 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [ ] A *remaining*-time estimate on top of the state pill's elapsed clock, derived from the duration history
 - [ ] **Scheduled unattended maintenance** via Task Scheduler, summarized on the next launch
 - [ ] **Persistent runspace** — one long-lived PowerShell host fed queued tasks, eliminating the ~400 ms per-step module-load cost a playbook pays today
-- [ ] **The remaining English surfaces** — toast notifications, the bottom status bar, the live PowerShell console log, playbooks, the Health Report, and dialogs reached from a card rather than shown directly (Restore Point Browser, Startup Manager, Bloatware Purge internals, Update Center, the Office setup wizard, the per-app install-option picker) stay English after v10.16.0 — see [frontend/i18n.py](src/frontend/i18n.py) for the exact boundary
+- [ ] **The remaining English surfaces** — toast notifications, the bottom status bar, the live PowerShell console log (including any `TaskResult` message reported at runtime), playbooks, the Health Report, the Restore Point Browser, the Office setup wizard, and `ToolInstallWizardDialog`'s per-app install-option picker stay English after v10.17.0 — see [frontend/i18n.py](src/frontend/i18n.py) for the exact boundary
 
 ---
 

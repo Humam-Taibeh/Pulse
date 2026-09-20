@@ -15,6 +15,46 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.17.0] — 2026-09-20
+
+### Added — the three "primary interactive dialogs" translate in full
+
+Update Center, Bloatware Purge and Startup Manager were the last
+high-traffic surfaces still all-English after v16's translation pass —
+named explicitly as a "noticeable disconnect" for anyone running Pulse
+in Arabic. All three now translate completely: headers, subtitles,
+loading/error/empty/clean states, every button and tooltip, filter
+chips, section headers, and every badge (RUNNING, INSTALLED/STAGED/
+PINNED/NOT PRESENT, OPTIONAL, MISSING, System Critical, the
+impact/recommendation tags).
+
+- **Two backend-authored data tables translate too**, on the same
+  "this is Pulse's own copy, not a live system's" reasoning that
+  already covered the Software Catalog's `WhyYouNeedIt` field:
+  `BloatRow`'s `Note` (01-Catalogs.ps1's `$Script:BloatCatalog`, 48
+  entries) and `StartupRow`'s `Reason` (05-Startup.ps1's rule tables,
+  43 entries), both routed through `frontend.i18n_catalog`'s existing
+  lookup-by-English-text mechanism. Every package/app/program NAME
+  stays English throughout, matching how a tool's DisplayName already
+  did — brand names are not translated anywhere in the app.
+- **The Update Center's "some apps are running" confirmation gets two
+  full sentences, not one parametrised template** — English branches
+  on count via inline conditionals ("is"/"are", "it"/"them"), which
+  Arabic grammar does not map onto at the same points, so singular and
+  plural each read as a sentence a person actually wrote.
+- **All three dialogs are built fresh on every open** (their own class
+  docstrings already said so), so `lang` is read once at construction,
+  the same shape `CommandPalette`/`SoftwareCatalogDialog` already use —
+  no `retranslate()` needed.
+- **What still stays English, and says so**: the live PowerShell
+  console — including any `TaskResult` message reported at runtime, a
+  scan's own caveat text, and a Task Scheduler entry's `Trigger` value
+  when the backend supplies one — the Restore Point Browser, the
+  Health Report, the Office setup wizard, and
+  `ToolInstallWizardDialog`'s per-app install-option picker.
+
+---
+
 ## [10.16.0] — 2026-09-20
 
 ### Added — a collapsible compact sidebar
