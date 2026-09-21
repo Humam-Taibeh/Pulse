@@ -45,6 +45,111 @@ $Script:TweakCatalog = @(
             @{ Path = "HKCU:\System\GameConfigStore";               Name = "GameDVR_HonorUserFSEBehaviorMode"; OnValue = 1; OffValue = 0; Type = "DWord" }
             @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR"; Name = "AppCaptureEnabled";   OnValue = 0; OffValue = 1; Type = "DWord" }
         )
+    },
+    # ------------------------------------------------------------
+    # v1.1 START MENU CUSTOMIZATION. All four are per-user
+    # (HKCU) values, so none needs $Script:AdminRequiredTasks — see the
+    # note below Get-PathInstallations-adjacent modules for why that
+    # matters (a needless UAC prompt to change a setting the current
+    # session already owns).
+    # ------------------------------------------------------------
+    @{
+        Key         = "StartHideRecommended"
+        Category    = "Personalization"
+        Description = "Hides the Recommended section (recent files, suggested apps) from the Start Menu. Windows 11 only."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_IrisRecommendations"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "StartDisableWebSearch"
+        Category    = "Personalization"
+        Description = "Keeps Start Menu search local-only - no Bing web results mixed into local results."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name = "BingSearchEnabled"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "StartDisableRecentTracking"
+        Category    = "Personalization"
+        Description = "Stops Windows from tracking recently opened items in Start, Jump Lists and File Explorer."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_TrackDocs"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "StartDisableSuggestions"
+        Category    = "Personalization"
+        # Stops FUTURE suggestions only - see StartDisableSuggestions'
+        # menu_structure.py card note. Windows 11's pinned Start layout has
+        # no supported programmatic edit API, so unpinning tiles already on
+        # the layout cannot be done safely/verifiably - the same
+        # Provably-Absent standard 17-Leftovers.ps1 holds the rest of the
+        # app to: never claim to have done more than was actually done.
+        Description = "Stops new promotional tiles and suggested-app pins from being added to Start. Does not remove tiles already pinned."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SystemPaneSuggestionsEnabled";     OnValue = 0; OffValue = 1; Type = "DWord" }
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SubscribedContent-338388Enabled";   OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    # ------------------------------------------------------------
+    # v1.1 FILE EXPLORER BEHAVIOR. Same all-HKCU, no-admin-needed shape
+    # as the Start Menu block above.
+    # ------------------------------------------------------------
+    @{
+        Key         = "ExplorerLaunchToThisPC"
+        Category    = "FileExplorer"
+        Description = "Opens File Explorer to This PC instead of Home / Quick access."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "LaunchTo"; OnValue = 1; OffValue = 2; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "ExplorerShowFileExt"
+        Category    = "FileExplorer"
+        Description = "Always shows file extensions for known file types."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "HideFileExt"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "ExplorerShowHidden"
+        Category    = "FileExplorer"
+        Description = "Shows hidden files, folders and drives in File Explorer."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Hidden"; OnValue = 1; OffValue = 2; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "ExplorerShowProtected"
+        Category    = "FileExplorer"
+        # Windows' own Folder Options dialog shows a confirmation warning
+        # before exposing these - the matching menu_structure.py card sets
+        # "confirm": true for the same real, described risk (same reasoning
+        # as the Ultimate Power Plan card).
+        Description = "Shows protected operating system files. Windows hides these by default because deleting or moving one can break the OS - Pulse only reveals them here, it never touches them."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowSuperHidden"; OnValue = 1; OffValue = 0; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "ExplorerHideRecommended"
+        Category    = "FileExplorer"
+        # Verified against Windows' own StartMenu.admx/.adml on the build
+        # this was written on (26200): HideRecommendedSection is documented
+        # there as a Start Menu policy ("class=Both", so HKCU is a valid
+        # target - it is not HKLM-only). No separate, dedicated File-
+        # Explorer-Home policy exists in that same ADMX catalog. This key
+        # is applied here anyway because it is the only real lever that
+        # exists, and is widely reported (and used by comparable tools) to
+        # also suppress Explorer Home's Recommended strip, since both
+        # surfaces read the same underlying recommendation feed - the
+        # Description says so honestly rather than overclaiming Microsoft's
+        # own documented scope.
+        Description = "Hides the Recommended section from File Explorer's Home view. Uses the same policy Microsoft documents for Start Menu's own Recommended list (HideRecommendedSection) - the two surfaces share one recommendation feed. Windows 11, version 22H2 or later."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"; Name = "HideRecommendedSection"; OnValue = 1; OffValue = 0; Type = "DWord" }
+        )
     }
 )
 

@@ -125,6 +125,43 @@ function Get-PulseTweakState {
         @{ Path = "HKCU:\System\GameConfigStore";         Name = "GameDVR_Enabled";     Value = 0 }
     )
 
+    # -- v1.1 Start Menu customization ------------------------------------
+    # All read-only, all HKCU - no elevation needed for any of these four.
+    $state["StartHideRecommended"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_IrisRecommendations"; Value = 0 }
+    )
+    $state["StartDisableWebSearch"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name = "BingSearchEnabled"; Value = 0 }
+    )
+    $state["StartDisableRecentTracking"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Start_TrackDocs"; Value = 0 }
+    )
+    $state["StartDisableSuggestions"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SystemPaneSuggestionsEnabled";   Value = 0 },
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Name = "SubscribedContent-338388Enabled"; Value = 0 }
+    )
+
+    # -- v1.1 File Explorer behavior --------------------------------------
+    $state["ExplorerLaunchToThisPC"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "LaunchTo"; Value = 1 }
+    )
+    $state["ExplorerShowFileExt"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "HideFileExt"; Value = 0 }
+    )
+    $state["ExplorerShowHidden"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Hidden"; Value = 1 }
+    )
+    $state["ExplorerShowProtected"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowSuperHidden"; Value = 1 }
+    )
+    # Same key Microsoft documents for Start's own Recommended list (see
+    # the matching catalog entry's comment, 01-Catalogs.ps1) - not set on
+    # a build that predates it, which Get-RegVerdict already reports as
+    # unknown ($null) rather than a guessed "default".
+    $state["ExplorerHideRecommended"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"; Name = "HideRecommendedSection"; Value = 1 }
+    )
+
     # -- Advertising ID ---------------------------------------------------
     $state["DisableAdvertisingID"] = Get-RegVerdict -Checks @(
         @{ Path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo"; Name = "Enabled"; Value = 0 }

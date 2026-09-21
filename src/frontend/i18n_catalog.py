@@ -70,6 +70,14 @@ installer) and PulseApp.SHORTCUTS' nine row descriptions (Shortcut-
 SheetDialog) — the app's own fixed, non-interpolated copy, not a
 catalog entry, but the exact-text lookup fits it exactly the same way.
 
+TWO NEW BANDS, NINE NEW CARDS (v1.1): "START MENU" and "FILE EXPLORER"
+(menu_structure.py, System & Tweaks) — ordinary catalog cards, covered
+the same way every other card in this file is. Their `note` field
+("Windows 11 only" etc.) is NOT covered: GlassCard renders that field
+raw (widgets.py never routes it through this module), the same
+pre-existing gap every other note-bearing card already has — fixing
+that is a shared-component change out of scope for adding two bands.
+
 WHAT THIS DOES NOT COVER, on purpose (see i18n.py's own scope note and
 ROADMAP.md): dialogs opened FROM a card that are not one of the ones
 covered above — the Restore Point Browser and the Health Report — stay
@@ -86,13 +94,16 @@ TITLES: dict[str, str] = {
     "Maintenance & Security": "الصيانة والأمان",
     "Utilities & Tools": "الأدوات والمرافق",
 
-    # -- the thirteen band/group headers (menu_structure.py "groups") ---
+    # -- the fifteen band/group headers (menu_structure.py "groups") ----
     "INSTALL": "تثبيت",
     "MANAGE INSTALLED": "إدارة المثبت",
     "PREINSTALLED & BUNDLED": "مثبت مسبقًا ومرفق",
     "PERFORMANCE & POWER": "الأداء والطاقة",
     "NETWORK": "الشبكة",
     "INTERFACE": "الواجهة",
+    # v1.1 — Start Menu customization / File Explorer behavior.
+    "START MENU": "قائمة ابدأ",
+    "FILE EXPLORER": "مستكشف الملفات",
     "PRIVACY": "الخصوصية",
     "ROUTINE UPKEEP": "الصيانة الدورية",
     "DISK & SPACE": "القرص والمساحة",
@@ -156,6 +167,17 @@ TITLES: dict[str, str] = {
     "Restore Services": "استعادة الخدمات",
     "Right-Click Menu Entries": "عناصر قائمة النقر بالزر الأيمن",
     "Runtimes & Hardware Drivers": "بيئات التشغيل وبرامج تشغيل العتاد",
+
+    # -- v1.1 Start Menu customization / File Explorer behavior ---------
+    "Remove Start Recommendations": "إزالة توصيات قائمة ابدأ",
+    "Disable Start Web Search": "تعطيل بحث الويب في قائمة ابدأ",
+    "Disable Recent-Item Tracking": "تعطيل تتبع العناصر الأخيرة",
+    "Disable Start Suggestions": "تعطيل اقتراحات قائمة ابدأ",
+    "Launch to This PC": "الانتقال إلى هذا الجهاز",
+    "Always Show File Extensions": "إظهار امتدادات الملفات دائمًا",
+    "Show Hidden Files": "إظهار الملفات المخفية",
+    "Show Protected System Files": "إظهار ملفات النظام المحمية",
+    "Remove Explorer Recommendations": "إزالة توصيات مستكشف الملفات",
     "Scan & Purge Leftovers": "فحص المخلّفات وإزالتها",
     "Scan PATH & Environment": "فحص PATH ومتغيرات البيئة",
     "Startup Manager": "مدير بدء التشغيل",
@@ -395,6 +417,37 @@ DESCRIPTIONS: dict[str, str] = {
     "fully reversible.":
         "عرض كل عنصر في قائمة النقر بالزر الأيمن وإخفاء ما لا "
         "تستخدمه — قابل للتراجع بالكامل.",
+
+    # -- v1.1 Start Menu customization / File Explorer behavior ---------
+    "Hide the Recommended section (recent files, suggested apps) from "
+    "the Start Menu.":
+        "إخفاء قسم التوصيات (الملفات الأخيرة والتطبيقات المقترحة) "
+        "من قائمة ابدأ.",
+    "Keep Start Menu search local-only — no Bing web results mixed in.":
+        "إبقاء بحث قائمة ابدأ محليًا فقط — دون مزج نتائج بحث Bing.",
+    "Stop Windows tracking recently opened items in Start, Jump Lists "
+    "and File Explorer.":
+        "إيقاف تتبّع ويندوز للعناصر المفتوحة مؤخرًا في قائمة ابدأ "
+        "وقوائم القفز ومستكشف الملفات.",
+    "Stop new promotional tiles and suggested-app pins from being "
+    "added to Start.":
+        "إيقاف إضافة مربعات ترويجية جديدة وتثبيتات تطبيقات مقترحة "
+        "إلى قائمة ابدأ.",
+    "Open File Explorer to This PC instead of Home / Quick access.":
+        "فتح مستكشف الملفات على هذا الجهاز بدلًا من الرئيسية / "
+        "الوصول السريع.",
+    "Stop Windows from hiding extensions for known file types.":
+        "إيقاف إخفاء ويندوز لامتدادات أنواع الملفات المعروفة.",
+    "Show hidden files, folders and drives in File Explorer.":
+        "إظهار الملفات والمجلدات ومحركات الأقراص المخفية في "
+        "مستكشف الملفات.",
+    "Show protected operating system files Windows hides by default. "
+    "Pulse only reveals them here — it never touches them.":
+        "إظهار ملفات نظام التشغيل المحمية التي يخفيها ويندوز "
+        "افتراضيًا. يكتفي Pulse بإظهارها هنا — ولا يمسّها أبدًا.",
+    "Hide the Recommended section from File Explorer's Home view.":
+        "إخفاء قسم التوصيات من الصفحة الرئيسية لمستكشف الملفات.",
+
     "See what Pulse keeps on this PC — logs, backups and rescued "
     "files — and remove any of it.":
         "عرض ما يحتفظ به Pulse على هذا الجهاز — سجلات ونسخ احتياطية "

@@ -147,6 +147,17 @@ _REVERT_TASKS: dict[str, str] = {
     "DisableTelemetry": "RevertDisableTelemetry",
     "DisableAdvertisingID": "RevertDisableAdvertisingID",
     "DisableActivityHistory": "RevertDisableActivityHistory",
+    # v1.1 Start Menu customization / File Explorer behavior — all nine
+    # write only HKCU values, so none needs $Script:AdminRequiredTasks.
+    "StartHideRecommended": "RevertStartHideRecommended",
+    "StartDisableWebSearch": "RevertStartDisableWebSearch",
+    "StartDisableRecentTracking": "RevertStartDisableRecentTracking",
+    "StartDisableSuggestions": "RevertStartDisableSuggestions",
+    "ExplorerLaunchToThisPC": "RevertExplorerLaunchToThisPC",
+    "ExplorerShowFileExt": "RevertExplorerShowFileExt",
+    "ExplorerShowHidden": "RevertExplorerShowHidden",
+    "ExplorerShowProtected": "RevertExplorerShowProtected",
+    "ExplorerHideRecommended": "RevertExplorerHideRecommended",
 }
 
 #: The bundled-Microsoft-app restores that check the machine BEFORE offering

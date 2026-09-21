@@ -900,6 +900,22 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # is what that panel actually edits
     'network':       ("\uE839", "\U0001f4e1"),    # Network & Ping Optimizer
     'dns':           ("\uE968", "\U0001f310"),    # DNS & Network Profiles (a server)
+    # --- v1.1 Start Menu customization / File Explorer behavior ---
+    # All nine verified against the installed Segoe Fluent Icons font by
+    # this table's own documented advance-width method before being
+    # trusted (QFontMetrics.horizontalAdvance at 28px: a real glyph in this
+    # family measures the full em, a missing one falls back to .notdef and
+    # measures ~18px) - see the header comment above for why that check,
+    # not QFontMetrics.inFont(), is the reliable one.
+    'nostar':        ("\uE738", "\U0001f6ab"),    # Remove Start Recommendations
+    'localsearch':   ("\uE9A9", "\U0001f50e"),    # Disable Start Web Search
+    'notrack':       ("\uEC92", "\U0001f553"),    # Disable Recent-Item Tracking
+    'nosuggest':     ("\uEA37", "\U0001f6d1"),    # Disable Start Suggestions
+    'thispc':        ("\uE977", "\U0001f4bb"),    # Launch to This PC
+    'filetag':       ("\uE8EC", "\U0001f3f7\uFE0F"),  # Always Show File Extensions
+    'showhidden':    ("\uE7B3", "\U0001f441\uFE0F"),  # Show Hidden Files
+    'showprotected': ("\uE785", "\U0001f513"),    # Show Protected System Files
+    'explorernorecs': ("\uE8A9", "\U0001f5c3\uFE0F"),  # Remove Explorer Recommendations
     # --- maintenance ---
     'broom':         ("\uEA99", "\U0001f9f9"),    # Aggressive Cache Clean
     'disk':          ("\uEDA2", "\U0001f4be"),    # Optimize All Drives
