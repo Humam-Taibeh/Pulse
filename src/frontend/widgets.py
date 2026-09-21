@@ -4303,13 +4303,14 @@ class DataHygieneDialog(PulseDialog):
     click.
     """
 
-    def __init__(self, parent: QWidget, t: dict):
+    def __init__(self, parent: QWidget, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         panel = _dialog_chrome(self, t, t["accent"], width=640)
         lay = dialog_body(panel, "sm")
 
-        head = QLabel("🗂️  Data Pulse keeps on this PC")
+        head = QLabel(I18N.tr("data_hygiene.title", lang))
         head.setWordWrap(True)
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
@@ -4325,7 +4326,7 @@ class DataHygieneDialog(PulseDialog):
         self._rows.setSpacing(TH.SPACE["xs"])
         lay.addWidget(self._rows_host)
 
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", lang))
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.accept)
         dialog_footer(lay, close)
@@ -4334,6 +4335,7 @@ class DataHygieneDialog(PulseDialog):
 
     # -- rendering -------------------------------------------------
     def _reload(self):
+        lang = self._lang
         while self._rows.count():
             item = self._rows.takeAt(0)
             widget = item.widget()
@@ -4344,15 +4346,16 @@ class DataHygieneDialog(PulseDialog):
         entries = datastore.scan()
         total = sum(e["bytes"] for e in entries)
         self._summary.setText(
-            f"{StorageAnalyzerDialog._human(total)} in total, across "
-            f"{len(entries)} categories. Nothing here is removed "
-            f"automatically except downloaded installers.")
+            I18N.tr("data_hygiene.summary", lang).format(
+                size=StorageAnalyzerDialog._human(total), count=len(entries)))
 
         for entry in entries:
             self._rows.addWidget(self._build_row(entry))
 
     def _build_row(self, entry: dict) -> QWidget:
         t = self._t
+        lang = self._lang
+        label = I18N_CAT.tr_title(entry["label"], lang)
         row = QFrame()
         row.setStyleSheet(TH.action_row_qss(t, t["accent"],
                                             danger=not entry["reproducible"]))
@@ -4362,23 +4365,24 @@ class DataHygieneDialog(PulseDialog):
 
         top = QHBoxLayout()
         top.setSpacing(TH.SPACE["sm"])
-        title = QLabel(f"{entry['label']} — "
-                       f"{StorageAnalyzerDialog._human(entry['bytes'])}")
+        title = QLabel(I18N.tr("data_hygiene.row_title", lang).format(
+            label=label, size=StorageAnalyzerDialog._human(entry["bytes"])))
         title.setStyleSheet(TH.label_qss(t, "card"))
         top.addWidget(title)
         top.addStretch()
 
-        purge = QPushButton("Remove")
+        purge = QPushButton(I18N.tr("data_hygiene.remove_btn", lang))
         purge.setEnabled(entry["bytes"] > 0)
         purge.setStyleSheet(
             TH.action_button_qss(t, t["accent"],
                                  danger=not entry["reproducible"]))
-        purge.setAccessibleName(f"Remove {entry['label']}")
+        purge.setAccessibleName(
+            I18N.tr("data_hygiene.remove_accessible", lang).format(label=label))
         purge.clicked.connect(lambda _=False, e=entry: self._purge(e))
         top.addWidget(purge)
         outer.addLayout(top)
 
-        detail = QLabel(entry["consequence"])
+        detail = QLabel(I18N_CAT.tr_desc(entry["consequence"], lang))
         detail.setWordWrap(True)
         detail.setStyleSheet(TH.label_qss(t, "caption"))
         outer.addWidget(detail)
@@ -4392,14 +4396,17 @@ class DataHygieneDialog(PulseDialog):
         user's evacuated OneDrive files must not be one click apart with
         the same weight behind them.
         """
+        lang = self._lang
+        label = I18N_CAT.tr_title(entry["label"], lang)
         if not entry["reproducible"]:
             confirm = ConfirmDialog(self, {
                 "icon": "⚠️",
-                "title": f"Remove {entry['label']}?",
-                "desc": entry["consequence"] + "  This cannot be undone.",
+                "title": I18N.tr("data_hygiene.confirm_title", lang).format(label=label),
+                "desc": I18N_CAT.tr_desc(entry["consequence"], lang)
+                        + I18N.tr("data_hygiene.cannot_undo_suffix", lang),
                 "task": "@data_purge",
                 "danger": True,
-            }, self._t)
+            }, self._t, lang=lang)
             try:
                 if confirm.exec() != QDialog.DialogCode.Accepted:
                     return
@@ -4415,13 +4422,15 @@ class DataHygieneDialog(PulseDialog):
             if files:
                 parent.toasts.show(
                     "success",
-                    f"Removed {files} item(s) — "
-                    f"{StorageAnalyzerDialog._human(freed)} freed.", 4000)
+                    I18N.tr("data_hygiene.removed_toast", lang).format(
+                        files=files, size=StorageAnalyzerDialog._human(freed)),
+                    4000)
             else:
                 parent.toasts.show(
                     "info",
-                    f"Nothing was removed from {entry['label']} — the files "
-                    "may be in use.", 4000)
+                    I18N.tr("data_hygiene.nothing_removed_toast", lang)
+                        .format(label=label),
+                    4000)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -4442,7 +4451,7 @@ class NoticeDialog(PulseDialog):
     """
 
     def __init__(self, parent: QWidget, title: str, body: str, t: dict,
-                 icon: str = "ℹ️"):
+                 icon: str = "ℹ️", lang: str = "en"):
         super().__init__(parent)
         panel = _dialog_chrome(self, t, t["accent"], width=440)
         lay = dialog_body(panel, "sm")
@@ -4457,7 +4466,7 @@ class NoticeDialog(PulseDialog):
         text.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(text)
 
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", lang))
         close.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         close.clicked.connect(self.reject)
         dialog_footer(lay, close)
@@ -4478,7 +4487,8 @@ class RevertChoiceDialog(PulseDialog):
     item's own confirm step for the re-apply path — asking "are you sure?"
     twice for one click is how confirmation fatigue is manufactured."""
 
-    def __init__(self, parent: QWidget, item: dict, t: dict, verdict: str):
+    def __init__(self, parent: QWidget, item: dict, t: dict, verdict: str,
+                 lang: str = "en"):
         super().__init__(parent)
         self.choice: str | None = None
         accent = t["accent"]
@@ -4486,34 +4496,28 @@ class RevertChoiceDialog(PulseDialog):
 
         lay = dialog_body(panel, "sm")
 
-        head = QLabel(f"{item['icon']}  {item['title']}")
+        head = QLabel(f"{item['icon']}  {I18N_CAT.tr_title(item['title'], lang)}")
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         head.setWordWrap(True)
         lay.addWidget(head)
 
-        if verdict == "mixed":
-            status = ("This tweak is PARTIALLY applied — some of its values "
-                      "match, some don't (it may have been changed outside "
-                      "Pulse).")
-        else:
-            status = "This tweak is currently applied on your system."
-        body = QLabel(
-            f"{status}\n\nRe-apply it to enforce Pulse's values again, or "
-            "revert it to your original settings (or Windows defaults if no "
-            "original was captured).")
+        status = I18N.tr(
+            "revert_choice.mixed_status" if verdict == "mixed"
+            else "revert_choice.applied_status", lang)
+        body = QLabel(status + I18N.tr("revert_choice.body_suffix", lang))
         body.setWordWrap(True)
         body.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(body)
 
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("dialog.cancel", lang))
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
 
-        revert = QPushButton("Revert to Default")
+        revert = QPushButton(I18N.tr("revert_choice.revert_btn", lang))
         revert.setStyleSheet(TH.dialog_secondary_go_qss(t, accent))
         revert.clicked.connect(lambda: self._pick("revert"))
 
-        apply_btn = QPushButton("Re-apply")
+        apply_btn = QPushButton(I18N.tr("revert_choice.reapply_btn", lang))
         apply_btn.setStyleSheet(TH.dialog_go_qss(t, accent))
         apply_btn.clicked.connect(lambda: self._pick("apply"))
 
@@ -4545,7 +4549,8 @@ class PlaybookStepRow(QFrame):
         "cancelled": ("■", "warn"),
     }
 
-    def __init__(self, index: int, step, t: dict, parent: QWidget | None = None):
+    def __init__(self, index: int, step, t: dict, lang: str = "en",
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self._t = t
         self._state = "pending"
@@ -4560,6 +4565,9 @@ class PlaybookStepRow(QFrame):
         self._lamp.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self._lamp, 0, Qt.AlignmentFlag.AlignTop)
 
+        # step.title/step.note/step.task are USER-AUTHORED (the .json
+        # playbook file itself) — Pulse did not write them and cannot
+        # translate them.
         text_col = QVBoxLayout()
         text_col.setSpacing(TH.SPACE["xxs"])
         self._title = QLabel(f"{index + 1}.  {step.title}")
@@ -4569,7 +4577,7 @@ class PlaybookStepRow(QFrame):
         text_col.addWidget(self._detail)
         lay.addLayout(text_col, 1)
 
-        self._tag = QLabel("optional" if step.optional else "")
+        self._tag = QLabel(I18N.tr("playbook.optional_tag", lang) if step.optional else "")
         self._tag.setVisible(bool(step.optional))
         lay.addWidget(self._tag, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -4616,9 +4624,10 @@ class PlaybookDialog(PulseDialog):
     stop_requested = Signal()
 
     def __init__(self, parent: QWidget, playbooks: list, errors: list[str],
-                 t: dict, is_admin: bool = True):
+                 t: dict, is_admin: bool = True, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._playbooks = playbooks
         self._is_admin = is_admin
         self._rows: list[PlaybookStepRow] = []
@@ -4637,13 +4646,11 @@ class PlaybookDialog(PulseDialog):
 
         lay = dialog_body(panel, "md")
 
-        head = QLabel("📘  Playbooks")
+        head = QLabel(I18N.tr("playbook.title", lang))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
-        blurb = QLabel(
-            "Ordered task sequences that run through the normal engine. "
-            "Preview simulates every step with -WhatIf and changes nothing.")
+        blurb = QLabel(I18N.tr("playbook.blurb", lang))
         blurb.setWordWrap(True)
         blurb.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(blurb)
@@ -4651,6 +4658,9 @@ class PlaybookDialog(PulseDialog):
         if errors:
             # A malformed playbook is reported, never silently dropped —
             # a technician who mistyped a task name must find out now.
+            # The messages themselves (playbooks.py's own parse errors)
+            # stay English, the same "live/dynamic diagnostic" boundary
+            # the console log sits on.
             warn = QLabel("⚠️  " + "  ·  ".join(errors[:3]))
             warn.setWordWrap(True)
             warn.setStyleSheet(
@@ -4659,9 +4669,7 @@ class PlaybookDialog(PulseDialog):
             lay.addWidget(warn)
 
         if not playbooks:
-            empty = QLabel(
-                "No playbooks found. Drop a .json file into the "
-                "'playbooks' folder next to Pulse to add one.")
+            empty = QLabel(I18N.tr("playbook.empty", lang))
             empty.setWordWrap(True)
             empty.setStyleSheet(TH.label_qss(t, "body"))
             lay.addWidget(empty)
@@ -4712,26 +4720,25 @@ class PlaybookDialog(PulseDialog):
 
     # -- construction helpers ---------------------------------
     def _build_buttons(self, lay: QVBoxLayout, t: dict, runnable: bool):
+        lang = self._lang
         row = QHBoxLayout()
         row.addStretch()
 
-        self._close_btn = QPushButton("Close")
+        self._close_btn = QPushButton(I18N.tr("dialog.close", lang))
         size_dialog_button(self._close_btn)
         self._close_btn.setStyleSheet(TH.dialog_cancel_qss(t))
         self._close_btn.clicked.connect(self.reject)
         row.addWidget(self._close_btn)
 
-        self._preview_btn = QPushButton("Preview")
+        self._preview_btn = QPushButton(I18N.tr("playbook.preview_btn", lang))
         size_dialog_button(self._preview_btn)
         self._preview_btn.setStyleSheet(TH.dialog_cancel_qss(t))
-        self._preview_btn.setToolTip(
-            "Run every step with -WhatIf: reports what would happen and "
-            "changes nothing.")
+        self._preview_btn.setToolTip(I18N.tr("playbook.preview_tooltip", lang))
         self._preview_btn.clicked.connect(lambda: self._launch(dry_run=True))
         self._preview_btn.setVisible(runnable)
         row.addWidget(self._preview_btn)
 
-        self._run_btn = QPushButton("Run Playbook")
+        self._run_btn = QPushButton(I18N.tr("playbook.run_btn", lang))
         size_dialog_button(self._run_btn)
         self._run_btn.setStyleSheet(TH.dialog_go_qss(t, self._accent))
         self._run_btn.clicked.connect(lambda: self._launch(dry_run=False))
@@ -4741,6 +4748,7 @@ class PlaybookDialog(PulseDialog):
         lay.addLayout(row)
 
     def _select(self, playbook):
+        lang = self._lang
         self._current = playbook
         t = self._t
         for pill, candidate in zip(self._pills, self._playbooks):
@@ -4750,12 +4758,14 @@ class PlaybookDialog(PulseDialog):
                 TH.dialog_go_qss(t, self._accent) if active
                 else TH.dialog_cancel_qss(t))
 
-        admin_note = ""
-        if playbook.needs_admin and not self._is_admin:
-            admin_note = ("  ·  ⚠️ needs Administrator — some steps will be "
-                          "refused in this session")
-        self._summary.setText(
-            f"{playbook.description}\n{len(playbook)} steps{admin_note}")
+        admin_note = (I18N.tr("playbook.admin_note", lang)
+                      if playbook.needs_admin and not self._is_admin else "")
+        steps_key = ("playbook.steps_count_singular" if len(playbook) == 1
+                     else "playbook.steps_count_plural")
+        steps_text = I18N.tr(steps_key, lang).format(count=len(playbook))
+        # playbook.description is USER-AUTHORED (the .json file itself)
+        # and stays exactly as written.
+        self._summary.setText(f"{playbook.description}\n{steps_text}{admin_note}")
         self._summary.setStyleSheet(TH.label_qss(t, "body"))
 
         for row in self._rows:
@@ -4763,7 +4773,7 @@ class PlaybookDialog(PulseDialog):
             row.deleteLater()
         self._rows = []
         for index, step in enumerate(playbook.steps):
-            row = PlaybookStepRow(index, step, t)
+            row = PlaybookStepRow(index, step, t, lang=lang)
             self._rows.append(row)
             self._host_lay.insertWidget(self._host_lay.count() - 1, row)
         self._status.setText("")
@@ -4776,11 +4786,12 @@ class PlaybookDialog(PulseDialog):
     # -- live run API (driven by PlaybookRunner) --------------
     def enter_run_mode(self, dry_run: bool):
         """Switch the browse UI into a progress view in place."""
+        lang = self._lang
         self._run_locked = True
         for pill in self._pills:
             pill.setEnabled(False)
         self._preview_btn.setEnabled(False)
-        self._run_btn.setText("Stop")
+        self._run_btn.setText(I18N.tr("playbook.stop_btn", lang))
         self._run_btn.setStyleSheet(TH.dialog_go_qss(self._t, self._t["err"]))
         try:
             self._run_btn.clicked.disconnect()
@@ -4788,8 +4799,10 @@ class PlaybookDialog(PulseDialog):
             pass
         self._run_btn.clicked.connect(self.stop_requested.emit)
         self._close_btn.setEnabled(False)
-        prefix = "Previewing" if dry_run else "Running"
-        self.set_status(f"{prefix} {self._current.name}…")
+        # self._current.name is USER-AUTHORED and stays as written.
+        status_key = ("playbook.previewing_status" if dry_run
+                      else "playbook.running_status")
+        self.set_status(I18N.tr(status_key, lang).format(name=self._current.name))
 
     def mark_step(self, index: int, state: str, detail: str | None = None):
         if 0 <= index < len(self._rows):
@@ -4823,8 +4836,7 @@ class PlaybookDialog(PulseDialog):
         """
         if self._run_locked:
             self.set_status(
-                "This playbook is still running — press Stop to end it, "
-                "or let it finish.", "warn")
+                I18N.tr("playbook.still_running_warning", self._lang), "warn")
             return
         super().reject()
 
@@ -4841,7 +4853,7 @@ class PlaybookDialog(PulseDialog):
     def enter_done_mode(self):
         self._run_locked = False
         self._close_btn.setEnabled(True)
-        self._run_btn.setText("Close")
+        self._run_btn.setText(I18N.tr("dialog.close", self._lang))
         self._run_btn.setStyleSheet(TH.dialog_go_qss(self._t, self._accent))
         try:
             self._run_btn.clicked.disconnect()
@@ -5236,9 +5248,10 @@ class ActivationStatusDialog(PulseDialog):
     DOCS_URL = ("https://support.microsoft.com/windows/"
                 "activate-windows-c39005d4-95ee-b91e-b399-2820fda32227")
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict, lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._ps1 = ps1_path
         self._thread: QThread | None = None
         self._worker: PowerShellTask | None = None
@@ -5252,12 +5265,12 @@ class ActivationStatusDialog(PulseDialog):
         # The title carries the scope. The dialog covers two products, and
         # a bare "Activation Status" left a reader to discover the Office
         # half by scrolling to it.
-        head = QLabel("🔑  Activation Status — Windows & Office")
+        head = QLabel(I18N.tr("activation.title", lang))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         head.setWordWrap(True)
         lay.addWidget(head)
 
-        self._status = QLabel("Reading the licensing service…")
+        self._status = QLabel(I18N.tr("activation.loading", lang))
         self._status.setWordWrap(True)
         self._status.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(self._status)
@@ -5301,32 +5314,31 @@ class ActivationStatusDialog(PulseDialog):
             btn.clicked.connect(slot)
             return btn
 
-        close = button("Close", TH.dialog_cancel_qss(t), self.reject, 88)
+        lang = self._lang
+        close = button(I18N.tr("dialog.close", lang),
+                       TH.dialog_cancel_qss(t), self.reject, 88)
 
         # The one external reference, and a quieter CTA than the Settings
         # hand-off beside it: reading the documentation is the optional step,
         # opening Activation is the one that actually changes anything.
-        docs = button("Official Activation Docs",
+        docs = button(I18N.tr("activation.docs_btn", lang),
                       TH.dialog_secondary_go_qss(t, accent), self._open_docs, 190)
-        docs.setToolTip(
-            "Opens Microsoft's activation documentation in your browser.")
+        docs.setToolTip(I18N.tr("activation.docs_tooltip", lang))
 
-        windows = button("Windows Activation Settings",
+        windows = button(I18N.tr("activation.settings_btn", lang),
                          TH.dialog_go_qss(t, accent), self._open_settings, 200)
-        windows.setToolTip(
-            "Opens Settings › System › Activation, where Windows licence "
-            "state is changed.")
+        windows.setToolTip(I18N.tr("activation.settings_tooltip", lang))
 
         return [close, docs, windows]
 
     # -- data -------------------------------------------------
     def _start(self):
         if not self._ps1:
-            self._status.setText("Engine unavailable — core.ps1 was not found.")
+            self._status.setText(I18N.tr("inspector.engine_unavailable", self._lang))
             return
         if self._worker is not None:      # a read is already in flight
             return
-        self._status.setText("Reading the licensing service…")
+        self._status.setText(I18N.tr("activation.loading", self._lang))
         thread = QThread(self)
         # 120s: the probe returns in about a second on a healthy machine,
         # but the licensing WMI provider can stall for a long while on one
@@ -5345,13 +5357,16 @@ class ActivationStatusDialog(PulseDialog):
 
     def _on_report(self, result: TaskResult):
         if not result.success or not isinstance(result.data, dict):
-            self._on_failed(result.message or "The licence status could not be read.")
+            self._on_failed(
+                result.message
+                or I18N.tr("activation.report_unreadable_fallback", self._lang))
             return
         self._render(result.data)
 
     def _on_failed(self, message: str):
         self._clear()
-        self._status.setText(f"Could not read activation status: {message}")
+        self._status.setText(
+            I18N.tr("activation.failed_prefix", self._lang).format(message=message))
 
     def _cleanup(self):
         if self._worker is not None:
@@ -5364,8 +5379,7 @@ class ActivationStatusDialog(PulseDialog):
     def _open_settings(self):
         if not QDesktopServices.openUrl(QUrl(self.SETTINGS_URI)):
             self._status.setText(
-                "Windows could not open the Activation settings page. "
-                "Open Settings › System › Activation manually.")
+                I18N.tr("activation.settings_open_failed", self._lang))
 
     def _open_docs(self):
         """Hand the documentation URL to the user's default browser. Same
@@ -5373,8 +5387,8 @@ class ActivationStatusDialog(PulseDialog):
         further part in it — no embedded browser, nothing fetched here."""
         if not QDesktopServices.openUrl(QUrl(self.DOCS_URL)):
             self._status.setText(
-                "Could not open your browser. The activation documentation "
-                f"is at {self.DOCS_URL}")
+                I18N.tr("activation.docs_open_failed", self._lang)
+                    .format(url=self.DOCS_URL))
 
     # -- rendering --------------------------------------------
     def _add(self, widget: QWidget):
@@ -5403,68 +5417,86 @@ class ActivationStatusDialog(PulseDialog):
     def _product_card(self, title: str, product: dict) -> ReportSubCard:
         """One licensed product as a sub-card: the verdict badges the title
         row, the facts behind it fill the body, and the plain-English
-        sentence saying what the verdict MEANS closes it."""
-        tone = str(product.get("tone") or "")
-        card = self._card(title, (str(product.get("status") or "Unknown"), tone))
+        sentence saying what the verdict MEANS closes it.
 
-        card.row("Licence channel", str(product.get("channel") or "Unknown"),
+        product.get("status")/("channel")/("explanation") are the ONE
+        backend-authored data point left untranslated in this pass — see
+        i18n.py's own note on why (a dynamic day-count interpolated into
+        4 of 13-Activation.ps1's 7 explanation sentences)."""
+        lang = self._lang
+        tone = str(product.get("tone") or "")
+        card = self._card(title, (str(product.get("status")
+                                      or I18N.tr("activation.badge_unknown", lang)), tone))
+
+        card.row(I18N.tr("activation.row_channel", lang),
+                 str(product.get("channel")
+                     or I18N.tr("activation.badge_unknown", lang)),
                  label_width=self._LABEL_W)
         partial = str(product.get("partialKey") or "")
         if partial:
             # Windows shows the same five characters in Settings. The full
             # key is never read by the backend, so it cannot be shown here.
-            card.row("Product key", f"Ends in {partial}", label_width=self._LABEL_W)
+            card.row(I18N.tr("activation.row_product_key", lang),
+                     I18N.tr("activation.product_key_value", lang).format(partial=partial),
+                     label_width=self._LABEL_W)
         if product.get("statusCode") == 1:
-            card.row("Licence type",
-                     "Permanent — does not expire" if product.get("permanent")
-                     else "Leased — renews automatically",
+            card.row(I18N.tr("activation.row_licence_type", lang),
+                     I18N.tr("activation.licence_permanent" if product.get("permanent")
+                             else "activation.licence_leased", lang),
                      label_width=self._LABEL_W)
         days = product.get("remainingDays")
         if isinstance(days, int):
             # Same field, two meanings, and the label has to say which:
             # on a licensed lease it counts down to renewal, in any grace
             # state it counts down to features being restricted.
-            card.row("Renews in" if product.get("statusCode") == 1
-                     else "Grace period left",
-                     f"{days} day(s)", label_width=self._LABEL_W)
+            card.row(I18N.tr("activation.row_renews_in" if product.get("statusCode") == 1
+                             else "activation.row_grace_left", lang),
+                     I18N.tr("activation.days_value", lang).format(days=days),
+                     label_width=self._LABEL_W)
         explanation = str(product.get("explanation") or "")
         if explanation:
             card.note(explanation, tone)
         return card
 
     def _render(self, report: dict):
+        lang = self._lang
         self._clear()
-        host = str(report.get("hostname") or "this machine")
-        edition = str(report.get("edition") or "Unknown edition")
+        host = str(report.get("hostname")
+                   or I18N.tr("activation.default_hostname", lang))
+        edition = str(report.get("edition")
+                      or I18N.tr("activation.default_edition", lang))
         build = report.get("build")
-        self._status.setText(
-            f"{host} · {edition}" + (f" (build {build})" if build else ""))
+        status_line = I18N.tr("activation.status_line", lang).format(
+            host=host, edition=edition)
+        if build:
+            status_line += I18N.tr(
+                "activation.status_line_build_suffix", lang).format(build=build)
+        self._status.setText(status_line)
 
         # -- Windows ------------------------------------------
         windows = report.get("windows")
+        windows_title = I18N.tr("activation.card_windows", lang)
         if isinstance(windows, dict):
-            self._product_card("Windows", windows)
+            self._product_card(windows_title, windows)
         else:
             # Still a sub-card, not a bare sentence: "we could not tell" is
             # a state of the Windows subject, and demoting it to loose text
             # would make the one case a reader most needs to notice the
             # least visible thing in the dialog.
-            self._card("Windows", ("Unknown", "warn")).note(
-                "The licensing service did not report a Windows licence on "
-                "this machine. That is normal on some managed or evaluation "
-                "images; Settings › System › Activation is authoritative.",
-                "warn")
+            self._card(windows_title, (I18N.tr("activation.badge_unknown", lang), "warn")).note(
+                I18N.tr("activation.windows_unknown_note", lang), "warn")
 
         # -- Office -------------------------------------------
         office = report.get("office")
         office = office if isinstance(office, list) else []
         install = report.get("officeInstall")
         install = install if isinstance(install, dict) else {}
+        office_title = I18N.tr("activation.office_default_name", lang)
         if office:
             for product in office:
                 if isinstance(product, dict):
                     self._product_card(
-                        str(product.get("name") or "Microsoft Office"), product)
+                        str(product.get("name") or office_title), product)
         elif install.get("installed"):
             # The actionable case, and the reason officeInstall exists at
             # all: installed-but-unlicensed and not-installed both produce
@@ -5472,18 +5504,14 @@ class ActivationStatusDialog(PulseDialog):
             kind = str(install.get("kind") or "")
             version = str(install.get("version") or "")
             detail = " · ".join(part for part in (kind, version) if part)
-            card = self._card("Microsoft Office", ("No licence", "warn"))
+            card = self._card(office_title, (I18N.tr("activation.badge_no_licence", lang), "warn"))
             if detail:
-                card.row("Installation", detail, label_width=self._LABEL_W)
-            card.note(
-                "Office is installed but reports no licence. An Office "
-                "licence is held against the Microsoft account that owns the "
-                "subscription — signing into that account in any Office app "
-                "restores it. See the guide below.",
-                "warn")
+                card.row(I18N.tr("activation.row_installation", lang), detail,
+                         label_width=self._LABEL_W)
+            card.note(I18N.tr("activation.office_unlicensed_note", lang), "warn")
         else:
-            self._card("Microsoft Office", ("Not installed", "")).note(
-                "No Microsoft Office installation was found on this machine.")
+            self._card(office_title, (I18N.tr("activation.badge_not_installed", lang), "")).note(
+                I18N.tr("activation.office_not_installed_note", lang))
 
         # -- Licensing service --------------------------------
         # Rendered only when it has something to say: on an ordinary
@@ -5494,16 +5522,20 @@ class ActivationStatusDialog(PulseDialog):
         kms = str(service.get("kmsHost") or "")
         firmware = service.get("firmwareKeyPresent")
         if kms or firmware is not None:
-            card = self._card("Licensing service")
+            card = self._card(I18N.tr("activation.card_licensing_service", lang))
             if kms:
-                card.row("KMS host", kms, label_width=self._LABEL_W)
+                card.row(I18N.tr("activation.row_kms_host", lang), kms,
+                         label_width=self._LABEL_W)
             if firmware is True:
                 edition_name = str(service.get("firmwareKeyEdition") or "")
-                card.row("OEM firmware licence",
-                         f"Present{f' ({edition_name})' if edition_name else ''}",
+                oem_value = (I18N.tr("activation.oem_present_with_edition", lang)
+                                 .format(edition=edition_name) if edition_name
+                             else I18N.tr("activation.oem_present", lang))
+                card.row(I18N.tr("activation.row_oem_firmware", lang), oem_value,
                          "ok", label_width=self._LABEL_W)
             elif firmware is False:
-                card.row("OEM firmware licence", "Not present",
+                card.row(I18N.tr("activation.row_oem_firmware", lang),
+                         I18N.tr("activation.oem_not_present", lang),
                          label_width=self._LABEL_W)
 
         # v11: the report ENDS with the facts. The two static blocks that
@@ -5755,6 +5787,8 @@ class PowerHealthDialog(InspectorDialog):
     TASK = "PowerHealth"
     TITLE = "🔋  Battery & Power Health"
     LOADING = "Reading battery and power state…"
+    TITLE_KEY = "power_health.title"
+    LOADING_KEY = "power_health.loading"
     ACCENT_KEY = "information"
 
     #: Windows' own Power & Sleep page — the hand-off for anything that
@@ -5763,19 +5797,20 @@ class PowerHealthDialog(InspectorDialog):
     SETTINGS_URI = "ms-settings:powersleep"
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        lang = self._lang
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
-            self._button("Re-check", TH.dialog_secondary_go_qss(t, accent),
-                         self._start),
-            self._button("Power & Sleep Settings", TH.dialog_go_qss(t, accent),
-                         self._open_settings),
+            self._button(I18N.tr("inspector.close", lang),
+                         TH.dialog_cancel_qss(t), self.reject),
+            self._button(I18N.tr("inspector.recheck", lang),
+                         TH.dialog_secondary_go_qss(t, accent), self._start),
+            self._button(I18N.tr("power_health.settings_btn", lang),
+                         TH.dialog_go_qss(t, accent), self._open_settings),
         ]
 
     def _open_settings(self):
         if not QDesktopServices.openUrl(QUrl(self.SETTINGS_URI)):
             self._status.setText(
-                "Windows could not open the Power & Sleep page. "
-                "Open Settings › System › Power manually.")
+                I18N.tr("power_health.settings_open_failed", self._lang))
 
     @staticmethod
     def _wear_tone(wear: float) -> str:
@@ -5789,67 +5824,73 @@ class PowerHealthDialog(InspectorDialog):
         return "ok"
 
     def _render(self, report: dict):
+        lang = self._lang
         battery = report.get("battery") or {}
         power = report.get("power") or {}
+        not_reported = I18N.tr("inspector.not_reported", lang)
 
         if not battery.get("installed"):
-            self._status.setText(
-                "No battery is installed — the power plan section still "
-                "applies.")
-            card = self._card("Battery")
+            self._status.setText(I18N.tr("power_health.no_battery_status", lang))
+            card = self._card(I18N.tr("power_health.card_battery", lang))
             card.note(str(battery.get("note")
-                          or "No battery detected on this machine."))
+                          or I18N.tr("power_health.no_battery_default_note", lang)))
         else:
             wear = battery.get("wearPercent")
             if wear is None:
-                badge = ("UNKNOWN", "")
-                self._status.setText(
-                    "A battery is present, but this firmware does not report "
-                    "its design capacity, so wear cannot be calculated.")
+                badge = (I18N.tr("power_health.badge_unknown", lang), "")
+                self._status.setText(I18N.tr("power_health.unknown_wear_status", lang))
             else:
                 health = round(100 - float(wear), 1)
-                badge = (f"{health}% HEALTH", self._wear_tone(float(wear)))
+                badge = (I18N.tr("power_health.badge_health", lang).format(health=health),
+                         self._wear_tone(float(wear)))
                 self._status.setText(
-                    f"This battery holds {health}% of the capacity it "
-                    f"shipped with ({wear}% wear).")
-            card = self._card("Battery", badge)
+                    I18N.tr("power_health.health_status", lang)
+                        .format(health=health, wear=wear))
+            card = self._card(I18N.tr("power_health.card_battery", lang), badge)
 
             design = battery.get("designedCapacity")
             full = battery.get("fullCapacity")
-            card.row("Design capacity",
-                     f"{int(design):,} mWh" if design else "Not reported",
+            card.row(I18N.tr("power_health.row_design_capacity", lang),
+                     I18N.tr("power_health.capacity_value", lang).format(value=f"{int(design):,}")
+                     if design else not_reported,
                      label_width=self._LABEL_W)
-            card.row("Full-charge capacity",
-                     f"{int(full):,} mWh" if full else "Not reported",
+            card.row(I18N.tr("power_health.row_full_capacity", lang),
+                     I18N.tr("power_health.capacity_value", lang).format(value=f"{int(full):,}")
+                     if full else not_reported,
                      label_width=self._LABEL_W)
             cycles = battery.get("cycleCount")
-            card.row("Cycle count",
-                     str(cycles) if cycles else "Not reported by this firmware",
+            card.row(I18N.tr("power_health.row_cycle_count", lang),
+                     str(cycles) if cycles
+                     else I18N.tr("power_health.not_reported_by_firmware", lang),
                      label_width=self._LABEL_W)
             charge = battery.get("chargePercent")
             if charge is not None:
-                card.row("Current charge", f"{charge}%", label_width=self._LABEL_W)
+                card.row(I18N.tr("power_health.row_current_charge", lang),
+                         f"{charge}%", label_width=self._LABEL_W)
             on_ac = battery.get("onAcPower")
             if on_ac is not None:
-                card.row("Power source", "AC adapter" if on_ac else "Battery",
+                card.row(I18N.tr("power_health.row_power_source", lang),
+                         I18N.tr("power_health.ac_adapter" if on_ac
+                                 else "power_health.power_source_battery", lang),
                          label_width=self._LABEL_W)
             if cycles is None:
-                card.note("Cycle count is optional in the battery firmware "
-                          "specification — plenty of otherwise healthy "
-                          "laptops simply do not publish it.")
+                card.note(I18N.tr("power_health.cycle_count_optional_note", lang))
 
-        plan_card = self._card("Power plan")
+        plan_card = self._card(I18N.tr("power_health.card_power_plan", lang))
         if power.get("available"):
-            plan_card.row("Active plan", str(power.get("activeName") or "Unknown"),
+            plan_card.row(I18N.tr("power_health.row_active_plan", lang),
+                          str(power.get("activeName") or I18N.tr("inspector.unknown", lang)),
                           label_width=self._LABEL_W)
-            plan_card.row("Plans available", str(power.get("planCount") or 0),
+            plan_card.row(I18N.tr("power_health.row_plans_available", lang),
+                          str(power.get("planCount") or 0),
                           label_width=self._LABEL_W)
         else:
-            plan_card.note("Windows did not return the power plan list on "
-                           "this machine.")
+            plan_card.note(I18N.tr("power_health.power_plan_not_returned_note", lang))
         hibernate = report.get("hibernateEnabled")
         if hibernate is not None:
-            plan_card.row("Hibernation", "Enabled" if hibernate else "Disabled",
+            plan_card.row(I18N.tr("power_health.row_hibernation", lang),
+                          I18N.tr("inspector.enabled" if hibernate
+                                  else "inspector.disabled", lang),
                           label_width=self._LABEL_W)
 
 
@@ -5970,22 +6011,27 @@ class StorageAnalyzerDialog(InspectorDialog):
     TASK = "StorageScan"
     TITLE = "🔭  Storage Analyzer"
     LOADING = "Scanning… this can take a minute on a large drive."
+    TITLE_KEY = "storage_analyzer.title"
+    LOADING_KEY = "storage_analyzer.loading"
     ACCENT_KEY = "maintenance"
     #: Generous: the backend's own time budget stops the scan long before
     #: this, so a timeout here would mean something genuinely wedged.
     TIMEOUT = 900
 
-    def __init__(self, parent: QWidget, ps1_path: str, t: dict):
+    def __init__(self, parent: QWidget, ps1_path: str, t: dict, lang: str = "en"):
         self._scan_path = os.environ.get("SystemDrive", "C:") + "\\"
         self._roots: list[dict] = []
-        super().__init__(parent, ps1_path, t)
+        super().__init__(parent, ps1_path, t, lang=lang)
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        lang = self._lang
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
-            self._button("Scan a Folder…", TH.dialog_secondary_go_qss(t, accent),
-                         self._choose_folder),
-            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start),
+            self._button(I18N.tr("inspector.close", lang),
+                         TH.dialog_cancel_qss(t), self.reject),
+            self._button(I18N.tr("storage_analyzer.scan_folder_btn", lang),
+                         TH.dialog_secondary_go_qss(t, accent), self._choose_folder),
+            self._button(I18N.tr("inspector.rescan", lang),
+                         TH.dialog_go_qss(t, accent), self._start),
         ]
 
     def _choose_folder(self):
@@ -5996,7 +6042,8 @@ class StorageAnalyzerDialog(InspectorDialog):
         exactly and in seconds. Still read-only — picking a folder chooses
         what to MEASURE, nothing more."""
         chosen = QFileDialog.getExistingDirectory(
-            self, "Choose a folder to analyse", self._scan_path)
+            self, I18N.tr("storage_analyzer.choose_folder_dialog_title", self._lang),
+            self._scan_path)
         if not chosen:
             return
         self._scan_path = os.path.normpath(chosen)
@@ -6005,7 +6052,7 @@ class StorageAnalyzerDialog(InspectorDialog):
     def build_controls(self, lay: QVBoxLayout, t: dict, accent: str):
         row = QHBoxLayout()
         row.setSpacing(TH.SPACE["sm"])
-        label = QLabel("Drive")
+        label = QLabel(I18N.tr("storage_analyzer.drive_label", self._lang))
         label.setStyleSheet(TH.label_qss(t, "caption"))
         row.addWidget(label)
 
@@ -6050,7 +6097,8 @@ class StorageAnalyzerDialog(InspectorDialog):
         try:
             QProcess.startDetached(target, ["/select,", os.path.normpath(path)])
         except Exception:
-            self._status.setText(f"Could not open Explorer for {path}")
+            self._status.setText(
+                I18N.tr("storage_analyzer.reveal_failed", self._lang).format(path=path))
 
     def _row_with_reveal(self, card: ReportSubCard, label: str, value: str,
                          path: str):
@@ -6071,11 +6119,12 @@ class StorageAnalyzerDialog(InspectorDialog):
         size.setFixedWidth(96)
         row.addWidget(size)
 
-        reveal = QPushButton("Reveal")
+        reveal = QPushButton(I18N.tr("storage_analyzer.reveal_btn", self._lang))
         reveal.setFixedSize(74, 26)
         reveal.setCursor(Qt.CursorShape.PointingHandCursor)
         reveal.setStyleSheet(TH.link_button_qss(self._t, self._accent))
-        reveal.setToolTip(f"Show {path} in File Explorer")
+        reveal.setToolTip(
+            I18N.tr("storage_analyzer.reveal_tooltip", self._lang).format(path=path))
         reveal.clicked.connect(lambda _c=False, p=path: self._reveal(p))
         row.addWidget(reveal)
 
@@ -6096,47 +6145,49 @@ class StorageAnalyzerDialog(InspectorDialog):
             total = self._human(root.get("totalBytes") or 0)
             label = str(root.get("label") or "").strip()
             text = f"{path}  {label}" if label else path
-            self._drive.addItem(f"{text}   ({free} free of {total})", path)
+            free_of = I18N.tr("storage_analyzer.drive_free_of", self._lang).format(
+                free=free, total=total)
+            self._drive.addItem(f"{text}   ({free_of})", path)
         index = self._drive.findData(self._scan_path)
         self._drive.setCurrentIndex(max(0, index))
         self._drive.blockSignals(False)
 
     def _render(self, report: dict):
+        lang = self._lang
         self._sync_drives(report.get("roots") or [])
 
         if not report.get("available"):
             self._status.setText(
-                f"Could not read {report.get('scanPath')} — it does not exist "
-                "or is not readable by this account.")
+                I18N.tr("storage_analyzer.could_not_read", lang)
+                    .format(path=report.get("scanPath")))
             return
 
         total = self._human(report.get("totalBytes") or 0)
         truncated = bool(report.get("truncated"))
         self._status.setText(
-            f"{report.get('scanPath')} — {total} accounted for."
-            + (" The scan hit its time budget, so this is a partial view of "
-               "the largest items found so far." if truncated else ""))
+            I18N.tr("storage_analyzer.accounted_for", lang)
+                .format(path=report.get("scanPath"), total=total)
+            + (I18N.tr("storage_analyzer.truncated_suffix", lang) if truncated else ""))
 
         folders = report.get("folders") or []
         files = report.get("files") or []
 
         if truncated:
-            partial = self._card("Partial scan", ("TIME BUDGET REACHED", "warn"))
-            partial.note(
-                "Large drives can take longer than the scan's budget allows. "
-                "The figures below are real, but smaller items may be "
-                "missing — scan a specific folder for an exact picture.")
+            partial = self._card(
+                I18N.tr("storage_analyzer.partial_scan_title", lang),
+                (I18N.tr("storage_analyzer.time_budget_badge", lang), "warn"))
+            partial.note(I18N.tr("storage_analyzer.partial_note", lang))
 
-        folder_card = self._card("Largest folders")
+        folder_card = self._card(I18N.tr("storage_analyzer.largest_folders", lang))
         if folders:
             for entry in folders:
                 self._row_with_reveal(
                     folder_card, str(entry.get("name") or entry.get("path")),
                     self._human(entry.get("bytes")), str(entry.get("path") or ""))
         else:
-            folder_card.note("No readable subfolders were found here.")
+            folder_card.note(I18N.tr("storage_analyzer.no_subfolders", lang))
 
-        file_card = self._card("Largest files")
+        file_card = self._card(I18N.tr("storage_analyzer.largest_files", lang))
         if files:
             for entry in files:
                 modified = entry.get("modified")
@@ -6147,13 +6198,10 @@ class StorageAnalyzerDialog(InspectorDialog):
                     file_card, label, self._human(entry.get("bytes")),
                     str(entry.get("path") or ""))
         else:
-            file_card.note("No readable files were found here.")
+            file_card.note(I18N.tr("storage_analyzer.no_files", lang))
 
-        note = self._card("About this report")
-        note.note(
-            "Pulse never deletes anything from this screen. Reveal opens the "
-            "item in File Explorer, where Windows' own delete, undo and "
-            "Recycle Bin apply.")
+        note = self._card(I18N.tr("storage_analyzer.about_title", lang))
+        note.note(I18N.tr("storage_analyzer.about_note", lang))
 
 
 class DnsSwitcherDialog(InspectorDialog):
@@ -6177,6 +6225,8 @@ class DnsSwitcherDialog(InspectorDialog):
     TASK = "NetworkProfiles"
     TITLE = "🛰️  DNS & Network Profiles"
     LOADING = "Reading network adapters…"
+    TITLE_KEY = "dns_switcher.title"
+    LOADING_KEY = "dns_switcher.loading"
     ACCENT_KEY = "optimization"
     TIMEOUT = 120
 
@@ -6185,71 +6235,72 @@ class DnsSwitcherDialog(InspectorDialog):
     DHCP_KEY = "dhcp"
 
     def __init__(self, parent: QWidget, ps1_path: str, t: dict,
-                 is_admin: bool = True):
+                 is_admin: bool = True, lang: str = "en"):
         self._is_admin = is_admin
         self._busy = False
         self._profiles: list[dict] = []
-        super().__init__(parent, ps1_path, t)
+        super().__init__(parent, ps1_path, t, lang=lang)
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        lang = self._lang
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
-            self._button("Re-scan", TH.dialog_secondary_go_qss(t, accent),
-                         self._start),
+            self._button(I18N.tr("inspector.close", lang),
+                         TH.dialog_cancel_qss(t), self.reject),
+            self._button(I18N.tr("inspector.rescan", lang),
+                         TH.dialog_secondary_go_qss(t, accent), self._start),
         ]
 
     # -- rendering ------------------------------------------------
     def _render(self, report: dict):
+        lang = self._lang
         adapters = report.get("adapters") or []
         self._profiles = report.get("profiles") or []
         doh = bool(report.get("dohSupported"))
 
         if not adapters:
-            self._status.setText("No connected network adapters were found.")
-            self._card("Adapters").note(
-                "Pulse lists physical adapters that are currently up. A "
-                "machine on Wi-Fi with the adapter disabled, or one behind "
-                "a virtual switch only, will show nothing here.")
+            self._status.setText(I18N.tr("dns_switcher.no_adapters", lang))
+            self._card(I18N.tr("dns_switcher.adapters_title", lang)).note(
+                I18N.tr("dns_switcher.no_adapters_note", lang))
             return
 
         self._status.setText(
-            f"{len(adapters)} connected adapter(s). Changes apply to ONE "
-            "adapter at a time and can be undone with Automatic (DHCP)."
-            + ("" if doh else
-               " This build of Windows cannot encrypt DNS (DoH needs "
-               "Windows 11), so profiles are applied unencrypted."))
+            I18N.tr("dns_switcher.status", lang).format(count=len(adapters))
+            + ("" if doh else I18N.tr("dns_switcher.status_no_doh", lang)))
 
         if not self._is_admin:
-            warn = self._card("Administrator required", ("NOT ELEVATED", "warn"))
-            warn.note(
-                "DNS lives in the adapter's machine-scope settings, so "
-                "changing it needs an elevated Pulse. You can still see "
-                "what each adapter is using now.")
+            warn = self._card(I18N.tr("dns_switcher.admin_required_title", lang),
+                              (I18N.tr("dns_switcher.not_elevated_badge", lang), "warn"))
+            warn.note(I18N.tr("dns_switcher.admin_required_note", lang))
 
         for adapter in adapters:
             self._adapter_card(adapter, doh)
 
     def _adapter_card(self, adapter: dict, doh: bool):
+        lang = self._lang
         name = str(adapter.get("name") or "Adapter")
         active = str(adapter.get("activeKey") or "custom")
         servers = adapter.get("v4") or []
 
-        label = {"dhcp": "AUTOMATIC", "custom": "CUSTOM"}.get(
-            active, active.upper())
+        label = {
+            "dhcp": I18N.tr("dns_switcher.automatic_badge", lang),
+            "custom": I18N.tr("dns_switcher.custom_badge", lang),
+        }.get(active, active.upper())
         tone = "ok" if active not in ("custom",) else ""
         card = self._card(f"{name}", (label, tone))
-        card.row("Adapter", str(adapter.get("description") or ""),
+        card.row(I18N.tr("dns_switcher.adapter_label", lang),
+                 str(adapter.get("description") or ""),
                  label_width=self._LABEL_W)
-        card.row("Current DNS",
+        card.row(I18N.tr("dns_switcher.current_dns_label", lang),
                  ", ".join(servers) if servers
-                 else "Automatic (provided by your router)",
+                 else I18N.tr("dns_switcher.automatic_router", lang),
                  label_width=self._LABEL_W)
 
         # One row of choices per adapter. Automatic comes FIRST — see the
         # class docstring; the undo is not a footnote.
         strip, row = _chip_strip(self._t)
         row.addWidget(self._profile_button(
-            name, self.DHCP_KEY, "Automatic (DHCP)", active == self.DHCP_KEY))
+            name, self.DHCP_KEY, I18N.tr("dns_switcher.automatic_dhcp", lang),
+            active == self.DHCP_KEY))
         for profile in self._profiles:
             key = str(profile.get("key"))
             row.addWidget(self._profile_button(
@@ -6264,6 +6315,7 @@ class DnsSwitcherDialog(InspectorDialog):
 
     def _profile_button(self, adapter: str, key: str, label: str,
                         current: bool) -> QPushButton:
+        lang = self._lang
         btn = QPushButton(label.replace("&", "&&"))
         btn.setFixedHeight(_CHIP_H)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -6273,9 +6325,9 @@ class DnsSwitcherDialog(InspectorDialog):
         # an elevated task to achieve no change.
         btn.setEnabled(self._is_admin and not current and not self._busy)
         if current:
-            btn.setToolTip("This adapter is already using this profile.")
+            btn.setToolTip(I18N.tr("dns_switcher.already_active_tooltip", lang))
         elif not self._is_admin:
-            btn.setToolTip("Changing DNS needs an elevated Pulse.")
+            btn.setToolTip(I18N.tr("dns_switcher.needs_admin_tooltip", lang))
         btn.clicked.connect(
             lambda _c=False, a=adapter, k=key: self._apply(a, k))
         return btn
@@ -6288,10 +6340,13 @@ class DnsSwitcherDialog(InspectorDialog):
         if self._busy or self._worker is not None:
             return
         self._busy = True
+        lang = self._lang
         restoring = key == self.DHCP_KEY
         self._status.setText(
-            f"Restoring automatic DNS on {adapter}…" if restoring
-            else f"Applying {key} to {adapter}…")
+            I18N.tr("dns_switcher.restoring_status", lang).format(adapter=adapter)
+            if restoring else
+            I18N.tr("dns_switcher.applying_status", lang).format(
+                profile=key, adapter=adapter))
 
         thread = QThread(self)
         worker = PowerShellTask(
@@ -6310,13 +6365,15 @@ class DnsSwitcherDialog(InspectorDialog):
 
     def _on_applied(self, result: TaskResult):
         self._busy = False
-        self._status.setText(result.message or "DNS updated.")
+        self._status.setText(
+            result.message or I18N.tr("dns_switcher.updated", self._lang))
         # Re-scan on a beat so the worker teardown finishes first.
         QTimer.singleShot(120, self._start)
 
     def _on_apply_failed(self, message: str):
         self._busy = False
-        self._status.setText(f"Could not change DNS: {message}")
+        self._status.setText(
+            I18N.tr("dns_switcher.change_failed", self._lang).format(message=message))
 
 
 #: Directory names every toolchain uses for the same purpose, so one of
@@ -6680,31 +6737,36 @@ class ContextMenuDialog(InspectorDialog):
     # of the two context-menu cards they actually clicked.
     TITLE = "🧹  Right-Click Menu Entries"
     LOADING = "Reading shell context-menu handlers…"
+    TITLE_KEY = "context_menu.title"
+    LOADING_KEY = "context_menu.loading"
     ACCENT_KEY = "optimization"
     TIMEOUT = 300
 
     def __init__(self, parent: QWidget, ps1_path: str, t: dict,
-                 is_admin: bool = True):
+                 is_admin: bool = True, lang: str = "en"):
         self._is_admin = is_admin
         self._busy = False
         self._has_backup = False
-        super().__init__(parent, ps1_path, t)
+        super().__init__(parent, ps1_path, t, lang=lang)
 
     def action_buttons(self, t: dict, accent: str) -> list[QPushButton]:
+        lang = self._lang
         self._restore_btn = self._button(
-            "Restore All", TH.dialog_secondary_go_qss(t, accent),
-            self._restore)
+            I18N.tr("context_menu.restore_all_btn", lang),
+            TH.dialog_secondary_go_qss(t, accent), self._restore)
         self._restore_btn.setToolTip(
-            "Put every context-menu entry back exactly as it was before "
-            "Pulse changed anything.")
+            I18N.tr("context_menu.restore_all_tooltip", lang))
         self._restore_btn.setEnabled(False)
         return [
-            self._button("Close", TH.dialog_cancel_qss(t), self.reject),
+            self._button(I18N.tr("inspector.close", lang),
+                         TH.dialog_cancel_qss(t), self.reject),
             self._restore_btn,
-            self._button("Re-scan", TH.dialog_go_qss(t, accent), self._start),
+            self._button(I18N.tr("inspector.rescan", lang),
+                         TH.dialog_go_qss(t, accent), self._start),
         ]
 
     def _render(self, report: dict):
+        lang = self._lang
         items = report.get("items") or []
         managed = [i for i in items if i.get("managed")]
         others = [i for i in items if not i.get("managed")]
@@ -6713,39 +6775,36 @@ class ContextMenuDialog(InspectorDialog):
 
         hidden = sum(1 for i in items if not i.get("enabled"))
         self._status.setText(
-            f"{len(items)} handler(s) registered · {len(managed)} manageable · "
-            f"{hidden} currently hidden."
+            I18N.tr("context_menu.status", lang).format(
+                total=len(items), managed=len(managed), hidden=hidden)
             + ("" if self._is_admin else
-               "  Changing entries needs an elevated Pulse."))
+               I18N.tr("context_menu.needs_admin_suffix", lang)))
 
         if managed:
-            card = self._card("Manageable entries",
-                              (f"{len(managed)} ITEMS", ""))
+            card = self._card(
+                I18N.tr("context_menu.manageable_title", lang),
+                (I18N.tr("context_menu.items_badge", lang).format(count=len(managed)), ""))
             for item in managed:
                 self._toggle_row(card, item)
         else:
-            self._card("Manageable entries").note(
-                "None of the handlers on this machine are ones Pulse "
-                "manages. That is a good sign, not a failure — it means "
-                "nothing recognised as safe-to-hide is installed.")
+            self._card(I18N.tr("context_menu.manageable_title", lang)).note(
+                I18N.tr("context_menu.no_managed_note", lang))
 
         if others:
-            card = self._card("Other handlers", (f"{len(others)} ITEMS", ""))
-            card.note(
-                "Listed so you can see what is in your menu. Pulse does not "
-                "offer to change these: a shell extension can be doing real "
-                "work — a scanner hook, a sync provider — and blocking one "
-                "blind is how a machine breaks in a way nobody connects "
-                "back to a context menu.")
+            card = self._card(
+                I18N.tr("context_menu.other_handlers_title", lang),
+                (I18N.tr("context_menu.items_badge", lang).format(count=len(others)), ""))
+            card.note(I18N.tr("context_menu.other_handlers_note", lang))
             for item in others[:40]:
                 owner = str(item.get("owner") or "unknown module")
                 card.row(str(item.get("label") or ""),
                          f"{item.get('scope')} · {os.path.basename(owner) if owner else ''}",
                          label_width=240)
             if len(others) > 40:
-                card.note(f"Showing 40 of {len(others)}.")
+                card.note(I18N.tr("context_menu.showing_n_of", lang).format(count=len(others)))
 
     def _toggle_row(self, card: ReportSubCard, item: dict):
+        lang = self._lang
         line = QWidget()
         line.setStyleSheet("background: transparent;")
         row = QHBoxLayout(line)
@@ -6763,14 +6822,15 @@ class ContextMenuDialog(InspectorDialog):
         row.addWidget(owner)
 
         enabled = bool(item.get("enabled"))
-        btn = QPushButton("Visible" if enabled else "Hidden")
+        btn = QPushButton(I18N.tr("context_menu.visible_btn", lang) if enabled
+                          else I18N.tr("context_menu.hidden_btn", lang))
         btn.setFixedSize(88, 28)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(TH.catalog_tab_qss(self._t, self._accent, enabled))
         btn.setEnabled(self._is_admin and not self._busy)
         btn.setToolTip(
-            "Hide this entry from right-click menus." if enabled
-            else "Bring this entry back.")
+            I18N.tr("context_menu.hide_tooltip", lang) if enabled
+            else I18N.tr("context_menu.show_tooltip", lang))
         btn.clicked.connect(
             lambda _c=False, c=str(item.get("clsid")), e=enabled:
             self._toggle(c, not e))
@@ -6782,7 +6842,7 @@ class ContextMenuDialog(InspectorDialog):
         if self._busy or self._worker is not None or not clsid:
             return
         self._busy = True
-        self._status.setText("Updating the context menu…")
+        self._status.setText(I18N.tr("context_menu.updating_status", self._lang))
         # "{CLSID}|||on" — the opaque single-item channel; see the
         # ContextMenuToggle dispatcher case for why -AppIds cannot carry it.
         self._run_mutation("ContextMenuToggle",
@@ -6792,7 +6852,7 @@ class ContextMenuDialog(InspectorDialog):
         if self._busy or self._worker is not None:
             return
         self._busy = True
-        self._status.setText("Restoring the context menu…")
+        self._status.setText(I18N.tr("context_menu.restoring_status", self._lang))
         self._run_mutation("ContextMenuRestore")
 
     def _run_mutation(self, task: str, **kwargs):
@@ -6810,13 +6870,15 @@ class ContextMenuDialog(InspectorDialog):
 
     def _on_changed(self, result: TaskResult):
         self._busy = False
-        self._status.setText(result.message or "Context menu updated.")
+        self._status.setText(
+            result.message or I18N.tr("context_menu.updated", self._lang))
         # Re-scan so every row reflects the registry, not the request.
         QTimer.singleShot(120, self._start)
 
     def _on_change_failed(self, message: str):
         self._busy = False
-        self._status.setText(f"Could not change the context menu: {message}")
+        self._status.setText(
+            I18N.tr("context_menu.change_failed", self._lang).format(message=message))
 
 
 class CloseConfirmDialog(PulseDialog):
@@ -6836,7 +6898,8 @@ class CloseConfirmDialog(PulseDialog):
     the destructive one carries the error accent.
     """
 
-    def __init__(self, parent: QWidget, t: dict, task_title: str = ""):
+    def __init__(self, parent: QWidget, t: dict, task_title: str = "",
+                 lang: str = "en"):
         super().__init__(parent)
         accent = t["warn"]
         # 540, not 460: the three action buttons are named for their
@@ -6848,15 +6911,12 @@ class CloseConfirmDialog(PulseDialog):
 
         lay = dialog_body(panel, "sm")
 
-        head = QLabel("⚠️  A task is still running")
+        head = QLabel(I18N.tr("close_confirm.head", lang))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
-        running = task_title.strip() or "An operation"
-        body = QLabel(
-            f"<b>{running}</b> hasn't finished yet. Closing Pulse now stops "
-            "it partway through — the change it was making may be left half "
-            "applied, and you'll need to run it again.")
+        running = task_title.strip() or I18N.tr("close_confirm.default_task", lang)
+        body = QLabel(I18N.tr("close_confirm.body", lang).format(running=running))
         body.setWordWrap(True)
         body.setTextFormat(Qt.TextFormat.RichText)
         body.setStyleSheet(TH.label_qss(t, "body"))
@@ -6864,7 +6924,7 @@ class CloseConfirmDialog(PulseDialog):
 
         # The safe option is the default: Enter and Escape both keep the
         # task alive, so no reflexive keypress can end a long install.
-        keep = QPushButton("Keep Running")
+        keep = QPushButton(I18N.tr("close_confirm.keep_running_btn", lang))
         keep.setStyleSheet(TH.dialog_cancel_qss(t))
         keep.setDefault(True)
         keep.setAutoDefault(True)
@@ -6874,7 +6934,7 @@ class CloseConfirmDialog(PulseDialog):
         # mnemonic marker, so "Stop & Close" renders as "Stop _Close" with
         # the C underlined, which looks like a broken label. The doubled
         # ampersand is the escape that paints a literal "&".
-        stop = QPushButton("Stop && Close")
+        stop = QPushButton(I18N.tr("close_confirm.stop_close_btn", lang))
         stop.setStyleSheet(TH.dialog_go_qss(t, t["err"]))
         stop.setAutoDefault(False)
         stop.clicked.connect(self.accept)
@@ -6916,30 +6976,28 @@ class ElevatePromptDialog(PulseDialog):
     back with an access-denied verdict, and nothing else performs that
     check."""
 
-    def __init__(self, parent: QWidget, item: dict, t: dict):
+    def __init__(self, parent: QWidget, item: dict, t: dict, lang: str = "en"):
         super().__init__(parent)
         accent = t["warn"]
         panel = _dialog_chrome(self, t, accent, width=470)
 
         lay = dialog_body(panel, "sm")
 
-        head = QLabel("🛡  Administrator required")
+        head = QLabel(I18N.tr("elevate_prompt.head", lang))
         head.setStyleSheet(TH.label_qss(t, "card"))
         lay.addWidget(head)
 
-        body = QLabel(
-            f"“{item.get('title', 'This action')}” makes system-level changes "
-            "that need Administrator rights. Relaunch Pulse elevated to "
-            "continue — Windows will show a UAC consent prompt.")
+        title = item.get("title") or I18N.tr("elevate_prompt.default_title", lang)
+        body = QLabel(I18N.tr("elevate_prompt.body", lang).format(title=title))
         body.setWordWrap(True)
         body.setStyleSheet(TH.label_qss(t, "body"))
         lay.addWidget(body)
 
-        cancel = QPushButton("Not now")
+        cancel = QPushButton(I18N.tr("elevate_prompt.not_now_btn", lang))
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
 
-        go = QPushButton("Relaunch as Administrator")
+        go = QPushButton(I18N.tr("elevate_prompt.relaunch_btn", lang))
         go.setStyleSheet(TH.dialog_go_qss(t, accent))
         go.clicked.connect(self.accept)
 
@@ -6961,7 +7019,8 @@ class ShortcutSheetDialog(PulseDialog):
     exactly that reason. Rows are rendered from PulseApp.SHORTCUTS, so the
     sheet cannot drift out of sync with the bindings actually installed."""
 
-    def __init__(self, parent: QWidget, t: dict, shortcuts: list[tuple[str, str]]):
+    def __init__(self, parent: QWidget, t: dict, shortcuts: list[tuple[str, str]],
+                 lang: str = "en"):
         super().__init__(parent)
         accent = t["accent"]
         panel = _dialog_chrome(self, t, accent, width=440)
@@ -6971,7 +7030,7 @@ class ShortcutSheetDialog(PulseDialog):
                                TH.SPACE["xl"], TH.SPACE["lg"])
         lay.setSpacing(TH.SPACE["md"])
 
-        head = QLabel("Keyboard shortcuts")
+        head = QLabel(I18N.tr("shortcut_sheet.head", lang))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         lay.addWidget(head)
 
@@ -6983,12 +7042,12 @@ class ShortcutSheetDialog(PulseDialog):
             key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             key_label.setFixedWidth(120)
             row.addWidget(key_label, 0, Qt.AlignmentFlag.AlignVCenter)
-            desc = QLabel(description)
+            desc = QLabel(I18N_CAT.tr_desc(description, lang))
             desc.setStyleSheet(TH.label_qss(t, "body"))
             row.addWidget(desc, 1)
             lay.addLayout(row)
 
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("shortcut_sheet.close_btn", lang))
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         dialog_footer(lay, close)
@@ -11053,9 +11112,11 @@ class SelfUpdateDialog(PulseDialog):
                   prune() to clean up later.
     """
 
-    def __init__(self, parent: QWidget, t: dict, update: "updater.Update"):
+    def __init__(self, parent: QWidget, t: dict, update: "updater.Update",
+                 lang: str = "en"):
         super().__init__(parent)
         self._t = t
+        self._lang = lang
         self._update = update
         self._thread: QThread | None = None
         self._worker: SelfUpdateInstallWorker | None = None
@@ -11068,14 +11129,14 @@ class SelfUpdateDialog(PulseDialog):
         panel = _dialog_chrome(self, t, accent, width=480)
         lay = dialog_body(panel, "md")
 
-        head = QLabel(f"🚀  Pulse v{update.version} is available")
+        head = QLabel(I18N.tr("self_update.head", lang).format(version=update.version))
         head.setStyleSheet(TH.label_qss(t, "dialog"))
         head.setWordWrap(True)
         lay.addWidget(head)
 
         meta_bits = [f"{update.size_mb:.1f} MB"]
         if update.prerelease:
-            meta_bits.append("pre-release")
+            meta_bits.append(I18N.tr("self_update.prerelease_tag", lang))
         self._meta = QLabel("  ·  ".join(meta_bits))
         self._meta.setStyleSheet(TH.label_qss(t, "caption"))
         lay.addWidget(self._meta)
@@ -11095,7 +11156,7 @@ class SelfUpdateDialog(PulseDialog):
 
     # -- page builders ----------------------------------------------
     def _build_notes_page(self) -> QWidget:
-        t = self._t
+        t, lang = self._t, self._lang
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -11107,7 +11168,7 @@ class SelfUpdateDialog(PulseDialog):
         host = QWidget()
         host.setStyleSheet("background: transparent;")
         host_lay = scroll_host_layout(host, "sm")
-        notes = QLabel(self._update.notes or "No release notes were published.")
+        notes = QLabel(self._update.notes or I18N.tr("self_update.no_notes", lang))
         notes.setWordWrap(True)
         notes.setStyleSheet(TH.label_qss(t, "body"))
         host_lay.addWidget(notes)
@@ -11120,7 +11181,7 @@ class SelfUpdateDialog(PulseDialog):
             # to hand an installer to (see updater.can_apply). The honest
             # move is to say so and offer the release page, not a Download
             # & Install button that would fail the moment it's clicked.
-            reason = QLabel(f"ℹ️  {self._apply_reason}")
+            reason = QLabel(f"ℹ️  {I18N_CAT.tr_desc(self._apply_reason, lang)}")
             reason.setWordWrap(True)
             reason.setStyleSheet(TH.label_qss(t, "caption"))
             lay.addWidget(reason)
@@ -11128,18 +11189,18 @@ class SelfUpdateDialog(PulseDialog):
         lay.addSpacing(TH.SPACE["xs"])
         row = QHBoxLayout()
         row.addStretch()
-        later = QPushButton("Later")
+        later = QPushButton(I18N.tr("self_update.later_btn", lang))
         size_dialog_button(later)
         later.setStyleSheet(TH.dialog_cancel_qss(t))
         later.clicked.connect(self.reject)
         row.addWidget(later)
 
         if self._can_apply:
-            go = QPushButton("Download && Install")
+            go = QPushButton(I18N.tr("self_update.download_install_btn", lang))
             size_dialog_button(go)
             go.clicked.connect(self._start_download)
         else:
-            go = QPushButton("View Release")
+            go = QPushButton(I18N.tr("self_update.view_release_btn", lang))
             size_dialog_button(go)
             go.clicked.connect(self._open_release_page)
         go.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -11149,7 +11210,7 @@ class SelfUpdateDialog(PulseDialog):
         return page
 
     def _build_progress_page(self) -> QWidget:
-        t = self._t
+        t, lang = self._t, self._lang
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
@@ -11158,7 +11219,7 @@ class SelfUpdateDialog(PulseDialog):
         self._shimmer = ShimmerBar(height=6)
         self._shimmer.set_theme(t)
         lay.addWidget(self._shimmer)
-        self._progress_label = QLabel("Downloading…")
+        self._progress_label = QLabel(I18N.tr("self_update.downloading", lang))
         self._progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._progress_label.setWordWrap(True)
         self._progress_label.setStyleSheet(TH.label_qss(t, "body"))
@@ -11166,7 +11227,7 @@ class SelfUpdateDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(I18N.tr("self_update.cancel_btn", lang))
         size_dialog_button(cancel)
         cancel.setStyleSheet(TH.dialog_cancel_qss(t))
         cancel.clicked.connect(self.reject)
@@ -11175,7 +11236,7 @@ class SelfUpdateDialog(PulseDialog):
         return page
 
     def _build_ready_page(self) -> QWidget:
-        t = self._t
+        t, lang = self._t, self._lang
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
@@ -11186,8 +11247,7 @@ class SelfUpdateDialog(PulseDialog):
         icon.setStyleSheet(f"font-size: {TH.TYPE['hero']}px; background: transparent; border: none;")
         lay.addWidget(icon)
         msg = QLabel(
-            f"Verified — v{self._update.version}'s SHA-256 matches the "
-            "published digest. Pulse will close and Setup will take over.")
+            I18N.tr("self_update.verified_msg", lang).format(version=self._update.version))
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         msg.setWordWrap(True)
         msg.setStyleSheet(TH.label_qss(t, "body"))
@@ -11195,12 +11255,12 @@ class SelfUpdateDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        later = QPushButton("Later")
+        later = QPushButton(I18N.tr("self_update.later_btn", lang))
         size_dialog_button(later)
         later.setStyleSheet(TH.dialog_cancel_qss(t))
         later.clicked.connect(self.reject)
         row.addWidget(later)
-        go = QPushButton("Restart && Update")
+        go = QPushButton(I18N.tr("self_update.restart_update_btn", lang))
         size_dialog_button(go)
         go.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         go.clicked.connect(self.accept)
@@ -11209,7 +11269,7 @@ class SelfUpdateDialog(PulseDialog):
         return page
 
     def _build_error_page(self) -> QWidget:
-        t = self._t
+        t, lang = self._t, self._lang
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, TH.SPACE["xxl"], 0, TH.SPACE["xl"])
@@ -11227,12 +11287,12 @@ class SelfUpdateDialog(PulseDialog):
         lay.addStretch()
         row = QHBoxLayout()
         row.addStretch()
-        close = QPushButton("Close")
+        close = QPushButton(I18N.tr("dialog.close", lang))
         size_dialog_button(close)
         close.setStyleSheet(TH.dialog_cancel_qss(t))
         close.clicked.connect(self.reject)
         row.addWidget(close)
-        retry = QPushButton("Retry")
+        retry = QPushButton(I18N.tr("self_update.retry_btn", lang))
         size_dialog_button(retry)
         retry.setStyleSheet(TH.dialog_go_qss(t, t["accent"]))
         retry.clicked.connect(self._start_download)
@@ -11270,10 +11330,12 @@ class SelfUpdateDialog(PulseDialog):
     def _on_progress(self, received: int, total: int):
         mb = received / (1024 * 1024)
         total_mb = (total / (1024 * 1024)) if total else self._update.size_mb
-        self._progress_label.setText(f"Downloading… {mb:.1f} / {total_mb:.1f} MB")
+        self._progress_label.setText(
+            I18N.tr("self_update.downloading_progress", self._lang).format(
+                mb=mb, total_mb=total_mb))
 
     def _on_verifying(self):
-        self._progress_label.setText("Verifying SHA-256…")
+        self._progress_label.setText(I18N.tr("self_update.verifying", self._lang))
 
     def _on_install_finished(self, ok: bool, payload: str):
         self._shimmer.stop()
@@ -11285,7 +11347,8 @@ class SelfUpdateDialog(PulseDialog):
             self.installer_path = payload
             self._stack.setCurrentWidget(self._ready_page)
         else:
-            self._error_label.setText(payload or "The update could not be installed.")
+            self._error_label.setText(
+                payload or I18N.tr("self_update.install_failed", self._lang))
             self._stack.setCurrentWidget(self._error_page)
 
     def _on_thread_finished(self):

@@ -63,6 +63,13 @@ backend-authored-data-table precedent above, on the same reasoning —
 see widgets.py's own notes on each for exactly which backend module and
 field they were read off.
 
+TWO MORE FINITE STRING SETS JOIN THE SAME LOOKUP (v10.17.3):
+utils.updater.can_apply()'s one non-empty refusal reason (SelfUpdate-
+Dialog's notes page, shown when the running build cannot hand off to an
+installer) and PulseApp.SHORTCUTS' nine row descriptions (Shortcut-
+SheetDialog) — the app's own fixed, non-interpolated copy, not a
+catalog entry, but the exact-text lookup fits it exactly the same way.
+
 WHAT THIS DOES NOT COVER, on purpose (see i18n.py's own scope note and
 ROADMAP.md): dialogs opened FROM a card that are not one of the ones
 covered above — the Restore Point Browser and the Health Report — stay
@@ -224,6 +231,17 @@ TITLES: dict[str, str] = {
     "Not on this PATH": "غير موجود في PATH هذا",
     "Split across scopes": "مقسَّم بين النطاقين",
     "Re-scan needed": "يلزم إعادة الفحص",
+
+    # -- DataHygieneDialog's own rows (v10.17.3) — utils.datastore.
+    # CATEGORIES' own label/consequence pairs, Pulse's own Python-authored
+    # copy (not PowerShell this time, but the same "this is Pulse's own
+    # copy, not live system output" reasoning).
+    "Operation logs": "سجلات العمليات",
+    "Downloaded installers": "المثبِّتات المنزَّلة",
+    "Edge backup": "نسخة Edge الاحتياطية",
+    "Rescued OneDrive files": "ملفات OneDrive المنقذة",
+    "Startup item backups": "نسخ عناصر بدء التشغيل الاحتياطية",
+    "Driver backups": "نسخ برامج التشغيل الاحتياطية",
 }
 
 #: English tagline/desc (a card's "desc", a category's "tagline") ->
@@ -989,6 +1007,66 @@ DESCRIPTIONS: dict[str, str] = {
     "on this PC.":
         "إدخال في قائمة النقر بالزر الأيمن يشغِّل برنامجًا غير "
         "موجود على هذا الجهاز.",
+
+    # -- DataHygieneDialog's own rows (v10.17.3) — see the matching
+    # note in TITLES above.
+    "Diagnostic history only. Pulse writes a new log on the next "
+    "run.":
+        "سجل تشخيصي فقط. يكتب Pulse سجلًا جديدًا في المرة القادمة.",
+    "Update downloads Pulse can fetch again. Already pruned "
+    "automatically after 7 days.":
+        "تنزيلات تحديث يمكن لـPulse جلبها مجددًا. تُقلَّم تلقائيًا "
+        "بعد 7 أيام أصلًا.",
+    "Your Edge bookmarks, favourites and preferences, saved before "
+    "Edge was removed. Deleting this means Restore Edge can no "
+    "longer bring them back.":
+        "إشارات Edge المرجعية والمفضلة والتفضيلات، محفوظة قبل إزالة "
+        "Edge. حذف هذا يعني أن استعادة Edge لن تتمكن من إعادتها.",
+    "Your own files, copied out of OneDrive before the client was "
+    "uninstalled. For anything that was not synced elsewhere, this "
+    "is the only copy.":
+        "ملفاتك الخاصة، نُسخت من OneDrive قبل إلغاء تثبيت العميل. "
+        "لأي شيء لم يُزامَن في مكان آخر، هذه هي النسخة الوحيدة.",
+    "Shortcuts moved aside by the Startup Manager. Deleting this "
+    "means they cannot be put back.":
+        "اختصارات نحّاها مدير بدء التشغيل جانبًا. حذف هذا يعني أنه "
+        "لا يمكن إعادتها.",
+    "Third-party driver packages exported by Driver Backup. "
+    "Re-exportable while the drivers are still installed.":
+        "حزم برامج تشغيل خارجية صدَّرتها النسخة الاحتياطية لبرامج "
+        "التشغيل. يمكن إعادة تصديرها ما دامت برامج التشغيل مثبَّتة.",
+
+    # -- PulseApp.SHORTCUTS row descriptions (v10.17.3). Fixed, non-
+    # interpolated strings owned by the app itself — same exact-text
+    # lookup as everything else in this dict.
+    "Search everything":
+        "البحث في كل شيء",
+    "Filter this module by status":
+        "تصفية هذه الوحدة بالحالة",
+    "Go to the dashboard":
+        "الانتقال إلى لوحة المعلومات",
+    "Jump to a module":
+        "الانتقال إلى وحدة",
+    "Show / hide live output":
+        "إظهار / إخفاء الإخراج المباشر",
+    "Move between sections — search, sidebar, cards":
+        "التنقل بين الأقسام — البحث، الشريط الجانبي، البطاقات",
+    "Move between cards in the grid":
+        "التنقل بين البطاقات في الشبكة",
+    "Run the focused card":
+        "تشغيل البطاقة المُركَّز عليها",
+    "Back to the dashboard":
+        "العودة إلى لوحة المعلومات",
+    "This shortcut sheet":
+        "ورقة الاختصارات هذه",
+
+    # -- utils.updater.can_apply's one non-empty reason (v10.17.3). Finite,
+    # non-interpolated backend text — same exact-text lookup as the rest
+    # of this dict.
+    "Pulse is running from source; update it with git "
+    "rather than an installer.":
+        "يعمل Pulse من الشيفرة المصدرية؛ حدِّثه باستخدام git "
+        "بدلًا من مُثبِّت.",
 }
 
 

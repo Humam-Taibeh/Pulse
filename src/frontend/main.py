@@ -2978,7 +2978,7 @@ class PulseApp(QMainWindow):
             self._open_update_dialog(self._pending_update)
 
     def _open_update_dialog(self, update):
-        dialog = SelfUpdateDialog(self, self.theme.t, update)
+        dialog = SelfUpdateDialog(self, self.theme.t, update, lang=self._language)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.installer_path:
             return
         if self._busy():
@@ -3046,7 +3046,8 @@ class PulseApp(QMainWindow):
         if not self.ps1_path:
             self.toasts.show("error", f"{PS1_FILENAME} not found — engine unavailable.", 5000)
             return
-        self._exec_dialog(ActivationStatusDialog(self, self.ps1_path, self.theme.t))
+        self._exec_dialog(ActivationStatusDialog(self, self.ps1_path, self.theme.t,
+                                                 lang=self._language))
 
     # ============================================================
     #  PLAYBOOKS (v10.3)
@@ -3223,7 +3224,8 @@ class PulseApp(QMainWindow):
             return
 
         playbooks, errors = load_playbooks()
-        dialog = PlaybookDialog(self, playbooks, errors, self.theme.t, self.is_admin)
+        dialog = PlaybookDialog(self, playbooks, errors, self.theme.t, self.is_admin,
+                                lang=self._language)
         if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
         if dialog.chosen is None:
@@ -3242,15 +3244,15 @@ class PulseApp(QMainWindow):
         """
         if not dry_run and playbook.needs_admin and not self.is_admin:
             item = {"icon": playbook.icon, "title": playbook.name,
-                    "desc": f"This playbook changes machine-wide settings, so "
-                            f"Pulse needs to run elevated. Preview still works "
-                            f"without elevation."}
+                    "desc": i18n.tr("playbook.needs_admin_desc", self._language)}
             if self._exec_dialog(
-                    ElevatePromptDialog(self, item, self.theme.t)) == QDialog.DialogCode.Accepted:
+                    ElevatePromptDialog(self, item, self.theme.t,
+                                       lang=self._language)) == QDialog.DialogCode.Accepted:
                 self._relaunch_as_admin()
             return
 
-        dialog = PlaybookDialog(self, [playbook], [], self.theme.t, self.is_admin)
+        dialog = PlaybookDialog(self, [playbook], [], self.theme.t, self.is_admin,
+                                lang=self._language)
         runner = PlaybookRunner(self.ps1_path, playbook, dry_run=dry_run, parent=self)
         self._playbook_runner = runner
         self._playbook_dialog = dialog
@@ -3373,7 +3375,8 @@ class PulseApp(QMainWindow):
             self._open_command_palette()
 
     def _open_shortcut_sheet(self):
-        self._exec_dialog(ShortcutSheetDialog(self, self.theme.t, self.SHORTCUTS))
+        self._exec_dialog(ShortcutSheetDialog(self, self.theme.t, self.SHORTCUTS,
+                                               lang=self._language))
 
     # ============================================================
     #  COMMAND PALETTE (Ctrl+K)
@@ -3468,7 +3471,7 @@ class PulseApp(QMainWindow):
         # and it covers category cards, dashboard Quick Actions and Ctrl+K in
         # one place. The backend still enforces the same gate as a backstop.
         if requires_admin(task) and not self.is_admin:
-            dialog = ElevatePromptDialog(self, item, self.theme.t)
+            dialog = ElevatePromptDialog(self, item, self.theme.t, lang=self._language)
             if self._exec_dialog(dialog) == QDialog.DialogCode.Accepted:
                 self._relaunch_as_admin()
             return
@@ -3503,7 +3506,7 @@ class PulseApp(QMainWindow):
                 and self._tweak_state.get(task) in ("applied", "mixed", True)):
             choice = RevertChoiceDialog(self, item, self.theme.t,
                                         "mixed" if self._tweak_state.get(task) == "mixed"
-                                        else "applied")
+                                        else "applied", lang=self._language)
             if self._exec_dialog(choice) != QDialog.DialogCode.Accepted:
                 return
             if choice.choice == "revert":
@@ -3536,11 +3539,12 @@ class PulseApp(QMainWindow):
             verdict = self._tweak_state.get(probe_key)
             if verdict in ("default", False):
                 self._exec_dialog(NoticeDialog(
-                    self, f"{app_name} is already installed",
-                    f"{app_name} is already on this PC, so there is nothing "
-                    "to restore. Use the removal action in this hub first if "
-                    "you meant to take it off, or close this and carry on.",
-                    self.theme.t))
+                    self,
+                    i18n.tr("notice.already_installed_title", self._language)
+                        .format(name=app_name),
+                    i18n.tr("notice.already_installed_body", self._language)
+                        .format(name=app_name),
+                    self.theme.t, lang=self._language))
                 return
             # Absent — or UNKNOWN, which takes the same branch on purpose:
             # the wizard asks the user rather than guessing, and its winget
@@ -3568,7 +3572,8 @@ class PulseApp(QMainWindow):
             # live list, re-scanned after every change so the rows show
             # the registry rather than the request.
             self._exec_dialog(ContextMenuDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin,
+                lang=self._language))
             return
         if item.get("path_conflicts"):
             # Self-contained like the DNS switcher: it scans, promotes one
@@ -3594,13 +3599,15 @@ class PulseApp(QMainWindow):
             # is passed in so the dialog can show what each adapter uses
             # WITHOUT elevation and disable only the change buttons.
             self._exec_dialog(DnsSwitcherDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin,
+                lang=self._language))
             return
         if item.get("storage_analyzer"):
             # Same shape: a read-only scan that hands nothing back. It owns
             # its own drive picker and re-scans in place, so there is no
             # selection for the task pipeline to carry.
-            self._exec_dialog(StorageAnalyzerDialog(self, self.ps1_path, self.theme.t))
+            self._exec_dialog(StorageAnalyzerDialog(self, self.ps1_path, self.theme.t,
+                                                     lang=self._language))
             return
         if item.get("update_center"):
             dialog = UpdateCenterDialog(self, self.ps1_path, self.theme.t,
@@ -3901,7 +3908,8 @@ class PulseApp(QMainWindow):
         # inside its dialog, exactly like the activation report, so opening
         # one never occupies the shell's single-task pipeline.
         if task == "@power_health":
-            self._exec_dialog(PowerHealthDialog(self, self.ps1_path, self.theme.t))
+            self._exec_dialog(PowerHealthDialog(self, self.ps1_path, self.theme.t,
+                                                lang=self._language))
             return
         if task == "@restore_points":
             self._exec_dialog(RestorePointDialog(self, self.ps1_path, self.theme.t))
@@ -3910,7 +3918,7 @@ class PulseApp(QMainWindow):
         # %LOCALAPPDATA%\PULSE, which the GUI owns and the backend has no
         # part in.
         if task == "@data_hygiene":
-            self._exec_dialog(DataHygieneDialog(self, self.theme.t))
+            self._exec_dialog(DataHygieneDialog(self, self.theme.t, lang=self._language))
             return
 
         desktop = resources.desktop_dir()
@@ -4514,7 +4522,8 @@ class PulseApp(QMainWindow):
             else:
                 title = (self._running_item or {}).get("title", "")
             if self._exec_dialog(
-                    CloseConfirmDialog(self, self.theme.t, title)) != QDialog.DialogCode.Accepted:
+                    CloseConfirmDialog(self, self.theme.t, title,
+                                       lang=self._language)) != QDialog.DialogCode.Accepted:
                 event.ignore()
                 return
 
