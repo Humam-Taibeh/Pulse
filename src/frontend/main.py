@@ -158,6 +158,12 @@ _REVERT_TASKS: dict[str, str] = {
     "ExplorerShowHidden": "RevertExplorerShowHidden",
     "ExplorerShowProtected": "RevertExplorerShowProtected",
     "ExplorerHideRecommended": "RevertExplorerHideRecommended",
+    # v1.2 granular taskbar toggles — same shape, same reasoning.
+    "TaskbarSearchIconOnly": "RevertTaskbarSearchIconOnly",
+    "TaskbarShowEndTask": "RevertTaskbarShowEndTask",
+    "TaskbarHideCopilot": "RevertTaskbarHideCopilot",
+    "TaskbarHideTaskView": "RevertTaskbarHideTaskView",
+    "TaskbarDisableTransparency": "RevertTaskbarDisableTransparency",
 }
 
 #: The bundled-Microsoft-app restores that check the machine BEFORE offering

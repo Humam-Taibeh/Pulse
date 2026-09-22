@@ -916,6 +916,28 @@ GLYPHS: dict[str, tuple[str, str]] = {
     'showhidden':    ("\uE7B3", "\U0001f441\uFE0F"),  # Show Hidden Files
     'showprotected': ("\uE785", "\U0001f513"),    # Show Protected System Files
     'explorernorecs': ("\uE8A9", "\U0001f5c3\uFE0F"),  # Remove Explorer Recommendations
+    # --- v1.2 granular taskbar toggles ---
+    # Same advance-width verification as the block above, plus a rendered
+    # visual pass (a labelled PNG grid of candidate codepoints at 28px)
+    # before picking the semantically closest one of each real match -
+    # several plausible-looking codepoints in this range render as an
+    # unrelated shape, which only a visual check catches. The first pass
+    # here picked E721/EA80/E790, which test_no_two_glyphs_are_the_same_
+    # codepoint (test_contract.py) correctly caught as byte-identical to
+    # the pre-existing 'search'/'tip'/'palette' entries - exactly the
+    # class of silent duplication that test exists to catch, and proof it
+    # works. Replaced with codepoints cross-checked against the full
+    # GLYPHS table, not just against each other.
+    'searchicon':    ("\uE11A", "\U0001f50d"),    # Compact Search Box (magnifying glass, alt glyph)
+    # E71A LOOKED plausible from its name ("Cancel") and passed the
+    # advance-width check, but rendered as a plain rounded square, not an
+    # X - only caught by actually looking at the live card in a real
+    # screenshot (see the v1.2 GUI verification pass). E711 was then
+    # confirmed to be the genuine X.
+    'endtask':       ("\uE711", "\u274C"),        # Enable 'End Task' (cancel/X)
+    'nocopilot':     ("\uE99A", "\U0001f916"),    # Hide Copilot Button (robot face - AI assistant)
+    'notaskview':    ("\uE7C4", "\U0001fa9f"),    # Hide Task View Button (overlapping windows)
+    'notransparency': ("\uEB42", "\U0001f4a7"),   # Disable Transparency Effects (droplet - opacity)
     # --- maintenance ---
     'broom':         ("\uEA99", "\U0001f9f9"),    # Aggressive Cache Clean
     'disk':          ("\uEDA2", "\U0001f4be"),    # Optimize All Drives

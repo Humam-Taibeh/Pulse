@@ -150,6 +150,81 @@ $Script:TweakCatalog = @(
         Entries = @(
             @{ Path = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"; Name = "HideRecommendedSection"; OnValue = 1; OffValue = 0; Type = "DWord" }
         )
+    },
+    # ------------------------------------------------------------
+    # v1.2 GRANULAR TASKBAR TOGGLES. "Minimalist Taskbar" (below, in
+    # 06-Tweaks.ps1 - a bespoke function predating this data-driven
+    # engine) already owns TaskbarAl/TaskbarDa/TaskbarMn as one bundle;
+    # these five are deliberately built on DIFFERENT registry values so
+    # neither feature's Backup-OriginalRegValue snapshot can ever
+    # shadow the other's (first-write-wins is keyed on TweakKey+Path+
+    # Name, and two catalog entries racing to "own" the same value's
+    # snapshot is exactly the kind of bug Restore-OriginalRegValue's own
+    # notes warn about). Same shape as the Start Menu / File Explorer
+    # blocks above: plain HKCU values, no $Script:AdminRequiredTasks
+    # entry needed for any of them. All five values were read live off
+    # this build (26200) with Get-ItemProperty before being trusted, and
+    # the End Task / Copilot keys cross-checked against current
+    # Microsoft-documented behaviour - see each entry's own note for the
+    # OS-version caveat where one is real.
+    # ------------------------------------------------------------
+    @{
+        Key         = "TaskbarSearchIconOnly"
+        Category    = "Taskbar"
+        Description = "Shows the taskbar search as a compact icon instead of the full search box."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name = "SearchboxTaskbarMode"; OnValue = 1; OffValue = 2; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "TaskbarShowEndTask"
+        Category    = "Taskbar"
+        # Windows' own Settings > System > For developers page exposes
+        # this same switch as "End task" - this is that documented
+        # lever, not a reverse-engineered one. Confirmed present and
+        # writable on this build; community-documented as landing in
+        # Windows 11 23H2 (build 22631) - the card's note says so rather
+        # than claiming it works everywhere.
+        Description = "Adds 'End Task' to the right-click menu on taskbar app icons - kill a frozen app in one click, without opening Task Manager first."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"; Name = "TaskbarEndTask"; OnValue = 1; OffValue = 0; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "TaskbarHideCopilot"
+        Category    = "Taskbar"
+        # Microsoft's taskbar Copilot experience has been in flux through
+        # 2026 (features renamed/pulled back/reintroduced) - this toggles
+        # the one documented registry lever for the taskbar button
+        # regardless of which Copilot UI currently occupies that slot. A
+        # build with no Copilot button present simply has nothing for
+        # this to hide.
+        Description = "Hides the Copilot button from the taskbar, on builds that show one."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowCopilotButton"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "TaskbarHideTaskView"
+        Category    = "Taskbar"
+        Description = "Hides the Task View button from the taskbar."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowTaskViewButton"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
+    },
+    @{
+        Key         = "TaskbarDisableTransparency"
+        Category    = "Taskbar"
+        # There is no taskbar-only transparency lever - this is Windows'
+        # own system-wide "Transparency effects" switch (Settings >
+        # Personalization > Colors), which also affects Start and Action
+        # Center. Documented honestly rather than overclaiming a
+        # taskbar-scoped effect that does not exist, the same standard
+        # ExplorerHideRecommended's entry above holds itself to.
+        Description = "Turns off Windows' transparency/blur effects on the taskbar, Start menu and Action Center for a solid look. This is Windows' own system-wide switch - there is no taskbar-only lever, so Start and Action Center change too."
+        Entries = @(
+            @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name = "EnableTransparency"; OnValue = 0; OffValue = 1; Type = "DWord" }
+        )
     }
 )
 

@@ -57,6 +57,11 @@ _PROGRAMMATIC = {
     "RevertExplorerLaunchToThisPC", "RevertExplorerShowFileExt",
     "RevertExplorerShowHidden", "RevertExplorerShowProtected",
     "RevertExplorerHideRecommended",
+    # v1.2 granular taskbar toggles — same shape: reached only via
+    # main._REVERT_TASKS, never a card's `task`.
+    "RevertTaskbarSearchIconOnly", "RevertTaskbarShowEndTask",
+    "RevertTaskbarHideCopilot", "RevertTaskbarHideTaskView",
+    "RevertTaskbarDisableTransparency",
     # v1.0+ Phase 1 read-only inspectors. Same shape as HealthReport and
     # ActivationStatus: the CARD is a GUI-local action ("@power_health",
     # "@restore_points") because the report is rendered by a dialog that

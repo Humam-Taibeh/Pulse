@@ -82,6 +82,12 @@ WHAT THIS DOES NOT COVER, on purpose (see i18n.py's own scope note and
 ROADMAP.md): dialogs opened FROM a card that are not one of the ones
 covered above — the Restore Point Browser and the Health Report — stay
 English in this pass.
+
+ONE NEW BAND, FIVE NEW CARDS (v1.2): "TASKBAR" (menu_structure.py,
+System & Tweaks, right after INTERFACE) — the granular taskbar toggles
+(compact search, End Task, Copilot, Task View, transparency), covered
+the same way as the v1.1 bands above, including the same `note`-field
+gap for the two OS-version-gated cards.
 """
 from __future__ import annotations
 
@@ -101,6 +107,8 @@ TITLES: dict[str, str] = {
     "PERFORMANCE & POWER": "الأداء والطاقة",
     "NETWORK": "الشبكة",
     "INTERFACE": "الواجهة",
+    # v1.2 — granular taskbar toggles.
+    "TASKBAR": "شريط المهام",
     # v1.1 — Start Menu customization / File Explorer behavior.
     "START MENU": "قائمة ابدأ",
     "FILE EXPLORER": "مستكشف الملفات",
@@ -178,6 +186,14 @@ TITLES: dict[str, str] = {
     "Show Hidden Files": "إظهار الملفات المخفية",
     "Show Protected System Files": "إظهار ملفات النظام المحمية",
     "Remove Explorer Recommendations": "إزالة توصيات مستكشف الملفات",
+
+    # -- v1.2 granular taskbar toggles ------------------------------------
+    "Compact Search Box": "مربع بحث مضغوط",
+    "Enable Taskbar End Task": "تفعيل ‘إنهاء المهمة’ في شريط المهام",
+    "Hide Copilot Button": "إخفاء زر Copilot",
+    "Hide Task View Button": "إخفاء زر عرض المهام",
+    "Disable Transparency Effects": "تعطيل تأثيرات الشفافية",
+
     "Scan & Purge Leftovers": "فحص المخلّفات وإزالتها",
     "Scan PATH & Environment": "فحص PATH ومتغيرات البيئة",
     "Startup Manager": "مدير بدء التشغيل",
@@ -447,6 +463,21 @@ DESCRIPTIONS: dict[str, str] = {
         "افتراضيًا. يكتفي Pulse بإظهارها هنا — ولا يمسّها أبدًا.",
     "Hide the Recommended section from File Explorer's Home view.":
         "إخفاء قسم التوصيات من الصفحة الرئيسية لمستكشف الملفات.",
+
+    # -- v1.2 granular taskbar toggles ------------------------------------
+    "Show the taskbar search as a compact icon instead of the full search box.":
+        "عرض بحث شريط المهام كأيقونة مضغوطة بدلًا من مربع البحث الكامل.",
+    "Add 'End Task' to the right-click menu on taskbar app icons.":
+        "إضافة ‘إنهاء المهمة’ إلى قائمة النقر بالزر الأيمن على "
+        "أيقونات شريط المهام.",
+    "Hide the Copilot button from the taskbar, on builds that show one.":
+        "إخفاء زر Copilot من شريط المهام، في الإصدارات التي تعرضه.",
+    "Hide the Task View button from the taskbar.":
+        "إخفاء زر عرض المهام من شريط المهام.",
+    "Turn off Windows' transparency/blur effects on the taskbar, Start "
+    "menu and Action Center for a solid look.":
+        "إيقاف تأثيرات الشفافية والتمويه في شريط المهام وقائمة ابدأ "
+        "ومركز الإجراءات للحصول على مظهر صلب.",
 
     "See what Pulse keeps on this PC — logs, backups and rescued "
     "files — and remove any of it.":

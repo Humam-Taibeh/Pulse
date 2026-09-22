@@ -334,6 +334,40 @@ function Restore-ExplorerHideRecommendedTweak {
     return $Ok
 }
 
+# ---- v1.2 granular taskbar toggles ----
+# Same shape and same reasoning as the Start Menu / File Explorer restores
+# above: all five are per-user values Explorer re-reads on its own, so no
+# "push it into the live session" extra step is needed.
+function Restore-TaskbarSearchIconOnlyTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarSearchIconOnly" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -DefaultIfMissing "2"
+    if ($Ok) { Write-Success "Taskbar search box reverted." } else { Write-ErrorX "Taskbar search box reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarShowEndTaskTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarShowEndTask" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -Name "TaskbarEndTask" -DefaultIfMissing "0"
+    if ($Ok) { Write-Success "Taskbar 'End Task' entry reverted." } else { Write-ErrorX "Taskbar 'End Task' entry reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarHideCopilotTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarHideCopilot" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowCopilotButton" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Copilot taskbar button reverted." } else { Write-ErrorX "Copilot taskbar button reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarHideTaskViewTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarHideTaskView" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Task View button reverted." } else { Write-ErrorX "Task View button reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarDisableTransparencyTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarDisableTransparency" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Transparency effects reverted." } else { Write-ErrorX "Transparency effects reset failed - see the error above." }
+    return $Ok
+}
+
 function Restore-TelemetryTweak {
     # Policy value only, matching what the bulk reset has always restored.
     # DiagTrack's service state is service-snapshot territory - that undo

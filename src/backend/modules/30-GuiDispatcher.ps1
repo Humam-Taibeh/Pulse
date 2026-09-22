@@ -679,6 +679,37 @@ function Invoke-GuiTask {
                     -FailureMessage "Could not hide File Explorer's Recommended section."
                 break
             }
+            # ---- v1.2 granular taskbar toggles ----
+            "TaskbarSearchIconOnly" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarSearchIconOnly") -State "On" } `
+                    -SuccessMessage "Taskbar search is now a compact icon." `
+                    -FailureMessage "Could not change the taskbar search box."
+                break
+            }
+            "TaskbarShowEndTask" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarShowEndTask") -State "On" } `
+                    -SuccessMessage "'End Task' added to the taskbar's right-click menu." `
+                    -FailureMessage "Could not add 'End Task' to the taskbar's right-click menu."
+                break
+            }
+            "TaskbarHideCopilot" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarHideCopilot") -State "On" } `
+                    -SuccessMessage "Copilot button hidden from the taskbar." `
+                    -FailureMessage "Could not hide the Copilot button."
+                break
+            }
+            "TaskbarHideTaskView" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarHideTaskView") -State "On" } `
+                    -SuccessMessage "Task View button hidden from the taskbar." `
+                    -FailureMessage "Could not hide the Task View button."
+                break
+            }
+            "TaskbarDisableTransparency" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarDisableTransparency") -State "On" } `
+                    -SuccessMessage "Transparency effects turned off." `
+                    -FailureMessage "Could not turn off transparency effects."
+                break
+            }
             "NetworkOptimization" {
                 Complete-GuiTask -Action { Invoke-NetworkOptimization } `
                     -SuccessMessage "Network stack reset and DNS flushed. A restart is recommended." `
@@ -951,6 +982,41 @@ function Invoke-GuiTask {
                 Complete-GuiTask -Action { Restore-ExplorerHideRecommendedTweak } `
                     -SuccessMessage "File Explorer's Recommended section reverted to your original setting." `
                     -FailureMessage "Could not revert File Explorer's Recommended section."
+                break
+            }
+            "RevertTaskbarSearchIconOnly" {
+                Write-Log "GUI-TASK: reverting the taskbar search box."
+                Complete-GuiTask -Action { Restore-TaskbarSearchIconOnlyTweak } `
+                    -SuccessMessage "Taskbar search box reverted to your original setting." `
+                    -FailureMessage "Could not revert the taskbar search box."
+                break
+            }
+            "RevertTaskbarShowEndTask" {
+                Write-Log "GUI-TASK: reverting the taskbar 'End Task' entry."
+                Complete-GuiTask -Action { Restore-TaskbarShowEndTaskTweak } `
+                    -SuccessMessage "Taskbar 'End Task' entry reverted to your original setting." `
+                    -FailureMessage "Could not revert the taskbar 'End Task' entry."
+                break
+            }
+            "RevertTaskbarHideCopilot" {
+                Write-Log "GUI-TASK: reverting the Copilot taskbar button."
+                Complete-GuiTask -Action { Restore-TaskbarHideCopilotTweak } `
+                    -SuccessMessage "Copilot taskbar button reverted to your original setting." `
+                    -FailureMessage "Could not revert the Copilot taskbar button."
+                break
+            }
+            "RevertTaskbarHideTaskView" {
+                Write-Log "GUI-TASK: reverting the Task View button."
+                Complete-GuiTask -Action { Restore-TaskbarHideTaskViewTweak } `
+                    -SuccessMessage "Task View button reverted to your original setting." `
+                    -FailureMessage "Could not revert the Task View button."
+                break
+            }
+            "RevertTaskbarDisableTransparency" {
+                Write-Log "GUI-TASK: reverting transparency effects."
+                Complete-GuiTask -Action { Restore-TaskbarDisableTransparencyTweak } `
+                    -SuccessMessage "Transparency effects reverted to your original setting." `
+                    -FailureMessage "Could not revert transparency effects."
                 break
             }
             "RevertDisableTelemetry" {

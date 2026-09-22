@@ -162,6 +162,23 @@ function Get-PulseTweakState {
         @{ Path = "HKCU:\Software\Policies\Microsoft\Windows\Explorer"; Name = "HideRecommendedSection"; Value = 1 }
     )
 
+    # -- v1.2 granular taskbar toggles -------------------------------------
+    $state["TaskbarSearchIconOnly"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search"; Name = "SearchboxTaskbarMode"; Value = 1 }
+    )
+    $state["TaskbarShowEndTask"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings"; Name = "TaskbarEndTask"; Value = 1 }
+    )
+    $state["TaskbarHideCopilot"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowCopilotButton"; Value = 0 }
+    )
+    $state["TaskbarHideTaskView"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "ShowTaskViewButton"; Value = 0 }
+    )
+    $state["TaskbarDisableTransparency"] = Get-RegVerdict -Checks @(
+        @{ Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"; Name = "EnableTransparency"; Value = 0 }
+    )
+
     # -- Advertising ID ---------------------------------------------------
     $state["DisableAdvertisingID"] = Get-RegVerdict -Checks @(
         @{ Path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo"; Name = "Enabled"; Value = 0 }

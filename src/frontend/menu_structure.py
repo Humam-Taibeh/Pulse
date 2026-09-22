@@ -929,6 +929,36 @@ CATEGORIES = [
                  "glyph": "overflow", "task": "ContextMenuScan", "timeout": 300,
                  "context_menu": True},
             ]},
+            # v1.2 GRANULAR TASKBAR TOGGLES. Five independently probeable/
+            # revertible toggles, kept as their own band right after
+            # INTERFACE (where "Minimalist Taskbar" lives) for discovery,
+            # rather than folded into that card — see the matching
+            # TweakCatalog comment (01-Catalogs.ps1) for why these five
+            # deliberately touch different registry values than that
+            # bundle does. Every entry is a plain HKCU value, so none
+            # needs Administrator.
+            {"title": "TASKBAR", "items": [
+                {"icon": "🔍", "title": "Compact Search Box",
+                 "desc": "Show the taskbar search as a compact icon instead of the full search box.",
+                 "glyph": "searchicon", "task": "TaskbarSearchIconOnly", "timeout": 120},
+                {"icon": "❌", "title": "Enable Taskbar End Task",
+                 "desc": "Add 'End Task' to the right-click menu on taskbar app icons.",
+                 "glyph": "endtask", "task": "TaskbarShowEndTask", "timeout": 120,
+                 "note": "Windows 11, version 23H2 or later"},
+                {"icon": "💡", "title": "Hide Copilot Button",
+                 "desc": "Hide the Copilot button from the taskbar, on builds that show one.",
+                 "glyph": "nocopilot", "task": "TaskbarHideCopilot", "timeout": 120,
+                 "note": "Windows 11 only"},
+                {"icon": "🪟", "title": "Hide Task View Button",
+                 "desc": "Hide the Task View button from the taskbar.",
+                 "glyph": "notaskview", "task": "TaskbarHideTaskView", "timeout": 120},
+                # No confirm gate: purely cosmetic and instantly reversible
+                # from the same card, unlike ExplorerShowProtected's real
+                # (if self-inflicted) risk of touching a system file.
+                {"icon": "🎨", "title": "Disable Transparency Effects",
+                 "desc": "Turn off Windows' transparency/blur effects on the taskbar, Start menu and Action Center for a solid look.",
+                 "glyph": "notransparency", "task": "TaskbarDisableTransparency", "timeout": 120},
+            ]},
             # v1.1 START MENU CUSTOMIZATION. Four granular, independently
             # probeable/revertible toggles — kept as its own band rather
             # than folded into INTERFACE (which would grow from 4 cards to
