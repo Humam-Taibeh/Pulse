@@ -1,6 +1,6 @@
 # Pulse — Roadmap
 
-**Current release: v10.18.0** · engine contract `##PULSE##` · 2,218-test
+**Current release: v10.18.1** · engine contract `##PULSE##` · 2,218-test
 regression suite (1,776 pytest + 442 Pester) · CI on `windows-latest`.
 
 Guiding principle, unchanged: **quality over quantity** — every item here must
