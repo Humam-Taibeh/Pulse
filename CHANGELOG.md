@@ -15,7 +15,48 @@ long after `VERSION` had become the single source.
 
 ---
 
-## [Unreleased]
+## [10.18.0] — 2026-10-10
+
+### Highlights
+- **A new logo** — a heartbeat trace, drawn from one source for the app,
+  the icon, and the installer.
+- **Fourteen new System & Tweaks toggles** across three new bands: Start
+  Menu, File Explorer and Taskbar. All per-user (no Administrator needed),
+  each probed live and revertible to the value it overwrote.
+- **Arabic, finished across every inspector and action dialog**, and the
+  shell now mirrors properly in right-to-left.
+- **Instant search inside a module page** — press `/`.
+
+### Added — Start Menu, File Explorer and Taskbar bands
+Built on the same data-driven tweak engine as Dark Mode and Game Mode
+(`Invoke-Tweak` / `Test-TweakInState`), not bespoke code. Every toggle
+writes only HKCU values, shows its live state from the read-only probe,
+and reverts to **your** previous value rather than a canned default.
+- **Start Menu** — remove Recommended/suggested content, disable web
+  search, disable recent-item tracking, disable promotional tiles.
+- **File Explorer** — open to This PC, always show file extensions, show
+  hidden files, show protected system files (confirm-gated, with the same
+  warning Windows' own Folder Options shows), remove the Recommended
+  section from Explorer's Home.
+- **Taskbar** — compact search box, End Task on the taskbar (Windows 11
+  23H2+), hide the Copilot button, hide the Task View button, disable
+  transparency effects (Windows' own system-wide switch). None of them
+  touches a value the existing Minimalist Taskbar bundle owns; a Pester
+  test asserts that no two entries share a registry value.
+
+### Added — Arabic and right-to-left, completed
+- Storage Analyzer, DNS Switcher, Context Menu manager, the close and
+  elevation prompts, the keyboard-shortcut sheet and the self-updater now
+  translate in full, joining Data Hygiene, notices, revert choices,
+  playbooks, activation status and power health.
+- **True RTL mirroring**: in Arabic the sidebar moves to the right, card
+  grids fill right-to-left and directional chevrons flip. The title bar's
+  window controls stay where Windows puts them, as in every native app.
+
+### Changed
+- The sidebar's standalone elevation shield is gone; session state and
+  **Relaunch as Administrator** (shown only when it would change
+  something) live in a new *Session* group in Settings.
 
 ### Changed — a brand mark that says the product's name
 - **New logo.** The four-pointed sparkle — the same shape a dozen AI
@@ -40,6 +81,14 @@ long after `VERSION` had become the single source.
 ### Fixed
 - The search fields' built-in clear (×) button had no accessible name, so a
   screen reader announced nothing for it (`widgets.name_clear_button`).
+- A session that had ever chosen Arabic crashed on launch: the language
+  was applied before the activity drawer and status bar existed.
+
+### Known issues
+- One layout test (`test_home_and_a_module_share_one_content_column`) is
+  skipped: widening the window past the grid's column cap and resizing back
+  can crash inside Qt's own `QGridLayout` height-for-width solver. It
+  predates this release and is documented in full at the skip.
 
 ---
 

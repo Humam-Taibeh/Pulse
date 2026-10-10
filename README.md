@@ -728,6 +728,9 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] The sidebar footer stripped to just the elevation indicator — the theme toggle, update badge and version line now live exclusively in Settings rather than as synced shortcuts *(v10.16.0)*
 - [x] Arabic translation extended from the v10.15.0 foundation to the dashboard, every category page, every task card's title/description, status badges, run-history timestamps ("3d ago · ~2m"), the Settings restore-point summary, the Ctrl+K command palette, and the Software Catalog dialog's 46 tool entries — see [frontend/i18n_catalog.py](src/frontend/i18n_catalog.py) for what's covered and what's still deliberately deferred *(v10.16.0)*
 - [x] Arabic translation extended again to the three remaining primary interactive dialogs — Update Center, Bloatware Purge and Startup Manager translate in full, including two backend-authored data tables (the bloatware catalog's per-package `Note`, the startup audit's per-rule `Reason`) routed through the same catalog mechanism as everything else *(v10.17.0)*
+- [x] Start Menu, File Explorer and Taskbar bands — fourteen per-user toggles on the same probed, revert-to-your-value tweak engine *(v10.18.0)*
+- [x] Arabic completed across every inspector and action dialog, with true right-to-left mirroring of the shell *(v10.18.0)*
+- [x] A new heartbeat brand mark rendered from one geometry for the app, the `.ico` and the installer, and instant per-module search on `/` *(v10.18.0)*
 
 **Planned**
 
