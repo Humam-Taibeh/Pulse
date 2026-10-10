@@ -30,6 +30,10 @@
       11-StateProbe.ps1     read-only "is this tweak applied?" probe
       12-HealthReport.ps1   read-only health + configuration-drift snapshot
       13-Activation.ps1     read-only Windows/Office licence status report
+      14-Inspectors.ps1     read-only power health, restore points, storage scan
+      15-Network.ps1        per-adapter DNS profile switching, always reversible
+      16-ContextMenu.ps1    shell context-menu extension manager (official block list)
+      17-Leftovers.ps1      finds, backs up and removes traces of uninstalled software
       20-Menus.ps1          the entire interactive console experience
       30-GuiDispatcher.ps1  Invoke-GuiTask - the PySide6 frontend contract
 
@@ -51,8 +55,10 @@
       core.ps1 [...] -WhatIf        DRY-RUN: full simulation, zero mutations
 
     CHANGELOG v4.0 (Modular Architecture Release):
-      - Monolith decomposed into 13 single-responsibility modules; core.ps1
-        is now only parameters + elevation + module loader + entry routing.
+      - Monolith decomposed into single-responsibility modules (13 at the
+        time of this release; the map above reflects the current count —
+        20, as of v10.18.0); core.ps1 is now only parameters + elevation +
+        module loader + entry routing.
       - NEW Verify-Environment (task: VerifyEnvironment): audits Git, Python,
         Java, VS Code, GCC, Node and Ollama; auto-repairs missing user-PATH
         entries from known install roots and sets JAVA_HOME when resolvable.

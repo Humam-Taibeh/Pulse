@@ -1292,7 +1292,7 @@ def generic_image() -> QImage | None:
     except Exception:                # pragma: no cover - defensive
         return None
 
-    from ctypes import POINTER, byref, c_int, c_void_p, sizeof
+    from ctypes import byref, c_int, sizeof
 
     shell32 = ctypes.windll.shell32
     user32 = ctypes.windll.user32
