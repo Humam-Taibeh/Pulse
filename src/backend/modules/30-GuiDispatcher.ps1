@@ -623,6 +623,93 @@ function Invoke-GuiTask {
                     -FailureMessage "Game Mode settings could not be applied."
                 break
             }
+            # ---- v1.1 Start Menu customization ----
+            "StartHideRecommended" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "StartHideRecommended") -State "On" } `
+                    -SuccessMessage "Recommended section hidden from the Start Menu." `
+                    -FailureMessage "Could not hide the Start Menu's Recommended section."
+                break
+            }
+            "StartDisableWebSearch" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "StartDisableWebSearch") -State "On" } `
+                    -SuccessMessage "Start Menu search is now local-only." `
+                    -FailureMessage "Could not disable Start Menu web search."
+                break
+            }
+            "StartDisableRecentTracking" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "StartDisableRecentTracking") -State "On" } `
+                    -SuccessMessage "Recent-item tracking disabled." `
+                    -FailureMessage "Could not disable recent-item tracking."
+                break
+            }
+            "StartDisableSuggestions" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "StartDisableSuggestions") -State "On" } `
+                    -SuccessMessage "Start Menu suggestions and promotional tiles disabled." `
+                    -FailureMessage "Could not disable Start Menu suggestions."
+                break
+            }
+            # ---- v1.1 File Explorer behavior ----
+            "ExplorerLaunchToThisPC" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "ExplorerLaunchToThisPC") -State "On" } `
+                    -SuccessMessage "File Explorer now opens to This PC." `
+                    -FailureMessage "Could not change File Explorer's launch location."
+                break
+            }
+            "ExplorerShowFileExt" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "ExplorerShowFileExt") -State "On" } `
+                    -SuccessMessage "File extensions are now always shown." `
+                    -FailureMessage "Could not enable showing file extensions."
+                break
+            }
+            "ExplorerShowHidden" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "ExplorerShowHidden") -State "On" } `
+                    -SuccessMessage "Hidden files, folders and drives are now shown." `
+                    -FailureMessage "Could not enable showing hidden files."
+                break
+            }
+            "ExplorerShowProtected" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "ExplorerShowProtected") -State "On" } `
+                    -SuccessMessage "Protected operating system files are now shown." `
+                    -FailureMessage "Could not enable showing protected system files."
+                break
+            }
+            "ExplorerHideRecommended" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "ExplorerHideRecommended") -State "On" } `
+                    -SuccessMessage "Recommended section hidden from File Explorer's Home view." `
+                    -FailureMessage "Could not hide File Explorer's Recommended section."
+                break
+            }
+            # ---- v1.2 granular taskbar toggles ----
+            "TaskbarSearchIconOnly" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarSearchIconOnly") -State "On" } `
+                    -SuccessMessage "Taskbar search is now a compact icon." `
+                    -FailureMessage "Could not change the taskbar search box."
+                break
+            }
+            "TaskbarShowEndTask" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarShowEndTask") -State "On" } `
+                    -SuccessMessage "'End Task' added to the taskbar's right-click menu." `
+                    -FailureMessage "Could not add 'End Task' to the taskbar's right-click menu."
+                break
+            }
+            "TaskbarHideCopilot" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarHideCopilot") -State "On" } `
+                    -SuccessMessage "Copilot button hidden from the taskbar." `
+                    -FailureMessage "Could not hide the Copilot button."
+                break
+            }
+            "TaskbarHideTaskView" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarHideTaskView") -State "On" } `
+                    -SuccessMessage "Task View button hidden from the taskbar." `
+                    -FailureMessage "Could not hide the Task View button."
+                break
+            }
+            "TaskbarDisableTransparency" {
+                Complete-GuiTask -Action { Invoke-Tweak -Tweak (Get-TweakByKey "TaskbarDisableTransparency") -State "On" } `
+                    -SuccessMessage "Transparency effects turned off." `
+                    -FailureMessage "Could not turn off transparency effects."
+                break
+            }
             "NetworkOptimization" {
                 Complete-GuiTask -Action { Invoke-NetworkOptimization } `
                     -SuccessMessage "Network stack reset and DNS flushed. A restart is recommended." `
@@ -832,6 +919,104 @@ function Invoke-GuiTask {
                 Complete-GuiTask -Action { Restore-GameModeTweak } `
                     -SuccessMessage "Game Mode and Game Bar settings reverted to your original values." `
                     -FailureMessage "Game Mode settings could not be fully reverted."
+                break
+            }
+            "RevertStartHideRecommended" {
+                Write-Log "GUI-TASK: reverting the Start Menu Recommended section."
+                Complete-GuiTask -Action { Restore-StartHideRecommendedTweak } `
+                    -SuccessMessage "Start Menu Recommended section reverted to your original setting." `
+                    -FailureMessage "Could not revert the Start Menu Recommended section."
+                break
+            }
+            "RevertStartDisableWebSearch" {
+                Write-Log "GUI-TASK: reverting Start Menu web search."
+                Complete-GuiTask -Action { Restore-StartDisableWebSearchTweak } `
+                    -SuccessMessage "Start Menu web search reverted to your original setting." `
+                    -FailureMessage "Could not revert Start Menu web search."
+                break
+            }
+            "RevertStartDisableRecentTracking" {
+                Write-Log "GUI-TASK: reverting recent-item tracking."
+                Complete-GuiTask -Action { Restore-StartDisableRecentTrackingTweak } `
+                    -SuccessMessage "Recent-item tracking reverted to your original setting." `
+                    -FailureMessage "Could not revert recent-item tracking."
+                break
+            }
+            "RevertStartDisableSuggestions" {
+                Write-Log "GUI-TASK: reverting Start Menu suggestions."
+                Complete-GuiTask -Action { Restore-StartDisableSuggestionsTweak } `
+                    -SuccessMessage "Start Menu suggestions reverted to your original setting." `
+                    -FailureMessage "Could not revert Start Menu suggestions."
+                break
+            }
+            "RevertExplorerLaunchToThisPC" {
+                Write-Log "GUI-TASK: reverting File Explorer's launch location."
+                Complete-GuiTask -Action { Restore-ExplorerLaunchToThisPCTweak } `
+                    -SuccessMessage "File Explorer's launch location reverted to your original setting." `
+                    -FailureMessage "Could not revert File Explorer's launch location."
+                break
+            }
+            "RevertExplorerShowFileExt" {
+                Write-Log "GUI-TASK: reverting the file-extensions setting."
+                Complete-GuiTask -Action { Restore-ExplorerShowFileExtTweak } `
+                    -SuccessMessage "File-extensions setting reverted to your original value." `
+                    -FailureMessage "Could not revert the file-extensions setting."
+                break
+            }
+            "RevertExplorerShowHidden" {
+                Write-Log "GUI-TASK: reverting the hidden-files setting."
+                Complete-GuiTask -Action { Restore-ExplorerShowHiddenTweak } `
+                    -SuccessMessage "Hidden-files setting reverted to your original value." `
+                    -FailureMessage "Could not revert the hidden-files setting."
+                break
+            }
+            "RevertExplorerShowProtected" {
+                Write-Log "GUI-TASK: reverting the protected-files setting."
+                Complete-GuiTask -Action { Restore-ExplorerShowProtectedTweak } `
+                    -SuccessMessage "Protected-files setting reverted to your original value." `
+                    -FailureMessage "Could not revert the protected-files setting."
+                break
+            }
+            "RevertExplorerHideRecommended" {
+                Write-Log "GUI-TASK: reverting File Explorer's Recommended section."
+                Complete-GuiTask -Action { Restore-ExplorerHideRecommendedTweak } `
+                    -SuccessMessage "File Explorer's Recommended section reverted to your original setting." `
+                    -FailureMessage "Could not revert File Explorer's Recommended section."
+                break
+            }
+            "RevertTaskbarSearchIconOnly" {
+                Write-Log "GUI-TASK: reverting the taskbar search box."
+                Complete-GuiTask -Action { Restore-TaskbarSearchIconOnlyTweak } `
+                    -SuccessMessage "Taskbar search box reverted to your original setting." `
+                    -FailureMessage "Could not revert the taskbar search box."
+                break
+            }
+            "RevertTaskbarShowEndTask" {
+                Write-Log "GUI-TASK: reverting the taskbar 'End Task' entry."
+                Complete-GuiTask -Action { Restore-TaskbarShowEndTaskTweak } `
+                    -SuccessMessage "Taskbar 'End Task' entry reverted to your original setting." `
+                    -FailureMessage "Could not revert the taskbar 'End Task' entry."
+                break
+            }
+            "RevertTaskbarHideCopilot" {
+                Write-Log "GUI-TASK: reverting the Copilot taskbar button."
+                Complete-GuiTask -Action { Restore-TaskbarHideCopilotTweak } `
+                    -SuccessMessage "Copilot taskbar button reverted to your original setting." `
+                    -FailureMessage "Could not revert the Copilot taskbar button."
+                break
+            }
+            "RevertTaskbarHideTaskView" {
+                Write-Log "GUI-TASK: reverting the Task View button."
+                Complete-GuiTask -Action { Restore-TaskbarHideTaskViewTweak } `
+                    -SuccessMessage "Task View button reverted to your original setting." `
+                    -FailureMessage "Could not revert the Task View button."
+                break
+            }
+            "RevertTaskbarDisableTransparency" {
+                Write-Log "GUI-TASK: reverting transparency effects."
+                Complete-GuiTask -Action { Restore-TaskbarDisableTransparencyTweak } `
+                    -SuccessMessage "Transparency effects reverted to your original setting." `
+                    -FailureMessage "Could not revert transparency effects."
                 break
             }
             "RevertDisableTelemetry" {

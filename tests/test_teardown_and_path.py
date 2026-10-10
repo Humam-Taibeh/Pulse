@@ -614,8 +614,8 @@ def test_the_title_bar_mark_and_wordmark_carry_the_chrome(window):
 
     bar = window.titlebar
     assert bar._glyph.width() == 36, "the title-bar mark is back to chrome size"
-    assert bar._glyph._font.pixelSize() == int(36 * W.BrandMark.STATIC_GLYPH_RATIO) == 24
-    assert bar._glyph._font.weight() == W.QFont.Weight.DemiBold
+    assert round(bar._glyph._mark_box.width()) == round(36 * W.BrandMark.STATIC_GLYPH_RATIO) == 28
+    assert not bar._glyph._breathe, "the chrome mark is static, drawn heavy to read at 36px"
 
     brand = TH.label_qss(window.theme.t, "brand")
     assert "font-size: 14px" in brand
@@ -1379,7 +1379,7 @@ class TestPaletteSearch:
         normalised = W.normalise_query(query)
         rows = []
         for item, category in MS.iter_leaf_items():
-            hit = W._match_entry(normalised, item, category)
+            hit = W.match_entry(normalised, item, category)
             if hit is not None:
                 rows.append((hit[0], item.get("title", "")))
         rows.sort(key=lambda r: (-r[0], r[1]))

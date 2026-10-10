@@ -19,48 +19,35 @@ TWO IMAGES, TWO DIFFERENT JOBS, AND THEY ARE BUILT DIFFERENTLY:
     as intentional on a light desktop. That is also why it needs no
     DynamicDark twin.
 
-  * THE HEADER MARK (WizardSmallImageFile) is the opposite: the bare star
-    glyph on TRANSPARENCY, no plate. It sits directly on the wizard page,
+  * THE HEADER MARK (WizardSmallImageFile) is the opposite: the bare
+    mark on TRANSPARENCY, no plate. It sits directly on the wizard page,
     which is off-white under the windows11 style and near-black under the
     dark one, so anything with a background of its own would show as a
     rectangle in one of the two. Transparency is what lets one asset serve
-    both, and the glyph's blue clears both grounds on contrast.
+    both, and the mark's cyan-to-indigo sweep clears both grounds on contrast.
 
-THE GLYPH IS EXTRACTED, NOT REDRAWN. assets/pulse.ico is the brand asset;
-hand-drawing "a four-pointed star that looks like Pulse's" would be an
-invented mark sitting where the real one belongs — the same rule
-src/utils/appicons.py applies to third-party logos, turned on ourselves.
-
-THE MATTE AND THE CROP ANSWER TWO DIFFERENT QUESTIONS, and conflating them
-is what made the first attempt look cheap. Measured on the 256px layer the
-tile runs 22-31 and the star 184-224, so a wide luminance ramp separates
-them with room to spare — but the tile's ROUNDED CORNERS antialias against
-transparency and leave ~1,100 pixels of near-invisible fringe out at the
-edges. Those pixels are far too faint to see and quite enough to define a
-bounding box, so cropping to "any non-zero alpha" returned the whole
-236px tile and the mark came out padded and undersized.
-
-So the crop is measured against the SOLID CORE (alpha > 64), which finds
-the star's true 154px extent, while the pixels kept inside it carry the
-FULL alpha ramp. Tightening the ramp instead would have worked on the
-fringe and cost the glyph its antialiasing: at a narrow 110-160 the edge
-went visibly stippled against an off-white page.
+THE MARK IS THE BRAND ASSET, NOT A REDRAWING. It is read from
+assets/brand/pulse-mark-512.png, which tools/make_brand.py renders from the
+same geometry (src/frontend/brand.py) as the .ico and the in-app mark — so
+the wizard, the desktop icon and the window are one drawing. The crop
+keeps every visible pixel (the live point's glow included — clipping it
+leaves a hard edge), but is CENTRED on the solid shape (alpha > 64), so
+the glow hanging off the right end does not shove the mark off-centre.
 
 EVERY SIZE IS RENDERED, because Inno picks per-DPI from a comma-separated
 list and scaling a 100% bitmap up to 200% is exactly the soft, fringed
 result the modern style is meant to avoid.
 
-Run:  python tools/make_installer_art.py
+Run:  python tools/make_brand.py && python tools/make_installer_art.py
 """
 from __future__ import annotations
 
 import os
 import sys
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ICON = os.path.join(_ROOT, "assets", "pulse.ico")
 _OUT = os.path.join(_ROOT, "assets", "installer")
 
 #: Pulse's own dark palette, quoted from src/frontend/theme.py so the Setup
@@ -92,41 +79,34 @@ def _font(px: int) -> ImageFont.FreeTypeFont:
         "are running it somewhere else.")
 
 
-#: The luminance ramp that separates the star from its tile. Wide on
-#: purpose — see the header: a narrow ramp stipples the glyph's edge, and
-#: the corner fringe it would otherwise exclude is handled by the crop
-#: instead.
-_MATTE_LO, _MATTE_HI = 60, 190
+_MARK = os.path.join(_ROOT, "assets", "brand", "pulse-mark-512.png")
 
-#: Alpha above which a pixel counts as the glyph's SOLID CORE, for the
-#: purpose of finding its extent. Not used to modify the image.
+#: Alpha above which a pixel counts as the mark's SOLID CORE, for the
+#: purpose of centring it. Not used to modify the image.
 _CORE_ALPHA = 64
 
 
-def star_glyph() -> Image.Image:
-    """The four-pointed mark, alpha-matted off its tile. See the header."""
-    icon = Image.open(_ICON)
-    icon.size = (256, 256)               # the largest layer in the .ico
-    icon = icon.convert("RGBA")
-    r, g, b, a = icon.split()
-    lum = Image.merge("RGB", (r, g, b)).convert("L")
-    span = _MATTE_HI - _MATTE_LO
-    matte = lum.point(
-        lambda v: 0 if v <= _MATTE_LO else
-        (255 if v >= _MATTE_HI else int(255 * (v - _MATTE_LO) / span)))
-    alpha = ImageChops.multiply(matte, a)
-
-    # The box comes from the core; the pixels keep the whole ramp.
-    core = alpha.point(lambda v: 255 if v > _CORE_ALPHA else 0)
-    bbox = core.getbbox()
-    if bbox is None:
-        raise SystemExit("The glyph matte came out empty — pulse.ico changed shape.")
-    if (bbox[2] - bbox[0]) > 200:
-        raise SystemExit(
-            f"The glyph matte is {bbox[2] - bbox[0]}px wide of a 256px icon — "
-            "it has caught the tile as well as the star, and every image "
-            "below would come out padded and undersized.")
-    return Image.merge("RGBA", (r, g, b, alpha)).crop(bbox)
+def brand_glyph() -> Image.Image:
+    """The Pulse mark, cropped to its solid extent. See the header."""
+    if not os.path.isfile(_MARK):
+        raise SystemExit(f"{os.path.relpath(_MARK, _ROOT)} is missing — "
+                         "run tools/make_brand.py first.")
+    mark_img = Image.open(_MARK).convert("RGBA")
+    alpha = mark_img.getchannel("A")
+    core = alpha.point(lambda v: 255 if v > _CORE_ALPHA else 0).getbbox()
+    full = alpha.point(lambda v: 255 if v > 0 else 0).getbbox()
+    if core is None or full is None:
+        raise SystemExit("The brand mark is empty — re-run tools/make_brand.py.")
+    # Widen the visible box symmetrically about the core's centre.
+    cx, cy = (core[0] + core[2]) / 2, (core[1] + core[3]) / 2
+    half_w = max(cx - full[0], full[2] - cx)
+    half_h = max(cy - full[1], full[3] - cy)
+    w, h = int(round(2 * half_w)), int(round(2 * half_h))
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(mark_img.crop(full),
+                        (int(round(full[0] - (cx - half_w))),
+                         int(round(full[1] - (cy - half_h)))))
+    return out
 
 
 def _gradient(size: tuple[int, int]) -> Image.Image:
@@ -162,13 +142,13 @@ def banner(size: tuple[int, int], glyph: Image.Image) -> Image.Image:
     w, h = size
     img = _gradient(size)
 
-    star_w = int(w * 0.46)
+    mark_w = int(w * 0.74)
     star = glyph.copy()
-    star.thumbnail((star_w, star_w), Image.LANCZOS)
+    star.thumbnail((mark_w, mark_w), Image.LANCZOS)
     sx, sy = (w - star.width) // 2, int(h * 0.30) - star.height // 2
 
     img.alpha_composite(
-        _glow(size, (w // 2, sy + star.height // 2), int(star_w * 0.95)))
+        _glow(size, (w // 2, sy + star.height // 2), int(mark_w * 0.80)))
     img.alpha_composite(star, (sx, sy))
 
     draw = ImageDraw.Draw(img)
@@ -196,7 +176,7 @@ def banner(size: tuple[int, int], glyph: Image.Image) -> Image.Image:
 
 
 def mark(size: tuple[int, int], glyph: Image.Image) -> Image.Image:
-    """The bare glyph, centred on transparency, with a little breathing room
+    """The bare mark, centred on transparency, with a little breathing room
     so it never touches the header's edge."""
     w, h = size
     img = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -209,8 +189,8 @@ def mark(size: tuple[int, int], glyph: Image.Image) -> Image.Image:
 
 def main() -> int:
     os.makedirs(_OUT, exist_ok=True)
-    glyph = star_glyph()
-    print(f"glyph matted from pulse.ico: {glyph.width}x{glyph.height}")
+    glyph = brand_glyph()
+    print(f"brand mark: {glyph.width}x{glyph.height}")
 
     written = []
     for size in BANNER_SIZES:

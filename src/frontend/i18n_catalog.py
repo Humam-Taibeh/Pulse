@@ -42,11 +42,52 @@ package/app/program NAME in both dialogs (BloatRow's catalog Name,
 StartupRow's DisplayName) stays English, same convention as a tool's
 DisplayName.
 
+OFFICEWIZARDDIALOG'S THREE CHOICE-PAGE CARDS ARE COVERED TOO (v10.17.1),
+in TITLES/DESCRIPTIONS rather than i18n.py's key-based STRINGS — they
+are GlassCards like any other, and GlassCard only knows how to
+translate through this lookup-by-English-text mechanism, even though
+they are wizard-authored copy rather than a menu_structure.py catalog
+entry. The rest of OfficeWizardDialog's own chrome, and all of
+ToolInstallWizardDialog, live in i18n.py's STRINGS instead (they are
+QLabels/QPushButtons this module has no reason to touch).
+
+HUBDIALOG'S OWN SUB-ACTION ROWS ARE COVERED TOO (v10.17.2): a hub
+CARD's title/desc already lived here (a hub is a GlassCard like any
+other), but the DIALOG it opens read every ActionRow's item['title']/
+item['desc'] as raw English until this pass — the exact inconsistency
+this closes, across all five shipped hubs (PATH Doctor, Leftovers
+Cleaner, Microsoft Edge, Microsoft OneDrive, Network & Connectivity).
+PathConflictDialog's verdict buttons ("Use this one", "In use",
+"Needs administrator", …) and LeftoverRow's own "reason" line join the
+backend-authored-data-table precedent above, on the same reasoning —
+see widgets.py's own notes on each for exactly which backend module and
+field they were read off.
+
+TWO MORE FINITE STRING SETS JOIN THE SAME LOOKUP (v10.17.3):
+utils.updater.can_apply()'s one non-empty refusal reason (SelfUpdate-
+Dialog's notes page, shown when the running build cannot hand off to an
+installer) and PulseApp.SHORTCUTS' nine row descriptions (Shortcut-
+SheetDialog) — the app's own fixed, non-interpolated copy, not a
+catalog entry, but the exact-text lookup fits it exactly the same way.
+
+TWO NEW BANDS, NINE NEW CARDS (v1.1): "START MENU" and "FILE EXPLORER"
+(menu_structure.py, System & Tweaks) — ordinary catalog cards, covered
+the same way every other card in this file is. Their `note` field
+("Windows 11 only" etc.) is NOT covered: GlassCard renders that field
+raw (widgets.py never routes it through this module), the same
+pre-existing gap every other note-bearing card already has — fixing
+that is a shared-component change out of scope for adding two bands.
+
 WHAT THIS DOES NOT COVER, on purpose (see i18n.py's own scope note and
-ROADMAP.md): dialogs opened FROM a card that are not one of the four
-covered above — the Restore Point Browser, the Health Report, the
-Office setup wizard, and ToolInstallWizardDialog's own per-app
-install-option picker — stay English in this pass.
+ROADMAP.md): dialogs opened FROM a card that are not one of the ones
+covered above — the Restore Point Browser and the Health Report — stay
+English in this pass.
+
+ONE NEW BAND, FIVE NEW CARDS (v1.2): "TASKBAR" (menu_structure.py,
+System & Tweaks, right after INTERFACE) — the granular taskbar toggles
+(compact search, End Task, Copilot, Task View, transparency), covered
+the same way as the v1.1 bands above, including the same `note`-field
+gap for the two OS-version-gated cards.
 """
 from __future__ import annotations
 
@@ -59,13 +100,18 @@ TITLES: dict[str, str] = {
     "Maintenance & Security": "الصيانة والأمان",
     "Utilities & Tools": "الأدوات والمرافق",
 
-    # -- the thirteen band/group headers (menu_structure.py "groups") ---
+    # -- the fifteen band/group headers (menu_structure.py "groups") ----
     "INSTALL": "تثبيت",
     "MANAGE INSTALLED": "إدارة المثبت",
     "PREINSTALLED & BUNDLED": "مثبت مسبقًا ومرفق",
     "PERFORMANCE & POWER": "الأداء والطاقة",
     "NETWORK": "الشبكة",
     "INTERFACE": "الواجهة",
+    # v1.2 — granular taskbar toggles.
+    "TASKBAR": "شريط المهام",
+    # v1.1 — Start Menu customization / File Explorer behavior.
+    "START MENU": "قائمة ابدأ",
+    "FILE EXPLORER": "مستكشف الملفات",
     "PRIVACY": "الخصوصية",
     "ROUTINE UPKEEP": "الصيانة الدورية",
     "DISK & SPACE": "القرص والمساحة",
@@ -129,6 +175,25 @@ TITLES: dict[str, str] = {
     "Restore Services": "استعادة الخدمات",
     "Right-Click Menu Entries": "عناصر قائمة النقر بالزر الأيمن",
     "Runtimes & Hardware Drivers": "بيئات التشغيل وبرامج تشغيل العتاد",
+
+    # -- v1.1 Start Menu customization / File Explorer behavior ---------
+    "Remove Start Recommendations": "إزالة توصيات قائمة ابدأ",
+    "Disable Start Web Search": "تعطيل بحث الويب في قائمة ابدأ",
+    "Disable Recent-Item Tracking": "تعطيل تتبع العناصر الأخيرة",
+    "Disable Start Suggestions": "تعطيل اقتراحات قائمة ابدأ",
+    "Launch to This PC": "الانتقال إلى هذا الجهاز",
+    "Always Show File Extensions": "إظهار امتدادات الملفات دائمًا",
+    "Show Hidden Files": "إظهار الملفات المخفية",
+    "Show Protected System Files": "إظهار ملفات النظام المحمية",
+    "Remove Explorer Recommendations": "إزالة توصيات مستكشف الملفات",
+
+    # -- v1.2 granular taskbar toggles ------------------------------------
+    "Compact Search Box": "مربع بحث مضغوط",
+    "Enable Taskbar End Task": "تفعيل ‘إنهاء المهمة’ في شريط المهام",
+    "Hide Copilot Button": "إخفاء زر Copilot",
+    "Hide Task View Button": "إخفاء زر عرض المهام",
+    "Disable Transparency Effects": "تعطيل تأثيرات الشفافية",
+
     "Scan & Purge Leftovers": "فحص المخلّفات وإزالتها",
     "Scan PATH & Environment": "فحص PATH ومتغيرات البيئة",
     "Startup Manager": "مدير بدء التشغيل",
@@ -153,6 +218,68 @@ TITLES: dict[str, str] = {
 
     # -- SOFTWARE_CATALOG's one bulk-action label (runtimes pillar) ------
     "Install All Essential Dependencies": "تثبيت كل التبعيات الأساسية",
+
+    # -- OfficeWizardDialog's own choice-page cards (v10.17.1) — these
+    # three GlassCards are wizard-authored, not menu_structure.py catalog
+    # items, but GlassCard only knows how to translate through this
+    # lookup-by-English-text table, so they live here rather than in
+    # i18n.py's key-based STRINGS. "Automated Cloud Download" doubles as
+    # OfficeWizardDialog._SUBTITLES["auto_confirm"] (an i18n.py key) —
+    # same visible string, two lookup systems, same duplication the
+    # sidebar module labels/category titles already carry.
+    "Automated Cloud Download": "تنزيل سحابي تلقائي",
+    "I already have my Office folder ready": "لدي مجلد Office جاهز بالفعل",
+    "Step-by-Step Beginner Guide": "دليل تفصيلي للمبتدئين",
+
+    # -- HubDialog's own sub-action rows (v10.17.2) — the hub CARD's own
+    # title/desc (e.g. "PATH Doctor", "Microsoft Edge") already lived here
+    # from the v16 card pass; only the rows INSIDE the dialog those cards
+    # open were still missing, since HubDialog never routed item['title']/
+    # item['desc'] through this lookup at all. Every item below is one of
+    # ActionRow's rows, never a card of its own. Product names inside a
+    # sentence (Chromium Edge, OneDrive, Winsock, TCP/IP, Intel/Realtek)
+    # stay in Latin script, same convention as everywhere else.
+    "Scan PATH & Environment": "فحص PATH والبيئة",
+    "Fix Shadowed Tools": "إصلاح الأدوات المتراكبة",
+    "Prune Dead & Duplicate Entries": "تقليم الإدخالات الميتة والمكرَّرة",
+    "Scan & Purge Leftovers": "فحص وإزالة المخلّفات",
+    "Restore Last Purge": "استعادة آخر إزالة",
+    "Leftovers Backup Folder": "مجلد نسخ المخلّفات الاحتياطية",
+    "Remove Microsoft Edge": "إزالة Microsoft Edge",
+    "Reinstall Microsoft Edge": "إعادة تثبيت Microsoft Edge",
+    "Edge Backup Folder": "مجلد نسخ Edge الاحتياطية",
+    "Purge OneDrive": "إزالة OneDrive",
+    "Install / Restore OneDrive": "تثبيت / استعادة OneDrive",
+    "OneDrive Backup Folder": "مجلد نسخ OneDrive الاحتياطية",
+    "Network Adapter Diagnostics": "تشخيص محوّل الشبكة",
+    "Ethernet & Wi-Fi Driver Check": "فحص برامج تشغيل الإيثرنت والواي فاي",
+    "Reset Network Stack": "إعادة ضبط مكدّس الشبكة",
+
+    # -- PathConflictDialog's own verdict buttons (v10.17.2) — Pulse's
+    # own copy, computed by src/backend/modules/03-Environment.ps1's
+    # Get-PathPriorityPlan/Get-PathInstallPlan (the exhaustive list of
+    # every `Short` value either function returns), on the same "this is
+    # Pulse's own deterministic string, not live system output"
+    # reasoning that already covers BloatRow's Note and StartupRow's
+    # Reason fields.
+    "Use this one": "استخدام هذه",
+    "In use": "قيد الاستخدام",
+    "Needs administrator": "يتطلب صلاحيات المسؤول",
+    "Nothing to reorder": "لا شيء لإعادة ترتيبه",
+    "Not on this PATH": "غير موجود في PATH هذا",
+    "Split across scopes": "مقسَّم بين النطاقين",
+    "Re-scan needed": "يلزم إعادة الفحص",
+
+    # -- DataHygieneDialog's own rows (v10.17.3) — utils.datastore.
+    # CATEGORIES' own label/consequence pairs, Pulse's own Python-authored
+    # copy (not PowerShell this time, but the same "this is Pulse's own
+    # copy, not live system output" reasoning).
+    "Operation logs": "سجلات العمليات",
+    "Downloaded installers": "المثبِّتات المنزَّلة",
+    "Edge backup": "نسخة Edge الاحتياطية",
+    "Rescued OneDrive files": "ملفات OneDrive المنقذة",
+    "Startup item backups": "نسخ عناصر بدء التشغيل الاحتياطية",
+    "Driver backups": "نسخ برامج التشغيل الاحتياطية",
 }
 
 #: English tagline/desc (a card's "desc", a category's "tagline") ->
@@ -306,6 +433,52 @@ DESCRIPTIONS: dict[str, str] = {
     "fully reversible.":
         "عرض كل عنصر في قائمة النقر بالزر الأيمن وإخفاء ما لا "
         "تستخدمه — قابل للتراجع بالكامل.",
+
+    # -- v1.1 Start Menu customization / File Explorer behavior ---------
+    "Hide the Recommended section (recent files, suggested apps) from "
+    "the Start Menu.":
+        "إخفاء قسم التوصيات (الملفات الأخيرة والتطبيقات المقترحة) "
+        "من قائمة ابدأ.",
+    "Keep Start Menu search local-only — no Bing web results mixed in.":
+        "إبقاء بحث قائمة ابدأ محليًا فقط — دون مزج نتائج بحث Bing.",
+    "Stop Windows tracking recently opened items in Start, Jump Lists "
+    "and File Explorer.":
+        "إيقاف تتبّع ويندوز للعناصر المفتوحة مؤخرًا في قائمة ابدأ "
+        "وقوائم القفز ومستكشف الملفات.",
+    "Stop new promotional tiles and suggested-app pins from being "
+    "added to Start.":
+        "إيقاف إضافة مربعات ترويجية جديدة وتثبيتات تطبيقات مقترحة "
+        "إلى قائمة ابدأ.",
+    "Open File Explorer to This PC instead of Home / Quick access.":
+        "فتح مستكشف الملفات على هذا الجهاز بدلًا من الرئيسية / "
+        "الوصول السريع.",
+    "Stop Windows from hiding extensions for known file types.":
+        "إيقاف إخفاء ويندوز لامتدادات أنواع الملفات المعروفة.",
+    "Show hidden files, folders and drives in File Explorer.":
+        "إظهار الملفات والمجلدات ومحركات الأقراص المخفية في "
+        "مستكشف الملفات.",
+    "Show protected operating system files Windows hides by default. "
+    "Pulse only reveals them here — it never touches them.":
+        "إظهار ملفات نظام التشغيل المحمية التي يخفيها ويندوز "
+        "افتراضيًا. يكتفي Pulse بإظهارها هنا — ولا يمسّها أبدًا.",
+    "Hide the Recommended section from File Explorer's Home view.":
+        "إخفاء قسم التوصيات من الصفحة الرئيسية لمستكشف الملفات.",
+
+    # -- v1.2 granular taskbar toggles ------------------------------------
+    "Show the taskbar search as a compact icon instead of the full search box.":
+        "عرض بحث شريط المهام كأيقونة مضغوطة بدلًا من مربع البحث الكامل.",
+    "Add 'End Task' to the right-click menu on taskbar app icons.":
+        "إضافة ‘إنهاء المهمة’ إلى قائمة النقر بالزر الأيمن على "
+        "أيقونات شريط المهام.",
+    "Hide the Copilot button from the taskbar, on builds that show one.":
+        "إخفاء زر Copilot من شريط المهام، في الإصدارات التي تعرضه.",
+    "Hide the Task View button from the taskbar.":
+        "إخفاء زر عرض المهام من شريط المهام.",
+    "Turn off Windows' transparency/blur effects on the taskbar, Start "
+    "menu and Action Center for a solid look.":
+        "إيقاف تأثيرات الشفافية والتمويه في شريط المهام وقائمة ابدأ "
+        "ومركز الإجراءات للحصول على مظهر صلب.",
+
     "See what Pulse keeps on this PC — logs, backups and rescued "
     "files — and remove any of it.":
         "عرض ما يحتفظ به Pulse على هذا الجهاز — سجلات ونسخ احتياطية "
@@ -814,6 +987,172 @@ DESCRIPTIONS: dict[str, str] = {
     "Not a recognized publisher — check what it is before "
     "disabling it.":
         "ناشر غير معروف — تحقق مما هو قبل تعطيله.",
+
+    # -- OfficeWizardDialog's own choice-page cards (v10.17.1) — see the
+    # matching note in TITLES above.
+    "Pulse fetches Microsoft's Deployment Tool and applies a "
+    "standard configuration for you. Nothing to find, nothing to "
+    "browse to.":
+        "يجلب Pulse أداة النشر من Microsoft ويطبِّق تكوينًا قياسيًا "
+        "نيابةً عنك. لا شيء لإيجاده، ولا شيء لتصفحه.",
+    "Auto-detect the Office folder on your Desktop, or browse to "
+    "wherever you saved it.":
+        "اكتشاف مجلد Office على سطح مكتبك تلقائيًا، أو تصفّح إلى "
+        "المكان الذي حفظته فيه.",
+    "New to this? A plain-language walkthrough of Microsoft's own "
+    "tools, which then hands off to the step above.":
+        "جديد على هذا؟ شرح مبسّط لأدوات Microsoft نفسها، يُسلِّمك "
+        "بعدها إلى الخطوة أعلاه.",
+
+    # -- HubDialog's own sub-action rows (v10.17.2) — see the matching
+    # note in TITLES above.
+    "Dead folders, duplicates, malformed entries and shadowed "
+    "toolchains — reported, nothing changed.":
+        "مجلدات ميتة، وتكرارات، وإدخالات غير سليمة، وسلاسل أدوات "
+        "متراكبة — تُبلَّغ دون تغيير أي شيء.",
+    "Two Pythons, two Nodes, two Javas — see which copy your "
+    "terminal actually runs, and promote the one you want. "
+    "Reorders your PATH; removes nothing.":
+        "نسختا Python، ونسختا Node، ونسختا Java — اعرف أي نسخة "
+        "يشغّلها الطرفية فعليًا، ورقِّ التي تريدها. يعيد ترتيب "
+        "PATH؛ لا يزيل شيئًا.",
+    "Removes only what is provably safe: duplicates, unparseable "
+    "entries, and folders missing from a mounted internal disk. A "
+    "restore point and a copy of your current PATH are saved "
+    "first.":
+        "يزيل فقط ما يثبت أنه آمن: التكرارات، والإدخالات غير "
+        "القابلة للتحليل، والمجلدات المفقودة من قرص داخلي مثبَّت. "
+        "تُحفظ نقطة استعادة ونسخة من PATH الحالي أولًا.",
+    "Flags only what points at files that are provably gone. "
+    "Everything removed is backed up first, behind a restore "
+    "point.":
+        "يُعلِّم فقط ما يشير إلى ملفات يثبت أنها اختفت. كل ما "
+        "يُزال يُنسخ احتياطيًا أولًا خلف نقطة استعادة.",
+    "Put back everything the most recent purge removed.":
+        "إعادة كل ما أزالته آخر عملية إزالة.",
+    "Open the registry exports, task definitions and folders a "
+    "purge set aside.":
+        "فتح تصديرات السجل وتعريفات المهام والمجلدات التي جنَّبتها "
+        "عملية الإزالة.",
+    "Force-purge Chromium Edge, with a backup kept.":
+        "إزالة Chromium Edge قسرًا، مع الاحتفاظ بنسخة احتياطية.",
+    "Reinstall Edge and restore your backed-up settings.":
+        "إعادة تثبيت Edge واستعادة إعداداتك المحفوظة احتياطيًا.",
+    "Open the settings and profile data saved before removal.":
+        "فتح الإعدادات وبيانات الملف الشخصي المحفوظة قبل الإزالة.",
+    "Back up local files, then uninstall OneDrive.":
+        "نسخ الملفات المحلية احتياطيًا، ثم إلغاء تثبيت OneDrive.",
+    "Reinstall OneDrive so it's back and syncing.":
+        "إعادة تثبيت OneDrive ليعود ويُزامن من جديد.",
+    "Open files rescued before OneDrive removal.":
+        "فتح الملفات المنقذة قبل إزالة OneDrive.",
+    "Link state, speed, addresses, gateway and driver for every "
+    "adapter — read-only.":
+        "حالة الاتصال والسرعة والعناوين والبوابة وبرنامج التشغيل "
+        "لكل محوّل — للعرض فقط.",
+    "How old each network driver is, and the official Intel / "
+    "Realtek page to get a newer one.":
+        "عمر كل برنامج تشغيل شبكة، وصفحة Intel / Realtek الرسمية "
+        "للحصول على إصدار أحدث.",
+    "Rebuild Winsock and TCP/IP, then renew the lease. Requires a "
+    "restart to finish.":
+        "إعادة بناء Winsock وTCP/IP، ثم تجديد عقد الإيجار. يتطلب "
+        "إعادة التشغيل لإتمام العملية.",
+
+    # -- LeftoverRow's own "reason" field (v10.17.2) — Pulse's own
+    # deterministic copy, exhaustively read off
+    # src/backend/modules/17-Leftovers.ps1's own `-Reason` literals,
+    # translated on the same "this is Pulse's copy, not live system
+    # output" reasoning as BloatRow's Note/StartupRow's Reason.
+    "Disabled in Pulse, and the program it pointed at has since "
+    "been uninstalled.":
+        "معطَّل في Pulse، والبرنامج الذي كان يشير إليه أُزيل منذ ذلك "
+        "الحين.",
+    "Launches at sign-in, and the program it points at is not on "
+    "this PC.":
+        "يُشغَّل عند تسجيل الدخول، والبرنامج الذي يشير إليه غير "
+        "موجود على هذا الجهاز.",
+    "A shortcut Pulse disabled, to a program that has since been "
+    "uninstalled.":
+        "اختصار عطّله Pulse، لبرنامج أُزيل منذ ذلك الحين.",
+    "A Startup-folder shortcut to a program that is not on this PC.":
+        "اختصار في مجلد بدء التشغيل لبرنامج غير موجود على هذا "
+        "الجهاز.",
+    "Scheduled to run a program that is not on this PC.":
+        "مجدولة لتشغيل برنامج غير موجود على هذا الجهاز.",
+    "An uninstalled app's files, left behind - its own uninstaller "
+    "marked this folder dead.":
+        "ملفات تطبيق أُزيل، تُركت خلفًا - أداة إزالة التثبيت نفسها "
+        "وسمت هذا المجلد بأنه ميت.",
+    "A right-click menu extension whose DLL is not on this PC.":
+        "امتداد في قائمة النقر بالزر الأيمن ملف DLL الخاص به غير "
+        "موجود على هذا الجهاز.",
+    "A right-click menu entry that launches a program that is not "
+    "on this PC.":
+        "إدخال في قائمة النقر بالزر الأيمن يشغِّل برنامجًا غير "
+        "موجود على هذا الجهاز.",
+
+    # -- DataHygieneDialog's own rows (v10.17.3) — see the matching
+    # note in TITLES above.
+    "Diagnostic history only. Pulse writes a new log on the next "
+    "run.":
+        "سجل تشخيصي فقط. يكتب Pulse سجلًا جديدًا في المرة القادمة.",
+    "Update downloads Pulse can fetch again. Already pruned "
+    "automatically after 7 days.":
+        "تنزيلات تحديث يمكن لـPulse جلبها مجددًا. تُقلَّم تلقائيًا "
+        "بعد 7 أيام أصلًا.",
+    "Your Edge bookmarks, favourites and preferences, saved before "
+    "Edge was removed. Deleting this means Restore Edge can no "
+    "longer bring them back.":
+        "إشارات Edge المرجعية والمفضلة والتفضيلات، محفوظة قبل إزالة "
+        "Edge. حذف هذا يعني أن استعادة Edge لن تتمكن من إعادتها.",
+    "Your own files, copied out of OneDrive before the client was "
+    "uninstalled. For anything that was not synced elsewhere, this "
+    "is the only copy.":
+        "ملفاتك الخاصة، نُسخت من OneDrive قبل إلغاء تثبيت العميل. "
+        "لأي شيء لم يُزامَن في مكان آخر، هذه هي النسخة الوحيدة.",
+    "Shortcuts moved aside by the Startup Manager. Deleting this "
+    "means they cannot be put back.":
+        "اختصارات نحّاها مدير بدء التشغيل جانبًا. حذف هذا يعني أنه "
+        "لا يمكن إعادتها.",
+    "Third-party driver packages exported by Driver Backup. "
+    "Re-exportable while the drivers are still installed.":
+        "حزم برامج تشغيل خارجية صدَّرتها النسخة الاحتياطية لبرامج "
+        "التشغيل. يمكن إعادة تصديرها ما دامت برامج التشغيل مثبَّتة.",
+
+    # -- PulseApp.SHORTCUTS row descriptions (v10.17.3). Fixed, non-
+    # interpolated strings owned by the app itself — same exact-text
+    # lookup as everything else in this dict.
+    "Search everything":
+        "البحث في كل شيء",
+    "Search this module's cards":
+        "البحث في بطاقات هذه الوحدة",
+    "Filter this module by status":
+        "تصفية هذه الوحدة بالحالة",
+    "Go to the dashboard":
+        "الانتقال إلى لوحة المعلومات",
+    "Jump to a module":
+        "الانتقال إلى وحدة",
+    "Show / hide live output":
+        "إظهار / إخفاء الإخراج المباشر",
+    "Move between sections — search, sidebar, cards":
+        "التنقل بين الأقسام — البحث، الشريط الجانبي، البطاقات",
+    "Move between cards in the grid":
+        "التنقل بين البطاقات في الشبكة",
+    "Run the focused card":
+        "تشغيل البطاقة المُركَّز عليها",
+    "Back to the dashboard":
+        "العودة إلى لوحة المعلومات",
+    "This shortcut sheet":
+        "ورقة الاختصارات هذه",
+
+    # -- utils.updater.can_apply's one non-empty reason (v10.17.3). Finite,
+    # non-interpolated backend text — same exact-text lookup as the rest
+    # of this dict.
+    "Pulse is running from source; update it with git "
+    "rather than an installer.":
+        "يعمل Pulse من الشيفرة المصدرية؛ حدِّثه باستخدام git "
+        "بدلًا من مُثبِّت.",
 }
 
 

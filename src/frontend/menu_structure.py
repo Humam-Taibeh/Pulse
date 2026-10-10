@@ -929,6 +929,92 @@ CATEGORIES = [
                  "glyph": "overflow", "task": "ContextMenuScan", "timeout": 300,
                  "context_menu": True},
             ]},
+            # v1.2 GRANULAR TASKBAR TOGGLES. Five independently probeable/
+            # revertible toggles, kept as their own band right after
+            # INTERFACE (where "Minimalist Taskbar" lives) for discovery,
+            # rather than folded into that card — see the matching
+            # TweakCatalog comment (01-Catalogs.ps1) for why these five
+            # deliberately touch different registry values than that
+            # bundle does. Every entry is a plain HKCU value, so none
+            # needs Administrator.
+            {"title": "TASKBAR", "items": [
+                {"icon": "🔍", "title": "Compact Search Box",
+                 "desc": "Show the taskbar search as a compact icon instead of the full search box.",
+                 "glyph": "searchicon", "task": "TaskbarSearchIconOnly", "timeout": 120},
+                {"icon": "❌", "title": "Enable Taskbar End Task",
+                 "desc": "Add 'End Task' to the right-click menu on taskbar app icons.",
+                 "glyph": "endtask", "task": "TaskbarShowEndTask", "timeout": 120,
+                 "note": "Windows 11, version 23H2 or later"},
+                {"icon": "💡", "title": "Hide Copilot Button",
+                 "desc": "Hide the Copilot button from the taskbar, on builds that show one.",
+                 "glyph": "nocopilot", "task": "TaskbarHideCopilot", "timeout": 120,
+                 "note": "Windows 11 only"},
+                {"icon": "🪟", "title": "Hide Task View Button",
+                 "desc": "Hide the Task View button from the taskbar.",
+                 "glyph": "notaskview", "task": "TaskbarHideTaskView", "timeout": 120},
+                # No confirm gate: purely cosmetic and instantly reversible
+                # from the same card, unlike ExplorerShowProtected's real
+                # (if self-inflicted) risk of touching a system file.
+                {"icon": "🎨", "title": "Disable Transparency Effects",
+                 "desc": "Turn off Windows' transparency/blur effects on the taskbar, Start menu and Action Center for a solid look.",
+                 "glyph": "notransparency", "task": "TaskbarDisableTransparency", "timeout": 120},
+            ]},
+            # v1.1 START MENU CUSTOMIZATION. Four granular, independently
+            # probeable/revertible toggles — kept as its own band rather
+            # than folded into INTERFACE (which would grow from 4 cards to
+            # 12) and matching how the feature was scoped and named. Every
+            # entry is a plain HKCU value (see the matching TweakCatalog
+            # entries, 01-Catalogs.ps1), so none needs Administrator.
+            {"title": "START MENU", "items": [
+                {"icon": "🗂️", "title": "Remove Start Recommendations",
+                 "desc": "Hide the Recommended section (recent files, suggested apps) from the Start Menu.",
+                 "glyph": "nostar", "task": "StartHideRecommended", "timeout": 120,
+                 "note": "Windows 11 only"},
+                {"icon": "🔎", "title": "Disable Start Web Search",
+                 "desc": "Keep Start Menu search local-only — no Bing web results mixed in.",
+                 "glyph": "localsearch", "task": "StartDisableWebSearch", "timeout": 120},
+                {"icon": "🕓", "title": "Disable Recent-Item Tracking",
+                 "desc": "Stop Windows tracking recently opened items in Start, Jump Lists and File Explorer.",
+                 "glyph": "notrack", "task": "StartDisableRecentTracking", "timeout": 120},
+                # Stops FUTURE suggestions only — the description says so
+                # plainly. Win11's pinned Start layout has no supported
+                # programmatic edit API, so this cannot also unpin tiles
+                # already on the layout without claiming more than it
+                # verifiably does (the same Provably-Absent standard
+                # 17-Leftovers.ps1 holds the rest of the app to).
+                {"icon": "🛑", "title": "Disable Start Suggestions",
+                 "desc": "Stop new promotional tiles and suggested-app pins from being added to Start.",
+                 "glyph": "nosuggest", "task": "StartDisableSuggestions", "timeout": 120},
+            ]},
+            # v1.1 FILE EXPLORER BEHAVIOR. Same shape as the band above.
+            {"title": "FILE EXPLORER", "items": [
+                {"icon": "💻", "title": "Launch to This PC",
+                 "desc": "Open File Explorer to This PC instead of Home / Quick access.",
+                 "glyph": "thispc", "task": "ExplorerLaunchToThisPC", "timeout": 120},
+                {"icon": "🏷️", "title": "Always Show File Extensions",
+                 "desc": "Stop Windows from hiding extensions for known file types.",
+                 "glyph": "filetag", "task": "ExplorerShowFileExt", "timeout": 120},
+                {"icon": "👁️", "title": "Show Hidden Files",
+                 "desc": "Show hidden files, folders and drives in File Explorer.",
+                 "glyph": "showhidden", "task": "ExplorerShowHidden", "timeout": 120},
+                # confirm=True: Windows' own Folder Options dialog shows a
+                # warning before exposing these, for the same real reason
+                # this card does — moving or deleting one can break the OS.
+                # Pulse only reveals them; it never touches them.
+                {"icon": "🔓", "title": "Show Protected System Files",
+                 "desc": "Show protected operating system files Windows hides by default. Pulse only reveals them here — it never touches them.",
+                 "glyph": "showprotected", "task": "ExplorerShowProtected", "timeout": 120,
+                 "confirm": True},
+                # Uses the same policy Microsoft documents for the Start
+                # Menu's own Recommended list (HideRecommendedSection) —
+                # see the matching TweakCatalog entry's comment for why:
+                # no separate File-Explorer-Home-specific policy exists,
+                # and the two surfaces share one recommendation feed.
+                {"icon": "🗃️", "title": "Remove Explorer Recommendations",
+                 "desc": "Hide the Recommended section from File Explorer's Home view.",
+                 "glyph": "explorernorecs", "task": "ExplorerHideRecommended", "timeout": 120,
+                 "note": "Windows 11, version 22H2 or later"},
+            ]},
             # Remove Bloatware left this band in v1.1 — it uninstalls
             # preinstalled software, which is Software Management's job and
             # is where Remove Edge and Purge OneDrive already lived.

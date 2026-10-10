@@ -50,6 +50,18 @@ _PROGRAMMATIC = {
     "RevertDarkMode", "RevertDisableMouseAccel", "RevertMinimalistTaskbar",
     "RevertClassicContextMenu", "RevertGameMode", "RevertDisableTelemetry",
     "RevertDisableAdvertisingID", "RevertDisableActivityHistory",
+    # v1.1 Start Menu customization / File Explorer behavior — same
+    # shape: reached only via main._REVERT_TASKS, never a card's `task`.
+    "RevertStartHideRecommended", "RevertStartDisableWebSearch",
+    "RevertStartDisableRecentTracking", "RevertStartDisableSuggestions",
+    "RevertExplorerLaunchToThisPC", "RevertExplorerShowFileExt",
+    "RevertExplorerShowHidden", "RevertExplorerShowProtected",
+    "RevertExplorerHideRecommended",
+    # v1.2 granular taskbar toggles — same shape: reached only via
+    # main._REVERT_TASKS, never a card's `task`.
+    "RevertTaskbarSearchIconOnly", "RevertTaskbarShowEndTask",
+    "RevertTaskbarHideCopilot", "RevertTaskbarHideTaskView",
+    "RevertTaskbarDisableTransparency",
     # v1.0+ Phase 1 read-only inspectors. Same shape as HealthReport and
     # ActivationStatus: the CARD is a GUI-local action ("@power_health",
     # "@restore_points") because the report is rendered by a dialog that

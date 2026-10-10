@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="assets/pulse.ico" width="88" alt="Pulse" />
+<img src="assets/brand/pulse-icon.svg" width="96" alt="Pulse" />
 
 # ⚡ PULSE
 
@@ -16,7 +16,7 @@
 [![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE?logo=powershell&logoColor=white)](#-prerequisites)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white)](https://doc.qt.io/qtforpython-6/)
 [![Release](https://img.shields.io/github/v/release/Humam-Taibeh/Pulse?label=release&color=blueviolet&logo=github)](https://github.com/Humam-Taibeh/Pulse/releases/latest)
-[![Tests](https://img.shields.io/badge/tests-1%2C592%20pytest%20%2B%20357%20Pester-success)](#-testing--continuous-integration)
+[![Tests](https://img.shields.io/badge/tests-1%2C776%20pytest%20%2B%20442%20Pester-success)](#-testing--continuous-integration)
 [![CI](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/ci.yml)
 [![Release build](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml/badge.svg)](https://github.com/Humam-Taibeh/Pulse/actions/workflows/release.yml)
 [![Lint](https://img.shields.io/badge/PSScriptAnalyzer-0%20findings-brightgreen?logo=powershell&logoColor=white)](PSScriptAnalyzerSettings.psd1)
@@ -137,7 +137,7 @@ The execution engine is built for **observability and control**, not fire-and-fo
 | Packaging | **PyInstaller (onedir)** + **Inno Setup 6** | Installs to Program Files; `uac_admin` on — the manifest requests `requireAdministrator`, so every launch elevates (v10.7). See [Building](#-building). |
 | Update channel | **GitHub Releases API** | Digest-verified, unauthenticated, failure-silent; called from `src/frontend/main.py` (background check on launch) and `SelfUpdateDialog` (download/verify/apply). Still needs a release that publishes `SHA256SUMS` to be end-to-end usable. |
 | CI | **GitHub Actions** on `windows-latest` | Parse → lint → Pester → pytest |
-| Tests | **pytest 8** (1,592) + **Pester 5+** (357) | 80 tests marked `native` need a real window station |
+| Tests | **pytest 8** (1,776) + **Pester 5+** (442) | 111 tests marked `native` need a real window station |
 
 ### Data flow
 
@@ -188,7 +188,7 @@ These are intended to be enforced by tests rather than by convention — coverag
 ```
 Pulse/
 │
-├── VERSION                          # 10.3.0 — the ONE version fact everything quotes
+├── VERSION                          # the ONE version fact everything quotes
 ├── start.bat                        # Dev launcher: layout check + venv + GUI
 ├── main.spec                        # PyInstaller recipe (onedir PULSE bundle)
 ├── pytest.ini                       # Test config and the `native` marker
@@ -199,7 +199,7 @@ Pulse/
 ├── src/
 │   ├── backend/
 │   │   ├── core.ps1                 # Thin orchestrator: params, elevation, module loader
-│   │   └── modules/                 # 19 single-responsibility engine modules
+│   │   └── modules/                 # 20 single-responsibility engine modules
 │   │       ├── 00-Foundation.ps1        # logging, console vocabulary, dry-run primitives
 │   │       ├── 01-Catalogs.ps1          # ALL data: tweaks, app catalogs, services, bloatware
 │   │       ├── 02-Safety.ps1            # restore points, snapshots, backups, rollback
@@ -227,6 +227,9 @@ Pulse/
 │   │   ├── theme.py                 # Dual-theme tokens, QSS factories, DWM glass
 │   │   ├── widgets.py               # TitleBar, GlassCard, LiveConsole, StatePill, dialogs
 │   │   ├── animations.py            # Glow, shimmer, cascade, page fade (60 fps doctrine)
+│   │   ├── brand.py                 # The Pulse mark — one geometry for app, icon, installer
+│   │   ├── i18n.py                  # English/Arabic UI strings, RTL rules
+│   │   ├── i18n_catalog.py          # Arabic for every catalog title and description
 │   │   ├── playbooks.py             # Playbook loading, validation and step runner
 │   │   └── health_report.py         # Pure HTML/JSON rendering of the drift report
 │   │
@@ -236,6 +239,10 @@ Pulse/
 │       ├── prefs.py                 # QSettings-backed preferences + per-task history
 │       ├── updater.py               # Digest-verified self-updater (no Qt, pure logic)
 │       ├── appicons.py              # Vendor icon resolution for catalog rows
+│       ├── nativeicons.py           # An installed app's own icon, extracted from its binary
+│       ├── crashlog.py              # Last-resort excepthook: a crash always leaves a log
+│       ├── datastore.py             # Everything Pulse stores on disk, and how to remove it
+│       ├── singleton.py             # One Pulse per desktop session
 │       └── version.py               # Reads VERSION; the only version accessor
 │
 ├── playbooks/                       # Shipped JSON baselines (user-extensible)
@@ -244,7 +251,9 @@ Pulse/
 │   └── post-install-clean.json
 │
 ├── assets/
-│   ├── pulse.ico                    # App and installer icon
+│   ├── pulse.ico                    # App, exe and installer icon (generated — 9 native layers)
+│   ├── brand/                       # Logo masters: icon + mark as SVG and 512px PNG (generated)
+│   ├── installer/                   # Setup wizard banner and header art (generated)
 │   └── appicons/                    # Bundled vendor SVG marks
 │
 ├── installer/
@@ -252,11 +261,15 @@ Pulse/
 │
 ├── tools/
 │   ├── build_release.ps1            # Bundle + Setup + SHA256SUMS in one command
-│   └── fetch_app_icons.py           # Build-time vendor icon fetcher
+│   ├── make_brand.py                # Renders pulse.ico + assets/brand/ from brand.py
+│   ├── make_installer_art.py        # Renders the Setup wizard art from the brand mark
+│   ├── fetch_app_icons.py           # Build-time vendor icon fetcher
+│   ├── create_dev_signing_cert.ps1  # Local test-only code-signing certificate
+│   └── diagnose_edge_bleed.py       # Rendering-artifact bisector (dev diagnostics)
 │
-├── tests/                           # 1,592 collected pytest tests
+├── tests/                           # 1,776 collected pytest tests
 │   ├── conftest.py                  # Preference isolation + `native` auto-skip
-│   ├── backend/                     # 357 Pester tests (safety, startup, leftovers, hardening, …)
+│   ├── backend/                     # 442 Pester tests (safety, startup, leftovers, hardening, …)
 │   └── test_*.py                    # contract, rendering, updater, playbooks, budgets …
 │
 └── .github/workflows/
@@ -510,10 +523,10 @@ names, so an upgraded machine keeps its snapshots.
 
 | `powershell -File src\backend\core.ps1 -WhatIf` | Full dry-run of the terminal engine — zero mutations |
 | `powershell -File src\backend\core.ps1 -Task <Name>` | Run one task headlessly; emits a single verdict line |
-| `python -m pytest tests` | The full 1,592-test regression suite |
+| `python -m pytest tests` | The full 1,776-test regression suite |
 | `python -m pytest tests -m native` | Only the tests needing a real window station |
 | `python -m pytest tests -m "not native"` | The headless-safe subset |
-| `Invoke-Pester -Path tests\backend` | The 357-test Pester suite (backup/restore, startup, leftovers, hardening) |
+| `Invoke-Pester -Path tests\backend` | The 442-test Pester suite (backup/restore, startup, leftovers, hardening) |
 | `Invoke-ScriptAnalyzer -Path src\backend -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` | Lint the engine — must report **zero** findings |
 | `pyinstaller main.spec` | Build `dist\PULSE\` |
 | `.\tools\build_release.ps1` | Build bundle + installer + `SHA256SUMS` |
@@ -614,8 +627,8 @@ Additionally: removing Edge backs up its Preferences/Bookmarks/Favicons first; r
 ## 🧪 Testing & Continuous Integration
 
 ```powershell
-python -m pytest tests -v          # 1,592 collected tests
-Invoke-Pester -Path tests\backend  # 357 tests
+python -m pytest tests -v          # 1,776 collected tests
+Invoke-Pester -Path tests\backend  # 442 tests
 ```
 
 The pytest suite covers the engine contract, rendering and paint caches, the frame budget, window state and native Win32 behaviour, dialogs, packaging, the updater, playbooks, history and resources. **Around 100 tests are marked `native`** — they hit-test the non-client area, query DWM and pump real Win32 messages, none of which exist on Qt's offscreen platform. `conftest.py` skips them automatically if the suite ever lands somewhere headless. The figure is not counted by hand — every hand-counted number in this file had drifted by the time anyone re-read it — it is what `pytest --collect-only -m native` reports, which was 99 of 1,309 when this line was written. Re-run that rather than trusting this sentence.
@@ -715,6 +728,9 @@ The full phased plan lives in [ROADMAP.md](ROADMAP.md), including *settled decis
 - [x] The sidebar footer stripped to just the elevation indicator — the theme toggle, update badge and version line now live exclusively in Settings rather than as synced shortcuts *(v10.16.0)*
 - [x] Arabic translation extended from the v10.15.0 foundation to the dashboard, every category page, every task card's title/description, status badges, run-history timestamps ("3d ago · ~2m"), the Settings restore-point summary, the Ctrl+K command palette, and the Software Catalog dialog's 46 tool entries — see [frontend/i18n_catalog.py](src/frontend/i18n_catalog.py) for what's covered and what's still deliberately deferred *(v10.16.0)*
 - [x] Arabic translation extended again to the three remaining primary interactive dialogs — Update Center, Bloatware Purge and Startup Manager translate in full, including two backend-authored data tables (the bloatware catalog's per-package `Note`, the startup audit's per-rule `Reason`) routed through the same catalog mechanism as everything else *(v10.17.0)*
+- [x] Start Menu, File Explorer and Taskbar bands — fourteen per-user toggles on the same probed, revert-to-your-value tweak engine *(v10.18.0)*
+- [x] Arabic completed across every inspector and action dialog, with true right-to-left mirroring of the shell *(v10.18.0)*
+- [x] A new heartbeat brand mark rendered from one geometry for the app, the `.ico` and the installer, and instant per-module search on `/` *(v10.18.0)*
 
 **Planned**
 

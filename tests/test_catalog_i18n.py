@@ -149,6 +149,44 @@ class TestWelcomePageTranslation:
             window.welcome.retranslate(before)
             qapp.processEvents()
 
+    def test_retranslate_back_to_english_is_lossless(self, window, qapp):
+        """The full real quick-action grid, round-tripped — not the single
+        synthetic card TestGlassCardTranslation covers in isolation. Uses
+        fullText()/toolTip() throughout: .text() on a ClampedLabel/
+        ElidedCaption reads the currently-ELIDED render, which is width-
+        dependent and NOT the right thing to diff a translation against
+        (see the .fullText() note on those classes)."""
+        before = window._language
+
+        def snapshot():
+            snap = {
+                "tag": window.welcome._tag.fullText(),
+                "health_section": window.welcome._health_section.text(),
+                "section": window.welcome._section.text(),
+            }
+            for key in window.welcome._tiles:
+                snap[f"tile.{key}"] = window.welcome._tiles[key]._caption.text()
+            for i, card in enumerate(window.welcome.action_cards()):
+                snap[f"card[{i}].title"] = card._title.fullText()
+                snap[f"card[{i}].desc"] = card._desc.fullText()
+                snap[f"card[{i}].meta"] = tuple(
+                    p.text() for p in card._meta_pills)
+            return snap
+
+        try:
+            baseline = snapshot()
+            window.welcome.retranslate("ar")
+            qapp.processEvents()
+            assert snapshot() != baseline, (
+                "nothing changed under Arabic — the round trip below would "
+                "be vacuous")
+            window.welcome.retranslate("en")
+            qapp.processEvents()
+            assert snapshot() == baseline
+        finally:
+            window.welcome.retranslate(before)
+            qapp.processEvents()
+
 
 class TestStorageTileTranslation:
     """A REAL BUG caught by the v16 Arabic smoke test, not by any of the
@@ -287,6 +325,51 @@ class TestCategoryPageTranslation:
             # plural/singular form depends on the live card count, but
             # either way it must not still be showing the English word
             assert "OPERATION" not in page._count_chip.text()
+        finally:
+            page.retranslate(before)
+            qapp.processEvents()
+
+    def test_retranslate_back_to_english_is_lossless(self, window, qapp):
+        """The full real page — header, every band header, every card,
+        the filter combo and the count/applied chips — round-tripped
+        rather than checked one axis at a time. fullText() for every
+        ClampedLabel/ElidedCaption, same reasoning as the WelcomePage
+        equivalent above: .text() reads a width-dependent elided render."""
+        from PySide6.QtWidgets import QLabel
+
+        before = window._language
+        page = window.pages[0]   # Software Management — banded, has cards
+
+        def snapshot():
+            snap = {
+                "title": page._title.text(),
+                "tagline": page._tagline.text(),
+                "home": page._home.text(),
+                "count_chip": page._count_chip.text(),
+                "filter": tuple(page._filter.itemText(i)
+                                 for i in range(page._filter.count())),
+            }
+            for header, _cards in page._bands:
+                if header is None:
+                    continue
+                label = header.findChild(QLabel, "bandTitle")
+                if label is not None:
+                    snap[f"band[{id(header)}]"] = label.text()
+            for i, card in enumerate(page.cards):
+                snap[f"card[{i}].title"] = card._title.fullText()
+                snap[f"card[{i}].desc"] = card._desc.fullText()
+            return snap
+
+        try:
+            baseline = snapshot()
+            page.retranslate("ar")
+            qapp.processEvents()
+            assert snapshot() != baseline, (
+                "nothing changed under Arabic — the round trip below would "
+                "be vacuous")
+            page.retranslate("en")
+            qapp.processEvents()
+            assert snapshot() == baseline
         finally:
             page.retranslate(before)
             qapp.processEvents()

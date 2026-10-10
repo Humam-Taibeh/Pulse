@@ -32,17 +32,17 @@ if sys.platform == "win32":
     import ctypes.wintypes  # MSG / RECT for native window hit-testing
 
 from PySide6.QtCore import (
-    QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt,
+    QEvent, QPoint, QPropertyAnimation, QSize, Qt,
     QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QFont, QIcon, QKeySequence, QPalette, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFileDialog, QFrame,
+    QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame,
     QGraphicsOpacityEffect,
-    QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
-    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
+    QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 # Allow "from utils.helpers import ..." / "from frontend import ..." when
@@ -63,8 +63,7 @@ from frontend import theme as TH  # noqa: E402
 from frontend import i18n  # noqa: E402
 from frontend import i18n_catalog  # noqa: E402
 from frontend.animations import (  # noqa: E402
-    CASCADE_BUDGET_MS, CASCADE_MS, EASE_INOUT, PAGE_FADE_MS, CascadeAnimator,
-    PageFader,
+    EASE_INOUT, CascadeAnimator, PageFader,
 )
 from frontend.menu_structure import (  # noqa: E402
     CATEGORIES, SOFTWARE_CATALOG, catalog_section, category_bands,
@@ -89,9 +88,13 @@ from frontend.widgets import (  # noqa: E402
     PulseDialog, RestorePointDialog, RevertChoiceDialog,
     ResponsiveGridHost, SelfUpdateDialog, ShortcutSheetDialog,
     SoftwareCatalogDialog,
-    StartupManagerDialog, StatusRail, StorageAnalyzerDialog, TitleBar,
+    StartupManagerDialog, StorageAnalyzerDialog, TitleBar,
     ToolInstallWizardDialog, UpdateCenterDialog,
     reanchor_dialog, refit_dialog,
+    # v1.1 instant category filter — the exact matcher Ctrl+K already
+    # uses (see widgets.match_entry's own docstring for why it is shared
+    # rather than reimplemented here).
+    match_entry, name_clear_button, normalise_query,
 )
 from frontend import playbooks  # noqa: E402
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
@@ -147,6 +150,23 @@ _REVERT_TASKS: dict[str, str] = {
     "DisableTelemetry": "RevertDisableTelemetry",
     "DisableAdvertisingID": "RevertDisableAdvertisingID",
     "DisableActivityHistory": "RevertDisableActivityHistory",
+    # v1.1 Start Menu customization / File Explorer behavior — all nine
+    # write only HKCU values, so none needs $Script:AdminRequiredTasks.
+    "StartHideRecommended": "RevertStartHideRecommended",
+    "StartDisableWebSearch": "RevertStartDisableWebSearch",
+    "StartDisableRecentTracking": "RevertStartDisableRecentTracking",
+    "StartDisableSuggestions": "RevertStartDisableSuggestions",
+    "ExplorerLaunchToThisPC": "RevertExplorerLaunchToThisPC",
+    "ExplorerShowFileExt": "RevertExplorerShowFileExt",
+    "ExplorerShowHidden": "RevertExplorerShowHidden",
+    "ExplorerShowProtected": "RevertExplorerShowProtected",
+    "ExplorerHideRecommended": "RevertExplorerHideRecommended",
+    # v1.2 granular taskbar toggles — same shape, same reasoning.
+    "TaskbarSearchIconOnly": "RevertTaskbarSearchIconOnly",
+    "TaskbarShowEndTask": "RevertTaskbarShowEndTask",
+    "TaskbarHideCopilot": "RevertTaskbarHideCopilot",
+    "TaskbarHideTaskView": "RevertTaskbarHideTaskView",
+    "TaskbarDisableTransparency": "RevertTaskbarDisableTransparency",
 }
 
 #: The bundled-Microsoft-app restores that check the machine BEFORE offering
@@ -256,7 +276,7 @@ class WelcomePage(QWidget):
     rather than a splash:
 
         ┌──────────────────────────────────────────────────────┐
-        │ ✦  PULSE                                             │  masthead
+        │ ∿  PULSE                                             │  masthead
         │    Windows Orchestration Toolkit                     │
         │                                                      │
         │ SYSTEM HEALTH ────────────────────────────────────── │
@@ -499,7 +519,7 @@ class WelcomePage(QWidget):
         hb.setContentsMargins(TH.SPACE["xl"], 0, TH.SPACE["xl"], 0)
         hb.setSpacing(TH.SPACE["lg"])
 
-        self._logo = BrandMark("✦", size=58, accent=t["accent"])
+        self._logo = BrandMark(size=58, accent=t["accent"])
         hb.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         id_col = QVBoxLayout()
@@ -537,8 +557,8 @@ class WelcomePage(QWidget):
         #
         # They now report where the run's other facts are — the footer
         # status line below, as a caption — and the elevation half of the
-        # pair also has a permanent home in the sidebar's status rail
-        # (widgets.StatusRail). Neither place shouts.
+        # pair also has a permanent home in Settings' own Session group
+        # (widgets.SettingsView._build_session). Neither place shouts.
         self._engine_ok = engine_ok
         self._is_admin = is_admin
         root.addWidget(self._hero)
@@ -1070,7 +1090,7 @@ class CategoryPage(QWidget):
         self._home.clicked.connect(self.home_requested)
         head.addWidget(self._home)
 
-        self._crumb_sep = QLabel("›")
+        self._crumb_sep = QLabel("‹" if i18n.is_rtl(lang) else "›")
         self._crumb_sep.setFixedWidth(10)
         self._crumb_sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head.addWidget(self._crumb_sep)
@@ -1093,6 +1113,55 @@ class CategoryPage(QWidget):
         title_col.addWidget(self._tagline)
         head.addLayout(title_col)
         head.addStretch()
+
+        # -- v1.1 INSTANT filter: text, ahead of the status combo --------
+        # The v1.0 note below explains why a free-text box was removed
+        # from here once already — it sat on screen at the same time as
+        # the sidebar's "Search everything…" doorway (Ctrl+K) and the two
+        # competed to answer the same question. This is not that box
+        # again: Ctrl+K is a MODAL that jumps anywhere in the app and
+        # closes; this narrows the grid you are already looking at,
+        # in place, and stays open while you read the result — the same
+        # split VS Code draws between Ctrl+P and in-file Ctrl+F. Ctrl+F
+        # itself stays bound to the palette (main._install_shortcuts) for
+        # exactly that reason; this field's own key is "/".
+        #
+        # Reuses widgets.match_entry verbatim rather than a second
+        # matcher — see that function's own docstring — plus one check
+        # match_entry does not cover: a literal substring of the CURRENT
+        # display language's translated title/description, so pasting the
+        # Arabic text actually on screen matches even when it is not one
+        # of SEARCH_ALIASES' curated verbs. See _card_matches_query.
+        self._search_field = QFrame()
+        self._search_field.setObjectName("categorySearchField")
+        self._search_field.setFixedSize(220, TH.CONTROL_H)
+        search_lay = QHBoxLayout(self._search_field)
+        search_lay.setContentsMargins(TH.SPACE["sm"], 0, TH.SPACE["sm"], 0)
+        search_lay.setSpacing(TH.SPACE["sm"])
+        search_mark = QLabel()
+        search_char, search_is_fluent = TH.glyph("search")
+        if search_is_fluent:
+            search_font = TH.icon_font(TH.ICON["inline"])
+            if search_font is not None:
+                search_mark.setFont(search_font)
+        search_mark.setText(search_char)
+        search_lay.addWidget(search_mark)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText(
+            i18n.tr("category.search_placeholder", lang))
+        self._search.setFrame(False)
+        self._search.setClearButtonEnabled(True)
+        name_clear_button(self._search, lang)
+        # INSTANT, deliberately not debounced: the status filter beside it
+        # reflows this same grid on every currentIndexChanged with no
+        # debounce either, and this page never holds enough cards (the
+        # densest module today is in the low dozens) for a per-keystroke
+        # relayout to be the wrong call — "zero perceptible lag" is the
+        # requirement, not "as fast as a debounce allows".
+        self._search.textChanged.connect(lambda _t: self.refresh_filter())
+        self._search.installEventFilter(self)
+        search_lay.addWidget(self._search, 1)
+        head.addWidget(self._search_field, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # -- v1.0 STATUS filter: the header's right-hand side ------------
         # This was a free-text "Filter…" box, which sat on screen at the
@@ -1294,26 +1363,73 @@ class CategoryPage(QWidget):
         return max(1, min(self.MAX_COLUMNS, fits))
 
     # -- filtering -------------------------------------------------
-    def refresh_filter(self):
-        """Re-apply the current status filter.
+    def _card_matches_query(self, item: dict, query_norm: str) -> bool:
+        """Does this card answer the instant filter's (already-normalised)
+        query? Two independent yeses, either is enough:
 
-        Called both when the user changes the dropdown AND whenever card
-        badges are re-decided (main._refresh_card_badges): the filter
-        selects on badge state, so a probe result arriving after the user
-        picked "Action due" has to reflow the grid or the page would keep
-        showing a stale selection."""
+        1. widgets.match_entry against the item's ENGLISH source text —
+           title, description, note and (for a hub) what it contains —
+           with typo tolerance and SEARCH_ALIASES' EN<->AR verb table.
+           This is the exact function Ctrl+K scores results with, so a
+           query behaves identically in both places.
+        2. A literal substring of the item's title/description AS
+           CURRENTLY DISPLAYED (i18n_catalog, this page's own `_lang`).
+           match_entry never looks at translated text — see its own
+           docstring — so without this a query built from copying the
+           Arabic actually on screen would not match unless that exact
+           phrase happened to also be a SEARCH_ALIASES key. Folded through
+           the same normalise_query as the query itself, so the alef/yeh/
+           teh-marbuta variance that makes typed Arabic inconsistent is
+           handled once, not twice.
+        """
+        if not query_norm:
+            return True
+        if match_entry(query_norm, item, self.category.get("title", ""),
+                        fuzzy=False) is not None:
+            return True
+        title = normalise_query(i18n_catalog.tr_title(item.get("title", ""), self._lang))
+        if query_norm in title:
+            return True
+        desc = normalise_query(i18n_catalog.tr_desc(item.get("desc", ""), self._lang))
+        return query_norm in desc
+
+    def _empty_message(self) -> str:
+        """Why the grid is showing nothing — the search text if there is
+        one (the more specific, more recently-changed signal), else the
+        status filter's name, else the empty string a fully-populated
+        page never needs to show."""
+        query = self._search.text().strip()
+        if query:
+            return i18n.tr("category.empty_search", self._lang).format(query=query)
         state = self._filter.currentData() or ""
+        if state:
+            return i18n.tr("category.empty_filtered", self._lang).format(
+                filter=self._filter.currentText().lower())
+        return ""
+
+    def refresh_filter(self):
+        """Re-apply the status filter AND the instant text filter — the
+        card grid shows their AND, exactly like narrowing a spreadsheet by
+        two columns at once.
+
+        Called when either control changes, when card badges are
+        re-decided (main._refresh_card_badges, since the status filter
+        selects on badge state and a probe result arriving after the user
+        picked "Action due" has to reflow the grid), and once more from
+        retranslate() (the empty-state sentence and the search
+        placeholder are language-dependent)."""
+        state = self._filter.currentData() or ""
+        query = normalise_query(self._search.text())
         self._visible = [
             card for card in self.cards
-            if not state or card.state() == state
+            if (not state or card.state() == state)
+            and self._card_matches_query(card.item, query)
         ]
         shown = set(id(c) for c in self._visible)
         for card in self.cards:
             card.setVisible(id(card) in shown)
-        self._empty.setText(
-            i18n.tr("category.empty_filtered", self._lang)
-                .format(filter=self._filter.currentText().lower()))
-        self._empty.setVisible(bool(state) and not self._visible)
+        self._empty.setText(self._empty_message())
+        self._empty.setVisible(bool(state or query) and not self._visible)
         # force a rebuild: the column count may not change, but WHICH cards
         # occupy which cells certainly has
         self._cols = 0
@@ -1334,7 +1450,7 @@ class CategoryPage(QWidget):
 
     def _sync_count_chip(self):
         total = category_operations(self.category)
-        filtering = bool(self._filter.currentData())
+        filtering = bool(self._filter.currentData()) or bool(self._search.text().strip())
         if filtering:
             self._count_chip.setText(
                 i18n.tr("category.count.filtered", self._lang)
@@ -1604,12 +1720,54 @@ class CategoryPage(QWidget):
     def focus_filter(self):
         """Ctrl+Shift+F target — open the status dropdown.
 
-        Plain Ctrl+F no longer lands here: with page-level text search
-        folded into the global palette (v1.0), the muscle-memory "find"
-        keys belong to the one search the app has. This shortcut reaches
-        the status filter, which is a different question."""
+        Plain Ctrl+F still does not land here: it is bound to the global
+        Ctrl+K palette (main._install_shortcuts), and stays there even
+        now that this page has its own text search too — see the v1.1
+        comment above self._search_field for why the two are different
+        questions rather than the same one twice. This shortcut reaches
+        the status filter specifically."""
         self._filter.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._filter.showPopup()
+
+    def focus_search(self):
+        """"/" target — focus the instant filter with its current text
+        selected, so typing immediately replaces rather than appends."""
+        self._search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._search.selectAll()
+
+    def eventFilter(self, obj, event):
+        if obj is not self._search:
+            return super().eventFilter(obj, event)
+        if event.type() == QEvent.Type.FocusIn:
+            self._apply_search_focus(True)
+        elif event.type() == QEvent.Type.FocusOut:
+            self._apply_search_focus(False)
+        elif event.type() == QEvent.Type.ShortcutOverride:
+            # Claims bare Escape BEFORE PulseApp's own WindowShortcut
+            # (Escape -> go_home) sees the key event at all — without
+            # this, Qt's shortcut map wins the key first and the field
+            # never gets a chance to clear itself; the user's Escape
+            # navigates them off the page they were trying to narrow.
+            # Only claimed while there is text TO clear, so an empty
+            # field's Escape still falls through to "go home" — the
+            # same two-stage behaviour a browser's own address bar has.
+            if event.key() == Qt.Key.Key_Escape and self._search.text():
+                event.accept()
+                return True
+        elif event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape and self._search.text():
+                self._search.clear()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _apply_search_focus(self, on: bool):
+        """The field's focus ring lives on its container frame, because
+        the QLineEdit inside is chromeless — same reasoning and same
+        mechanism as CommandPalette._apply_field_focus (theme.
+        category_search_qss's own docstring)."""
+        self._search_field.setProperty("focused", on)
+        self._search_field.setStyleSheet(
+            TH.category_search_qss(self._t, TH.resolve_accent(self._t, self.category["accent"])))
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -1622,6 +1780,7 @@ class CategoryPage(QWidget):
         self._t = t
         accent = TH.resolve_accent(t, self.category["accent"])
         self._filter.setStyleSheet(TH.filter_combo_qss(t, accent))
+        self._search_field.setStyleSheet(TH.category_search_qss(t, accent))
         self._empty.setStyleSheet(TH.empty_state_qss(t))
         self._sync_count_chip()
         self._home.apply_theme(t)
@@ -1652,12 +1811,22 @@ class CategoryPage(QWidget):
         entry up front), so a live language switch has to walk what
         already exists — the header, the filter combo's items, every
         band title and every card — the same requirement
-        WelcomePage.retranslate exists for."""
+        WelcomePage.retranslate exists for.
+
+        The breadcrumb separator is a literal character, not a layout —
+        main._apply_language's RTL cascade reverses the HEADER ROW itself
+        (home crumb moves after the title, mirroring which edge each
+        sits against) but never rewrites glyph content, so the glyph
+        that reads as "deeper this way" under the new reading direction
+        has to be chosen here explicitly."""
         self._lang = lang
         self._home.setText(f"⌂  {i18n.tr('category.home', lang)}")
         self._home.setToolTip(i18n.tr("category.home_tooltip", lang))
+        self._crumb_sep.setText("‹" if i18n.is_rtl(lang) else "›")
         self._title.setText(i18n_catalog.tr_title(self.category["title"], lang))
         self._tagline.setText(i18n_catalog.tr_desc(self.category["tagline"], lang))
+        self._search.setPlaceholderText(i18n.tr("category.search_placeholder", lang))
+        name_clear_button(self._search, lang)
         for i, (label_key, _key) in enumerate(self.FILTERS):
             self._filter.setItemText(i, i18n.tr(label_key, lang))
         for (header, _cards), band_title in zip(self._bands, self._band_titles):
@@ -1842,6 +2011,12 @@ class PulseApp(QMainWindow):
         self._tweak_state: dict = {}
         self._nav_buttons: list[NavButton] = []
         self._status_state = "ready"
+        #: i18n key behind the CURRENT status_text, or None while it shows
+        #: dynamic text (a backend phase line, a catalog task name) that
+        #: stays English along with the live console it echoes — see
+        #: _set_canonical_status. Only a canonical key is worth re-rendering
+        #: on a live language switch; _apply_language reads this.
+        self._status_key: str | None = "activity.status.ready"
         self._glass_applied = False
         #: The QScreen whose logicalDotsPerInchChanged we are subscribed to,
         #: or None. Held because that signal belongs to a SCREEN rather
@@ -2132,12 +2307,19 @@ class PulseApp(QMainWindow):
         # the focus-ring tests), and a fifth entry that is not a module
         # would quietly shift all of it.
         #
-        # Lives PAST the stretch, immediately above the footer, rather than
-        # under the modules — the Fluent/Windows-11 pattern of a Settings
-        # entry pinned to the very bottom of the rail, separated from
-        # "where do I go" by the same gap that used to hold the RECENT
-        # panel. It must land directly above status_rail: with the update
-        # badge gone (v16), the rail is the only thing left in the footer.
+        # Lives PAST the stretch, at the very bottom of the rail — the
+        # Fluent/Windows-11 pattern of a Settings entry pinned to the
+        # footer, separated from "where do I go" by the same gap that used
+        # to hold the RECENT panel. THE LAST WIDGET IN THE RAIL, FULL STOP
+        # (v10.17.2): the footer used to end in widgets.StatusRail, a
+        # standalone icon-only elevation/engine indicator clicked maybe
+        # once a session — a permanent seat in the busiest real estate in
+        # the window for a fact read once and then ignored. That state now
+        # lives in Settings' own Session group instead (see
+        # widgets.SettingsView._build_session), read alongside every other
+        # "how this session is set up" fact rather than standing apart
+        # from all of them, and Settings is once again the sidebar's own
+        # anchored bottom element with nothing below it.
         #
         # The empty accent key resolves to the app's own accent (see
         # theme.resolve_accent) — Settings has no module colour because it
@@ -2146,24 +2328,6 @@ class PulseApp(QMainWindow):
         self._settings_btn.clicked.connect(
             lambda _checked=False: self.open_settings())
         side.addWidget(self._settings_btn)
-
-        # -- sidebar footer: ONE STATUS RAIL, ONE CONTROL (v16) ----------
-        # v15 consolidated four scattered controls (a title-bar theme
-        # toggle, an elevation CTA/chip, a version/"check for updates"
-        # line, and the update badge) into one 36px row. v16 goes further:
-        # the theme toggle and the version line are REMOVED from chrome
-        # entirely, not just consolidated — both now live exclusively in
-        # Settings (General's theme picker; the Updates group). The update
-        # badge is gone too, replaced by Settings' own synced Updates
-        # section (SettingsView._build_updates). What is left in the
-        # footer is the one thing that is genuinely SESSION state a
-        # technician glances at repeatedly rather than a choice made once:
-        # can this app do its job right now (StatusRail's elevation
-        # indicator).
-        self.status_rail = StatusRail(t, is_admin=self.is_admin,
-                                      engine_ok=bool(self.ps1_path))
-        self.status_rail.elevate_requested.connect(self._relaunch_as_admin)
-        side.addWidget(self.status_rail)
         body.addWidget(self._sidebar)
         # _sync_sidebar_toggle is called unconditionally further down
         # (after self.welcome/self.pages exist — see the note there),
@@ -2198,39 +2362,29 @@ class PulseApp(QMainWindow):
             self.pages.append(page)
             self.stack.addWidget(page)
 
-        # -- apply persisted language + collapse state -----------
-        # A PRE-EXISTING GAP, closed here rather than left for later: the
-        # sidebar was built above in English/expanded regardless of what
-        # prefs.language()/prefs.sidebar_collapsed() had just loaded into
-        # self._language/self._sidebar_collapsed, and _apply_language had
-        # exactly one caller — the Settings page's own language picker —
-        # so a session that chose Arabic last time opened to an
-        # untranslated, LTR sidebar until the user reopened Settings and
-        # picked it again. welcome/pages above were already constructed
-        # with lang=self._language, so _apply_language retranslating them
-        # again here is a harmless no-op for those two — it still owns
-        # the sidebar's own chrome, which construction left in English.
+        # -- apply persisted sidebar-collapse state ---------------
         # _sync_sidebar_toggle is unconditional: the toggle button was
         # built blank (no initial text/tooltip), so even the common
-        # English/expanded case needs this one call to show its first
-        # glyph at all. The other two stay conditional — true no-ops in
-        # the common case, which construction already produced.
+        # expanded case needs this one call to show its first glyph at
+        # all. The persisted-language application that used to sit here
+        # too has moved past the activity drawer's own construction below
+        # — see the note there for why.
         self._sync_sidebar_toggle()
-        if self._language != "en":
-            self._apply_language(self._language)
         if self._sidebar_collapsed:
             self._apply_sidebar_collapsed(self._sidebar_collapsed)
 
         # The settings surface is the last page in the stack rather than a
         # module, so open_category's `index + 1` arithmetic is untouched.
         self.settings_view = SettingsView(t, is_admin=self.is_admin,
-                                          lang=self._language)
+                                          lang=self._language,
+                                          engine_ok=bool(self.ps1_path))
         self.settings_view.theme_mode_requested.connect(self._on_theme_mode_chosen)
         self.settings_view.restore_point_requested.connect(self._create_restore_point)
         self.settings_view.export_requested.connect(self._export_setup)
         self.settings_view.import_requested.connect(self._import_setup)
         self.settings_view.update_check_requested.connect(self._on_update_check_requested)
         self.settings_view.language_requested.connect(self._on_language_chosen)
+        self.settings_view.elevate_requested.connect(self._relaunch_as_admin)
         self.settings_view.set_theme_mode(self.theme.mode)
         self.stack.addWidget(self.settings_view)
         content.addWidget(self.stack, 1)
@@ -2243,7 +2397,8 @@ class PulseApp(QMainWindow):
         # the task pipeline still reaches console/state_pill/stop_btn/shimmer/
         # status_dot/status_text as attributes, via the aliases below.
         self.activity = ActivityDrawer(t, on_stop=self._cancel_running_task,
-                                       pinned=prefs.drawer_pinned())
+                                       pinned=prefs.drawer_pinned(),
+                                       lang=self._language)
         content.addWidget(self.activity)
         self.console = self.activity.console
         self.state_pill = self.activity.state_pill
@@ -2263,6 +2418,31 @@ class PulseApp(QMainWindow):
         self.activity.set_notifier(
             lambda kind, message: self.toasts.show(kind, message, 3500))
         self.activity.height_changed.connect(self.toasts.reposition)
+
+        # -- apply a persisted non-English language -----------------
+        # A PRE-EXISTING GAP, closed here rather than left for later: the
+        # sidebar was built above in English/expanded regardless of what
+        # prefs.language() had just loaded into self._language, and
+        # _apply_language had exactly one caller — the Settings page's
+        # own language picker — so a session that chose Arabic last time
+        # opened to an untranslated, LTR sidebar until the user reopened
+        # Settings and picked it again. welcome/pages/settings_view above
+        # were already constructed with lang=self._language, so
+        # _apply_language retranslating them again here is a harmless
+        # no-op for those — it still owns the sidebar's own chrome, which
+        # construction left in English.
+        #
+        # MUST RUN AFTER THE ACTIVITY DRAWER, not where this used to sit
+        # (right after the pages loop, above settings_view). v10.17.1 gave
+        # _apply_language an `self.activity.retranslate(lang)` call plus a
+        # `self.status_text`/`self.stop_btn` re-render — three attributes
+        # that do not exist until the activity-drawer block just above
+        # runs, so calling this any earlier crashed every session that had
+        # ever chosen a non-English language (AttributeError: 'PulseApp'
+        # object has no attribute 'activity' — never reproduced by the
+        # test suite's `window` fixture, which always launches in English).
+        if self._language != "en":
+            self._apply_language(self._language)
 
     # ============================================================
     #  LIVE THEME PIPELINE
@@ -2297,7 +2477,6 @@ class PulseApp(QMainWindow):
             self._search_btn.setIcon(
                 TH.glyph_icon("search", TH.ICON["inline"], t["text_faint"]))
         self._section.setStyleSheet(TH.label_qss(t, "section"))
-        self.status_rail.apply_theme(t)
         self.titlebar.apply_theme(t)
         self._settings_btn.apply_theme(t)
         for btn in self._nav_buttons:
@@ -2384,11 +2563,53 @@ class PulseApp(QMainWindow):
         destination pages together, closing the gap v10.15 deliberately
         left open (see i18n.py's own note on that boundary, updated
         alongside this).
+
+        TRUE RTL MIRRORING (v10.17.2): Arabic no longer just translates in
+        place — the sidebar physically anchors to the RIGHT edge of the
+        window, and every internal component (card grids, breadcrumb,
+        header rows) mirrors with it. Two DIFFERENT Qt mechanisms do this,
+        deliberately kept apart:
+
+          self._body.setDirection() reorders _body's own two children
+          (sidebar, content) WITHOUT touching any widget's own
+          layoutDirection — verified empirically (see the scratch script
+          this comment survived from): two buttons in a QHBoxLayout swap
+          screen position under RightToLeft while both report
+          layoutDirection() == LeftToRight unchanged. This is what moves
+          the sidebar, and ONLY the sidebar.
+
+          self._content.setLayoutDirection() cascades to every descendant
+          that has not set its own direction explicitly — self.stack,
+          self.welcome, every CategoryPage, every GlassCard within them —
+          so Qt's own automatic BiDi handling reverses their QHBoxLayout/
+          QGridLayout item order (a card's icon moves to the right of its
+          title, not the left; a category's card grid fills right-to-
+          left) and remaps Qt.AlignLeft-family flags to the visual edge
+          Arabic readers expect. NavButton is EXEMPT by design (see its
+          own set_rtl note on why it never reads isRightToLeft()), so
+          this cascade reaching the sidebar's _nav_buttons is harmless.
+
+          self.titlebar is reached by NEITHER: it is a sibling of body
+          under root, not body's descendant, and TitleBar.__init__ pins
+          its own layoutDirection to LeftToRight explicitly — Windows'
+          own minimize/maximize/close cluster and the brand mark stay in
+          their standard OS positions regardless of app language, which
+          is what every native Windows app does.
+
+          A few glyphs are literal characters, not layout, and do not
+          flip from either mechanism — CategoryPage's own breadcrumb
+          separator (see CategoryPage.retranslate) and
+          _sync_sidebar_toggle's collapse/expand chevron (immediately
+          below) are the two that needed an explicit RTL-aware choice.
         """
         rtl = i18n.is_rtl(lang)
         direction = (Qt.LayoutDirection.RightToLeft if rtl
                      else Qt.LayoutDirection.LeftToRight)
         self._sidebar.setLayoutDirection(direction)
+        self._content.setLayoutDirection(direction)
+        self._body.setDirection(
+            QBoxLayout.Direction.RightToLeft if rtl
+            else QBoxLayout.Direction.LeftToRight)
 
         self._sync_search_text()
         self._search_btn.setToolTip(i18n.tr("sidebar.search_tooltip", lang))
@@ -2401,9 +2622,18 @@ class PulseApp(QMainWindow):
         for btn in (*self._nav_buttons, self._settings_btn):
             btn.set_rtl(rtl)
 
-        # The elevation indicator is the only thing left in the footer
-        # (v16) and is fully bilingual — retranslate covers it.
-        self.status_rail.retranslate(lang)
+        # The activity drawer's own static chrome (Stop button tooltip,
+        # pin label) — see ActivityDrawer.retranslate's own note on why
+        # status_text/stop_btn's TEXT is handled here instead, from the
+        # state main.py already tracks (_status_key; stop_btn's enabled
+        # state distinguishes its two visible labels).
+        self.activity.retranslate(lang)
+        if self._status_key is not None:
+            self._set_status(self._status_state, i18n.tr(self._status_key, lang))
+        if self.stop_btn.isVisible():
+            self.stop_btn.setText(i18n.tr(
+                "activity.stop_btn" if self.stop_btn.isEnabled()
+                else "activity.stop_btn.stopping", lang))
 
         # Both pages are built once and kept alive for the app's
         # lifetime — see WelcomePage.retranslate / CategoryPage.retranslate
@@ -2432,8 +2662,19 @@ class PulseApp(QMainWindow):
         expanded, chevron "open this way" when collapsed), and this is
         the one control in the rail whose meaning does not collapse away,
         so it keeps a real tooltip in both states rather than losing one
-        the way the module buttons do."""
-        key = "chevron" if self._sidebar_collapsed else "chevron_left"
+        the way the module buttons do.
+
+        RTL FLIPS WHICH GLYPH MEANS WHICH (v10.17.2): the sidebar now
+        anchors to the RIGHT edge under Arabic (see _apply_language), so
+        "collapse" points right (toward the edge it is shrinking into)
+        and "expand" points left (away from the edge, into the content) —
+        the mirror image of the English pair, not the same two glyphs
+        read the other way."""
+        rtl = i18n.is_rtl(self._language)
+        if rtl:
+            key = "chevron_left" if self._sidebar_collapsed else "chevron"
+        else:
+            key = "chevron" if self._sidebar_collapsed else "chevron_left"
         glyph, fallback = TH.glyph(key)
         font = TH.icon_font(TH.ICON["micro"]) if glyph else None
         if font is not None:
@@ -2514,6 +2755,18 @@ class PulseApp(QMainWindow):
             # no way to read the rest.
             self.status_text.setFullText(text)
             self.status_text.setToolTip(text)
+
+    def _set_canonical_status(self, state: str, key: str):
+        """Same as _set_status, but `text` is one of Pulse's own canonical
+        strings rather than a dynamic phase/task name — _apply_language
+        re-runs this from the remembered key on a live language switch.
+        _set_status itself never touches _status_key: a caller passing
+        dynamic text (a backend phase line, a catalog item's title) must
+        clear it explicitly, so a THEME switch's re-apply of the text
+        already on screen (_apply_theme -> _set_status) never has to know
+        which kind of text that is."""
+        self._set_status(state, i18n.tr(key, self._language))
+        self._status_key = key
 
     # ============================================================
     #  NAVIGATION (cascade on category open, fade on home)
@@ -2886,7 +3139,7 @@ class PulseApp(QMainWindow):
             self._open_update_dialog(self._pending_update)
 
     def _open_update_dialog(self, update):
-        dialog = SelfUpdateDialog(self, self.theme.t, update)
+        dialog = SelfUpdateDialog(self, self.theme.t, update, lang=self._language)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.installer_path:
             return
         if self._busy():
@@ -2954,7 +3207,8 @@ class PulseApp(QMainWindow):
         if not self.ps1_path:
             self.toasts.show("error", f"{PS1_FILENAME} not found — engine unavailable.", 5000)
             return
-        self._exec_dialog(ActivationStatusDialog(self, self.ps1_path, self.theme.t))
+        self._exec_dialog(ActivationStatusDialog(self, self.ps1_path, self.theme.t,
+                                                 lang=self._language))
 
     # ============================================================
     #  PLAYBOOKS (v10.3)
@@ -3131,7 +3385,8 @@ class PulseApp(QMainWindow):
             return
 
         playbooks, errors = load_playbooks()
-        dialog = PlaybookDialog(self, playbooks, errors, self.theme.t, self.is_admin)
+        dialog = PlaybookDialog(self, playbooks, errors, self.theme.t, self.is_admin,
+                                lang=self._language)
         if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
             return
         if dialog.chosen is None:
@@ -3150,15 +3405,15 @@ class PulseApp(QMainWindow):
         """
         if not dry_run and playbook.needs_admin and not self.is_admin:
             item = {"icon": playbook.icon, "title": playbook.name,
-                    "desc": f"This playbook changes machine-wide settings, so "
-                            f"Pulse needs to run elevated. Preview still works "
-                            f"without elevation."}
+                    "desc": i18n.tr("playbook.needs_admin_desc", self._language)}
             if self._exec_dialog(
-                    ElevatePromptDialog(self, item, self.theme.t)) == QDialog.DialogCode.Accepted:
+                    ElevatePromptDialog(self, item, self.theme.t,
+                                       lang=self._language)) == QDialog.DialogCode.Accepted:
                 self._relaunch_as_admin()
             return
 
-        dialog = PlaybookDialog(self, [playbook], [], self.theme.t, self.is_admin)
+        dialog = PlaybookDialog(self, [playbook], [], self.theme.t, self.is_admin,
+                                lang=self._language)
         runner = PlaybookRunner(self.ps1_path, playbook, dry_run=dry_run, parent=self)
         self._playbook_runner = runner
         self._playbook_dialog = dialog
@@ -3176,6 +3431,7 @@ class PulseApp(QMainWindow):
         self.activity.set_running(True)
         self.console.clear_console()
         self.state_pill.set_state("running")
+        self._status_key = None   # dynamic: the playbook's own name
         self._set_status("busy", f"Playbook: {playbook.name} …")
         QTimer.singleShot(0, runner.start)
         dialog.exec()
@@ -3216,7 +3472,8 @@ class PulseApp(QMainWindow):
         dialog.enter_done_mode()
         self.toasts.show(
             {"ok": "success", "warn": "warn", "error": "error"}[kind], summary, 7000)
-        self._set_status("ok" if kind != "error" else "err", "System Ready")
+        self._set_canonical_status(
+            "ok" if kind != "error" else "err", "activity.status.ready")
         self.state_pill.set_state("ok" if kind != "error" else "err")
         self.activity.set_running(False)
         # A playbook changes several probed settings at once.
@@ -3232,6 +3489,7 @@ class PulseApp(QMainWindow):
     # help sheet, so a shortcut can never exist without being documented.
     SHORTCUTS = [
         ("Ctrl+K  or  Ctrl+F", "Search everything"),
+        ("/",             "Search this module's cards"),
         ("Ctrl+Shift+F",  "Filter this module by status"),
         ("Ctrl+H",        "Go to the dashboard"),
         ("Ctrl+1 … 4",    "Jump to a module"),
@@ -3262,6 +3520,19 @@ class PulseApp(QMainWindow):
         # answering a keypress the user meant for text search.
         bind("Ctrl+F", self._open_command_palette)
         bind("Ctrl+Shift+F", self._focus_page_filter)
+        # v1.1: the page-local instant filter's own key — deliberately
+        # NOT Ctrl+F (see that binding's own comment for why that one
+        # stays pointed at the palette). "/" is unclaimed and is the
+        # convention this exact split already uses elsewhere (GitHub,
+        # Slack, Notion): a bare key for "search what I'm looking at",
+        # a modifier chord for "search everything, from anywhere". Safe
+        # as a bare WindowShortcut on the same grounds "?" two lines
+        # below already relies on: a focused QLineEdit claims an
+        # ordinary text key via ShortcutOverride before it ever reaches
+        # the shortcut map, so typing "/" into any field — including
+        # this one, mid-query — inserts the character instead of
+        # re-triggering the focus jump.
+        bind("/", self._focus_page_search)
         bind("Ctrl+\\", self.activity.toggle_pinned)
         bind("F1", self._open_shortcut_sheet)
         bind("?", self._open_shortcut_sheet)
@@ -3278,8 +3549,20 @@ class PulseApp(QMainWindow):
         else:
             self._open_command_palette()
 
+    def _focus_page_search(self):
+        """"/" on a module page focuses its instant filter; anywhere else
+        (the dashboard, Settings) there is no page-local search to focus,
+        so this falls through to the one search that always exists —
+        same "never does nothing" rule _focus_page_filter follows."""
+        page = self.stack.currentWidget()
+        if isinstance(page, CategoryPage):
+            page.focus_search()
+        else:
+            self._open_command_palette()
+
     def _open_shortcut_sheet(self):
-        self._exec_dialog(ShortcutSheetDialog(self, self.theme.t, self.SHORTCUTS))
+        self._exec_dialog(ShortcutSheetDialog(self, self.theme.t, self.SHORTCUTS,
+                                               lang=self._language))
 
     # ============================================================
     #  COMMAND PALETTE (Ctrl+K)
@@ -3351,7 +3634,7 @@ class PulseApp(QMainWindow):
         if len(sub_items) == 1:
             self.request_task(sub_items[0], None)
             return
-        dialog = HubDialog(self, hub, self.theme.t)
+        dialog = HubDialog(self, hub, self.theme.t, lang=self._language)
         if (self._exec_dialog(dialog) == QDialog.DialogCode.Accepted
                 and dialog.chosen_item is not None):
             self.request_task(dialog.chosen_item, None)
@@ -3374,7 +3657,7 @@ class PulseApp(QMainWindow):
         # and it covers category cards, dashboard Quick Actions and Ctrl+K in
         # one place. The backend still enforces the same gate as a backstop.
         if requires_admin(task) and not self.is_admin:
-            dialog = ElevatePromptDialog(self, item, self.theme.t)
+            dialog = ElevatePromptDialog(self, item, self.theme.t, lang=self._language)
             if self._exec_dialog(dialog) == QDialog.DialogCode.Accepted:
                 self._relaunch_as_admin()
             return
@@ -3409,7 +3692,7 @@ class PulseApp(QMainWindow):
                 and self._tweak_state.get(task) in ("applied", "mixed", True)):
             choice = RevertChoiceDialog(self, item, self.theme.t,
                                         "mixed" if self._tweak_state.get(task) == "mixed"
-                                        else "applied")
+                                        else "applied", lang=self._language)
             if self._exec_dialog(choice) != QDialog.DialogCode.Accepted:
                 return
             if choice.choice == "revert":
@@ -3442,19 +3725,21 @@ class PulseApp(QMainWindow):
             verdict = self._tweak_state.get(probe_key)
             if verdict in ("default", False):
                 self._exec_dialog(NoticeDialog(
-                    self, f"{app_name} is already installed",
-                    f"{app_name} is already on this PC, so there is nothing "
-                    "to restore. Use the removal action in this hub first if "
-                    "you meant to take it off, or close this and carry on.",
-                    self.theme.t))
+                    self,
+                    i18n.tr("notice.already_installed_title", self._language)
+                        .format(name=app_name),
+                    i18n.tr("notice.already_installed_body", self._language)
+                        .format(name=app_name),
+                    self.theme.t, lang=self._language))
                 return
             # Absent — or UNKNOWN, which takes the same branch on purpose:
             # the wizard asks the user rather than guessing, and its winget
             # path is a harmless no-op if the probe was simply unreadable.
             wizard = ToolInstallWizardDialog(
                 self, app_id, app_name,
-                f"{app_name} is not currently installed. Choose how to put "
-                "it back.", url, self.theme.t)
+                i18n.tr("tool_install.not_installed_desc", self._language)
+                    .format(name=app_name),
+                url, self.theme.t, lang=self._language)
             if self._exec_dialog(wizard) != QDialog.DialogCode.Accepted:
                 return          # cancelled, or the website opened instead
             # Accepted falls through to the normal Restore* task, which
@@ -3473,7 +3758,8 @@ class PulseApp(QMainWindow):
             # live list, re-scanned after every change so the rows show
             # the registry rather than the request.
             self._exec_dialog(ContextMenuDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin,
+                lang=self._language))
             return
         if item.get("path_conflicts"):
             # Self-contained like the DNS switcher: it scans, promotes one
@@ -3483,7 +3769,8 @@ class PulseApp(QMainWindow):
             # shadowed without elevation and disable only the buttons that
             # would write.
             dialog = PathConflictDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin)
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin,
+                lang=self._language)
             # THE SHIELD GOES THROUGH THE ONE RELAUNCH PATH, rather than
             # the dialog re-implementing ShellExecute("runas") behind a
             # card. It appears only when elevation is what is actually
@@ -3498,13 +3785,15 @@ class PulseApp(QMainWindow):
             # is passed in so the dialog can show what each adapter uses
             # WITHOUT elevation and disable only the change buttons.
             self._exec_dialog(DnsSwitcherDialog(
-                self, self.ps1_path, self.theme.t, is_admin=self.is_admin))
+                self, self.ps1_path, self.theme.t, is_admin=self.is_admin,
+                lang=self._language))
             return
         if item.get("storage_analyzer"):
             # Same shape: a read-only scan that hands nothing back. It owns
             # its own drive picker and re-scans in place, so there is no
             # selection for the task pipeline to carry.
-            self._exec_dialog(StorageAnalyzerDialog(self, self.ps1_path, self.theme.t))
+            self._exec_dialog(StorageAnalyzerDialog(self, self.ps1_path, self.theme.t,
+                                                     lang=self._language))
             return
         if item.get("update_center"):
             dialog = UpdateCenterDialog(self, self.ps1_path, self.theme.t,
@@ -3570,7 +3859,8 @@ class PulseApp(QMainWindow):
             # is removed that the user has not been shown. The backend
             # re-scans before removing anything, so an app reinstalled
             # between the scan and the click keeps its entries.
-            dialog = LeftoversDialog(self, self.ps1_path, self.theme.t)
+            dialog = LeftoversDialog(self, self.ps1_path, self.theme.t,
+                                     lang=self._language)
             if self._exec_dialog(dialog) != QDialog.DialogCode.Accepted:
                 return
             if not dialog.selected_ids:
@@ -3579,7 +3869,7 @@ class PulseApp(QMainWindow):
             item = {**item}
             item.pop("confirm", None)   # the selector WAS the confirm step
         elif item.get("wizard") == "office":
-            wizard = OfficeWizardDialog(self, self.theme.t)
+            wizard = OfficeWizardDialog(self, self.theme.t, lang=self._language)
             if self._exec_dialog(wizard) != QDialog.DialogCode.Accepted:
                 return
             if wizard.task_override:
@@ -3634,9 +3924,10 @@ class PulseApp(QMainWindow):
             card.set_running(True)
         self.activity.set_running(True)   # expand the drawer for live output
         verb = "Previewing" if dry_run else "Executing"
+        self._status_key = None   # dynamic: a catalog item's own title
         self._set_status("busy", f"{verb}: {item['title']} …")
         self.state_pill.set_state("running")
-        self.stop_btn.setText("■  Stop Task")
+        self.stop_btn.setText(i18n.tr("activity.stop_btn", self._language))
         self.stop_btn.setEnabled(True)
         self.stop_btn.show()
         self.shimmer.start()
@@ -3692,12 +3983,13 @@ class PulseApp(QMainWindow):
             return
         self.activity.set_stage(text)
         title = (self._running_item or {}).get("title", "")
+        self._status_key = None   # dynamic: a live backend phase line
         self._set_status("busy", f"{title} - {text}" if title else text)
 
     def _on_task_finished(self, result: TaskResult):
         if result.success:
             self.toasts.show("success", result.message, 5000)
-            self._set_status("ok", "System Ready")
+            self._set_canonical_status("ok", "activity.status.ready")
             self.state_pill.set_state("ok")
         else:
             message = result.message
@@ -3711,16 +4003,16 @@ class PulseApp(QMainWindow):
                 # before a task ever spawns, so reaching here means the backend
                 # gate fired — confirmation, not a surprise failure.
                 self.toasts.show("warn", message, 7000)
-                self._set_status("err", "Administrator rights required")
+                self._set_canonical_status("err", "activity.status.admin_required")
             else:
                 self.toasts.show("error", message, 6000)
-                self._set_status("err", "System Ready")
+                self._set_canonical_status("err", "activity.status.ready")
             self.state_pill.set_state("err")
         self._finish_common("ok" if result.success else "err")
 
     def _on_task_failed(self, message: str):
         self.toasts.show("error", message, 6000)
-        self._set_status("err", "System Ready")
+        self._set_canonical_status("err", "activity.status.ready")
         self.state_pill.set_state("err")
         self._finish_common("err")
 
@@ -3731,14 +4023,14 @@ class PulseApp(QMainWindow):
         if self._worker is None:
             return
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setText("Stopping…")
-        self._set_status("busy", "Stopping task…")
+        self.stop_btn.setText(i18n.tr("activity.stop_btn.stopping", self._language))
+        self._set_canonical_status("busy", "activity.status.stopping")
         self._worker.cancel()
 
     def _on_task_cancelled(self):
         self.toasts.show(
             "info", "Task stopped. Re-run it later to complete the operation.", 5000)
-        self._set_status("ready", "System Ready")
+        self._set_canonical_status("ready", "activity.status.ready")
         self.state_pill.set_state("stopped")
         self._finish_common()
 
@@ -3802,7 +4094,8 @@ class PulseApp(QMainWindow):
         # inside its dialog, exactly like the activation report, so opening
         # one never occupies the shell's single-task pipeline.
         if task == "@power_health":
-            self._exec_dialog(PowerHealthDialog(self, self.ps1_path, self.theme.t))
+            self._exec_dialog(PowerHealthDialog(self, self.ps1_path, self.theme.t,
+                                                lang=self._language))
             return
         if task == "@restore_points":
             self._exec_dialog(RestorePointDialog(self, self.ps1_path, self.theme.t))
@@ -3811,7 +4104,7 @@ class PulseApp(QMainWindow):
         # %LOCALAPPDATA%\PULSE, which the GUI owns and the backend has no
         # part in.
         if task == "@data_hygiene":
-            self._exec_dialog(DataHygieneDialog(self, self.theme.t))
+            self._exec_dialog(DataHygieneDialog(self, self.theme.t, lang=self._language))
             return
 
         desktop = resources.desktop_dir()
@@ -3896,24 +4189,27 @@ class PulseApp(QMainWindow):
 
     def _startup_toasts(self):
         if not self.ps1_path:
-            self.toasts.show("error", f"{PS1_FILENAME} not found next to the app.", 8000)
-        else:
-            self.toasts.show("success", "Engine ready — all modules loaded.", 2500)
-        if not self.is_admin:
-            # The copy names the SHIELD, not a button that no longer exists:
-            # the sidebar's "Run as Administrator" CTA was folded into the
-            # status rail's session-state control in v15 (widgets.StatusRail).
             self.toasts.show(
-                "info",
-                "Not running as Administrator — system tasks will prompt to "
-                "relaunch elevated. The shield in the sidebar's status rail "
-                "does it in one click.",
+                "error",
+                i18n.tr("activity.engine_missing_toast", self._language)
+                    .format(filename=PS1_FILENAME),
                 8000)
+        else:
+            self.toasts.show(
+                "success", i18n.tr("activity.engine_ready_toast", self._language), 2500)
+        if not self.is_admin:
+            # The copy names Settings' Session group, not a sidebar button
+            # that no longer exists — the "Run as Administrator" CTA moved
+            # there from the sidebar's status rail in v10.17.2 (widgets.
+            # SettingsView._build_session), the same way the theme toggle
+            # and the update badge already had in v15/v16.
+            self.toasts.show(
+                "info", i18n.tr("activity.not_admin_toast", self._language), 8000)
 
     def _relaunch_as_admin(self):
-        """One-click UAC relaunch, triggered by the status rail's session
-        shield (widgets.StatusRail) or by ElevatePromptDialog. Spawns a
-        second, elevated Pulse via the 'runas' verb (which shows Windows' own UAC consent prompt) and quits this
+        """One-click UAC relaunch, triggered by Settings' own Session group
+        (widgets.SettingsView._build_session) or by ElevatePromptDialog.
+        Spawns a second, elevated Pulse via the 'runas' verb (which shows Windows' own UAC consent prompt) and quits this
         instance once it's confirmed launched — never before, so declining
         the prompt (or the launch failing outright) leaves the user with
         the still-running unelevated app instead of no app at all."""
@@ -4412,7 +4708,8 @@ class PulseApp(QMainWindow):
             else:
                 title = (self._running_item or {}).get("title", "")
             if self._exec_dialog(
-                    CloseConfirmDialog(self, self.theme.t, title)) != QDialog.DialogCode.Accepted:
+                    CloseConfirmDialog(self, self.theme.t, title,
+                                       lang=self._language)) != QDialog.DialogCode.Accepted:
                 event.ignore()
                 return
 

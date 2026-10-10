@@ -10,7 +10,7 @@ Ctrl+K press (see its own class docstring — "no live re-theme needed"),
 so `lang` is read once at construction like ConfirmDialog/
 SoftwareCatalogDialog, and there is no retranslate() to test here.
 
-MATCHING STAYS ENGLISH ON PURPOSE. _match_entry reads item["title"] and
+MATCHING STAYS ENGLISH ON PURPOSE. match_entry reads item["title"] and
 ["desc"] directly, in English, regardless of display language — only the
 RENDERED row translates. So these tests search with English query text
 even under lang="ar" and assert the RESULT renders translated; they do

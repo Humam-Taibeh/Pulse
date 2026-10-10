@@ -273,6 +273,101 @@ function Restore-GameModeTweak {
     return $Ok
 }
 
+# ---- v1.1 Start Menu customization / File Explorer behavior ----
+# All nine below are per-user (HKCU) values, so none needs the "restore
+# the live session" extra step DarkMode/MouseAccel need for a theme/
+# pointer curve the shell caches - Explorer picks these up itself the
+# next time it reads them (Start reopening, a new/refreshed Explorer
+# window), same as toggling them by hand through Settings/Folder Options.
+function Restore-StartHideRecommendedTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "StartHideRecommended" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_IrisRecommendations" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Start Menu Recommended section reverted." } else { Write-ErrorX "Start Menu Recommended section reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-StartDisableWebSearchTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "StartDisableWebSearch" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "BingSearchEnabled" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Start Menu web search reverted." } else { Write-ErrorX "Start Menu web search reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-StartDisableRecentTrackingTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "StartDisableRecentTracking" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Start_TrackDocs" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Recent-item tracking reverted." } else { Write-ErrorX "Recent-item tracking reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-StartDisableSuggestionsTweak {
+    $Ok  = Restore-OriginalRegValue -TweakKey "StartDisableSuggestions" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -DefaultIfMissing "1"
+    $Ok  = (Restore-OriginalRegValue -TweakKey "StartDisableSuggestions" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -DefaultIfMissing "1") -and $Ok
+    if ($Ok) { Write-Success "Start Menu suggestions reverted." } else { Write-ErrorX "Start Menu suggestions reset incomplete - see the error(s) above." }
+    return $Ok
+}
+
+function Restore-ExplorerLaunchToThisPCTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "ExplorerLaunchToThisPC" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "LaunchTo" -DefaultIfMissing "2"
+    if ($Ok) { Write-Success "File Explorer's launch location reverted." } else { Write-ErrorX "File Explorer's launch location reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-ExplorerShowFileExtTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "ExplorerShowFileExt" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "HideFileExt" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "File-extensions setting reverted." } else { Write-ErrorX "File-extensions setting reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-ExplorerShowHiddenTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "ExplorerShowHidden" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "Hidden" -DefaultIfMissing "2"
+    if ($Ok) { Write-Success "Hidden-files setting reverted." } else { Write-ErrorX "Hidden-files setting reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-ExplorerShowProtectedTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "ExplorerShowProtected" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowSuperHidden" -DefaultIfMissing "0"
+    if ($Ok) { Write-Success "Protected-files setting reverted." } else { Write-ErrorX "Protected-files setting reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-ExplorerHideRecommendedTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "ExplorerHideRecommended" -Path "HKCU:\Software\Policies\Microsoft\Windows\Explorer" -Name "HideRecommendedSection" -DefaultIfMissing "0"
+    if ($Ok) { Write-Success "File Explorer's Recommended section reverted." } else { Write-ErrorX "File Explorer's Recommended section reset failed - see the error above." }
+    return $Ok
+}
+
+# ---- v1.2 granular taskbar toggles ----
+# Same shape and same reasoning as the Start Menu / File Explorer restores
+# above: all five are per-user values Explorer re-reads on its own, so no
+# "push it into the live session" extra step is needed.
+function Restore-TaskbarSearchIconOnlyTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarSearchIconOnly" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" -Name "SearchboxTaskbarMode" -DefaultIfMissing "2"
+    if ($Ok) { Write-Success "Taskbar search box reverted." } else { Write-ErrorX "Taskbar search box reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarShowEndTaskTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarShowEndTask" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings" -Name "TaskbarEndTask" -DefaultIfMissing "0"
+    if ($Ok) { Write-Success "Taskbar 'End Task' entry reverted." } else { Write-ErrorX "Taskbar 'End Task' entry reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarHideCopilotTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarHideCopilot" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowCopilotButton" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Copilot taskbar button reverted." } else { Write-ErrorX "Copilot taskbar button reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarHideTaskViewTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarHideTaskView" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Task View button reverted." } else { Write-ErrorX "Task View button reset failed - see the error above." }
+    return $Ok
+}
+
+function Restore-TaskbarDisableTransparencyTweak {
+    $Ok = Restore-OriginalRegValue -TweakKey "TaskbarDisableTransparency" -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name "EnableTransparency" -DefaultIfMissing "1"
+    if ($Ok) { Write-Success "Transparency effects reverted." } else { Write-ErrorX "Transparency effects reset failed - see the error above." }
+    return $Ok
+}
+
 function Restore-TelemetryTweak {
     # Policy value only, matching what the bulk reset has always restored.
     # DiagTrack's service state is service-snapshot territory - that undo

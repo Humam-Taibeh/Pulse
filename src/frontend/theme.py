@@ -853,10 +853,12 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # MOVE, not a fixed icon.
     # v15 — the theme toggle moved out of the title bar (which drew its
     # glyphs from the CAPTION font, a different family with different
-    # metrics) into the sidebar's status rail, which draws from this table
-    # like every other glyph in the app. 'sun' is its light-mode face; the
-    # existing 'moon' below is its dark one, and the rail's session-state
-    # button reuses 'shieldplain'.
+    # metrics) into the sidebar, drawing from this table like every other
+    # glyph in the app. 'sun' is its light-mode face; the existing 'moon'
+    # below is its dark one. Both the toggle and the elevation control
+    # (formerly widgets.StatusRail) have since moved into Settings
+    # (v16, v10.17.2) as plain text rows — 'shieldplain' now lives on
+    # only as the "Disable Telemetry" card's own glyph.
     'sun':           ("\uE706", "\u2600\ufe0f"),   # Brightness — light theme
     'lock':          ("\uE72E", "\U0001f512"),    # Lock — admin-gated affordance
     # --- modules (sidebar) ---
@@ -898,6 +900,44 @@ GLYPHS: dict[str, tuple[str, str]] = {
                                                   # is what that panel actually edits
     'network':       ("\uE839", "\U0001f4e1"),    # Network & Ping Optimizer
     'dns':           ("\uE968", "\U0001f310"),    # DNS & Network Profiles (a server)
+    # --- v1.1 Start Menu customization / File Explorer behavior ---
+    # All nine verified against the installed Segoe Fluent Icons font by
+    # this table's own documented advance-width method before being
+    # trusted (QFontMetrics.horizontalAdvance at 28px: a real glyph in this
+    # family measures the full em, a missing one falls back to .notdef and
+    # measures ~18px) - see the header comment above for why that check,
+    # not QFontMetrics.inFont(), is the reliable one.
+    'nostar':        ("\uE738", "\U0001f6ab"),    # Remove Start Recommendations
+    'localsearch':   ("\uE9A9", "\U0001f50e"),    # Disable Start Web Search
+    'notrack':       ("\uEC92", "\U0001f553"),    # Disable Recent-Item Tracking
+    'nosuggest':     ("\uEA37", "\U0001f6d1"),    # Disable Start Suggestions
+    'thispc':        ("\uE977", "\U0001f4bb"),    # Launch to This PC
+    'filetag':       ("\uE8EC", "\U0001f3f7\uFE0F"),  # Always Show File Extensions
+    'showhidden':    ("\uE7B3", "\U0001f441\uFE0F"),  # Show Hidden Files
+    'showprotected': ("\uE785", "\U0001f513"),    # Show Protected System Files
+    'explorernorecs': ("\uE8A9", "\U0001f5c3\uFE0F"),  # Remove Explorer Recommendations
+    # --- v1.2 granular taskbar toggles ---
+    # Same advance-width verification as the block above, plus a rendered
+    # visual pass (a labelled PNG grid of candidate codepoints at 28px)
+    # before picking the semantically closest one of each real match -
+    # several plausible-looking codepoints in this range render as an
+    # unrelated shape, which only a visual check catches. The first pass
+    # here picked E721/EA80/E790, which test_no_two_glyphs_are_the_same_
+    # codepoint (test_contract.py) correctly caught as byte-identical to
+    # the pre-existing 'search'/'tip'/'palette' entries - exactly the
+    # class of silent duplication that test exists to catch, and proof it
+    # works. Replaced with codepoints cross-checked against the full
+    # GLYPHS table, not just against each other.
+    'searchicon':    ("\uE11A", "\U0001f50d"),    # Compact Search Box (magnifying glass, alt glyph)
+    # E71A LOOKED plausible from its name ("Cancel") and passed the
+    # advance-width check, but rendered as a plain rounded square, not an
+    # X - only caught by actually looking at the live card in a real
+    # screenshot (see the v1.2 GUI verification pass). E711 was then
+    # confirmed to be the genuine X.
+    'endtask':       ("\uE711", "\u274C"),        # Enable 'End Task' (cancel/X)
+    'nocopilot':     ("\uE99A", "\U0001f916"),    # Hide Copilot Button (robot face - AI assistant)
+    'notaskview':    ("\uE7C4", "\U0001fa9f"),    # Hide Task View Button (overlapping windows)
+    'notransparency': ("\uEB42", "\U0001f4a7"),   # Disable Transparency Effects (droplet - opacity)
     # --- maintenance ---
     'broom':         ("\uEA99", "\U0001f9f9"),    # Aggressive Cache Clean
     'disk':          ("\uEDA2", "\U0001f4be"),    # Optimize All Drives
@@ -1031,10 +1071,11 @@ def glyph_icon(name: str, px: int, color: str) -> QIcon | None:
 
     Everywhere else in the app an icon is either PAINTED (widgets.NavButton,
     widgets.IconPlaque) or IS the entire control, in which case the glyph is
-    simply the button's text and icon_font() its font (widgets.StatusRail).
-    The sidebar's search doorway can do neither: one QWidget has one font, so
-    putting the codepoint in the label would render "Search everything…" in
-    the icon family too. That is why it shipped wearing a literal colour
+    simply the button's text and icon_font() its font (the activity drawer's
+    tool buttons, e.g.). The sidebar's search doorway can do neither: one
+    QWidget has one font, so putting the codepoint in the label would
+    render "Search everything…" in the icon family too. That is why it
+    shipped wearing a literal colour
     emoji — the only one left in the app's persistent chrome, at the top of
     the rail, next to fourteen monochrome line icons.
 
@@ -2218,6 +2259,49 @@ def filter_combo_qss(t: dict, accent: str) -> str:
     """ + menu_item_qss(t, "QComboBox QAbstractItemView::item")
 
 
+def category_search_qss(t: dict, accent: str) -> str:
+    """The category header's INSTANT filter (v1.1) — same bordered-frame/
+    chromeless-QLineEdit construction as palette_field_qss (the leading
+    glyph needs a frame to sit in, for the same reason that field does),
+    but sized and coloured like its header neighbour filter_combo_qss
+    rather than the larger Ctrl+K field: the two sit in the same 36px
+    header row, so they read as one control cluster rather than two
+    surfaces borrowed from different dialogs.
+
+    Scoped to its own object name rather than reusing #paletteField -
+    this is not the palette, and giving it a different name is what keeps
+    a future reader from assuming the two share styling by coincidence
+    when a change to one silently reached the other.
+    """
+    return f"""
+        QFrame#categorySearchField {{
+            background: {t['panel']};
+            border: 1px solid {t['panel_line']};
+            border-radius: {RADIUS['control']}px;
+        }}
+        QFrame#categorySearchField:hover {{
+            border: 1px solid {alpha(accent, FIELD['hover'])};
+        }}
+        /* Same reasoning as palette_field_qss: the QLineEdit inside is
+           chromeless, so the focus ring has to live on the frame, flipped
+           by CategoryPage._apply_search_focus off the input's own focus
+           events rather than a :focus pseudo-state QSS cannot target. */
+        QFrame#categorySearchField[focused="true"] {{
+            border: 1px solid {alpha(accent, FIELD['focus'])};
+        }}
+        QFrame#categorySearchField QLineEdit {{
+            background: transparent; border: none;
+            color: {t['text']};
+            font-size: {TYPE['body']}px;
+            selection-background-color: {alpha(accent, 0.35)};
+        }}
+        QFrame#categorySearchField QLabel {{
+            background: transparent; border: none;
+            color: {t['text_faint']};
+        }}
+    """
+
+
 def count_chip_qss(t: dict, accent: str, filtered: bool = False) -> str:
     """'12 operations' / 'showing 3 of 12'. Neutral while the full set is
     shown; accented once a filter is narrowing it, so the chip doubles as
@@ -2255,92 +2339,6 @@ def empty_state_qss(t: dict) -> str:
     grid — an explicit answer beats a blank page, which reads as a bug."""
     return (f"color: {t['text_muted']}; font-size: {TYPE['label']}px; font-weight: 500;"
             "background: transparent; border: none;")
-
-
-#: The one icon-only control size in the app's chrome. A 28px square
-#: inside a CONTROL_H rail leaves 4px of air above and below, which is
-#: what keeps the rail reading as one object rather than as a button with
-#: a border drawn around it.
-RAIL_BUTTON = 28
-
-#: The rail's own content inset, DERIVED rather than picked: it is exactly
-#: the air left over once a RAIL_BUTTON control is centred in a CONTROL_H
-#: row, less the container's 1px border on each side. Written as an
-#: expression because it is not a GAP between two things (which is what
-#: SPACE measures) but the thickness of a frame around one — and because a
-#: literal here would be the first hand-picked pixel back in the layout
-#: after the scale was enforced.
-RAIL_INSET = (CONTROL_H - RAIL_BUTTON) // 2 - 1
-
-
-def status_rail_qss(t: dict) -> str:
-    """THE SIDEBAR'S BOTTOM STATUS RAIL — one container holding the ONE
-    thing that describes the SESSION rather than the work: whether this
-    process holds an Administrator token.
-
-    v15 consolidated four controls (a theme toggle that had lived in the
-    title bar, an elevation CTA/chip, a version/"check for updates" line,
-    and the update badge) into one 36px row. v16 goes further and removes
-    the theme toggle and the version line from chrome entirely — both now
-    live exclusively in Settings — on the reasoning that a control for
-    something touched once a session, if ever, does not earn a permanent
-    seat in the busiest real estate in the window. What is left is
-    session state a technician genuinely glances at repeatedly.
-
-    The container itself is deliberately quiet — the plaque well's neutral
-    fill and the chrome hairline, no accent anywhere. Colour in this row
-    belongs to the session-state button alone (see rail_state_qss), which
-    is the only part of it that can ever be reporting something.
-    """
-    return f"""
-        QFrame#statusRail {{
-            background: {t['plaque_well']};
-            border: 1px solid {t['panel_line']};
-            border-radius: {RADIUS['plaque']}px;
-        }}
-    """
-
-
-def rail_state_qss(t: dict, elevated: bool) -> str:
-    """The session-state button that closes the status rail: emerald while
-    Pulse holds an Administrator token, amber while it does not.
-
-    ONE CONTROL, TWO STATES — which is the whole reason the elevation UI
-    could shrink to this. The packaged app ships `requireAdministrator`
-    (see main.spec), so the unelevated state is one Windows can no longer
-    put a *packaged* Pulse into; what remains of it is a developer running
-    `python src/frontend/main.py` at their own level, and a
-    policy-restricted account that can be denied the token. Neither
-    deserves a standing full-width amber call-to-action in the rail, and
-    the app was carrying THREE surfaces that announced elevation (this
-    footer, the masthead's pills, and the per-task prompt) for a fact that
-    is now true on essentially every real launch.
-
-    Tinted fill rather than a wireframe, at the weight every other
-    semantic surface in the app uses (0.12 plate / 0.34 line) — see the
-    destructive rows in action_row_qss for the same construction. A bare
-    coloured outline is the "harsh wireframe" register this pass is
-    removing everywhere it appears.
-    """
-    tone = t["ok"] if elevated else t["warn"]
-    return f"""
-        QPushButton {{
-            background: {alpha(tone, 0.12)};
-            border: 1px solid {alpha(tone, 0.34)};
-            border-radius: {inner_radius(RADIUS['plaque'], 2)}px;
-            color: {tone}; font-size: {TYPE['label']}px;
-        }}
-        QPushButton:hover {{
-            background: {alpha(tone, 0.22)};
-            border: 1px solid {alpha(tone, 0.55)};
-        }}
-        QPushButton:pressed {{ background: {alpha(tone, 0.32)}; }}
-        QPushButton:disabled {{
-            background: {alpha(tone, 0.12)};
-            border: 1px solid {alpha(tone, 0.34)};
-            color: {tone};
-        }}
-    """
 
 
 def titlebar_button_qss(t: dict, hover: str) -> str:
@@ -2630,8 +2628,9 @@ def chip_strip_qss(t: dict) -> str:
 # (chip_qss was removed in v1.0: its only caller was the hero banner's
 # Engine/Admin chip column. That pill passed to strip_status_qss, which
 # v15 retired in turn — the two session facts it carried are a caption on
-# the dashboard's footer rule now, and the elevation half of the pair has
-# a permanent home in the status rail. See rail_state_qss.)
+# the dashboard's footer rule now, and the elevation half of the pair
+# moved from the sidebar's status rail into Settings' own Session group
+# in v10.17.2 — see widgets.SettingsView._build_session.)
 
 
 def badge_qss(t: dict) -> str:

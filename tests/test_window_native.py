@@ -99,9 +99,9 @@ def test_the_caption_strip_has_no_client_holes_left(floating):
     drag strip with a hole in it develops a dead spot the moment a
     neighbouring control moves and nothing re-measures.
 
-    v15 moved the toggle into the sidebar's status rail (widgets.
-    StatusRail) with the rest of the session chrome, so the strip is
-    uniform again. What is asserted now is that it STAYS uniform: every
+    v15 moved the toggle into the sidebar with the rest of the session
+    chrome (since relocated again, into Settings — v10.17.2), so the
+    strip is uniform again. What is asserted now is that it STAYS uniform: every
     pixel of the title bar that is not one of the three caption buttons
     answers HTCAPTION, all the way to the brand block on the left.
     """

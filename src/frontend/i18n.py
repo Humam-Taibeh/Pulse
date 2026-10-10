@@ -1,8 +1,8 @@
 """
 src/frontend/i18n.py
 
-DISPLAY LANGUAGE (v10.15, extended v16, extended v16.1) — a manual
-English/Arabic choice, not "follow Windows".
+DISPLAY LANGUAGE (v10.15, extended v16, v16.1, v10.17.1, v10.17.2,
+v10.17.3) — a manual English/Arabic choice, not "follow Windows".
 
 WHAT THIS COVERS. v10.15 shipped the foundation and the surfaces a user
 reaches before choosing what to do: the sidebar rail, the Settings page
@@ -30,17 +30,72 @@ matching theme.glyph()'s "a missing table entry degrades, never
 crashes" posture — rather than raising, so a half-translated surface
 never becomes a broken one.
 
+v10.17.1 closes two more gaps. The bottom status strip (widgets.
+ActivityDrawer's always-visible rail — CHANGELOG.md's own "bottom status
+bar" note) now translates its canonical states ("System Ready",
+"Administrator rights required", "Stopping task…", the Stop button and
+its tooltip, the pin chevron): a DYNAMIC status (a live backend phase
+line, a catalog item's own title baked into "Executing: X…") stays
+English along with the console it echoes into, exactly like everywhere
+else — main.PulseApp tracks which kind is currently showing via
+_status_key/_set_canonical_status, since only it knows. The
+OfficeWizardDialog wizard and ToolInstallWizardDialog's install-option
+picker — named explicitly, in every release note through v10.17.0, as
+the last still-English "dialogs reached from a card" — now translate in
+full too; both are built fresh on every open, like Update Center/
+Bloatware Purge/Startup Manager, so `lang` is read once at construction.
+
+v10.17.2 closes the "any remaining tool dialogs" gap for the two
+surfaces named explicitly: PATH Doctor and Leftovers Cleaner, end to
+end — HubDialog/ActionRow (the shell both of them, and every other hub
+card — Microsoft Edge, Microsoft OneDrive, Network & Connectivity —
+open into), PathConflictDialog ("Fix Shadowed Tools") and its
+widgets.InspectorDialog base shell, and LeftoversDialog/LeftoverRow
+("Scan & Purge Leftovers"). InspectorDialog's TITLE/LOADING gained
+opt-in TITLE_KEY/LOADING_KEY counterparts, so a subclass that wants
+translation adds two class attributes rather than the base class
+forcing it on every subclass. Several backend-authored data points
+translate on the established "Pulse's own deterministic copy, not live
+system output" reasoning BloatRow's Note/StartupRow's Reason already
+set: PathConflictDialog's verdict buttons ("Use this one"/"In use"/
+"Needs administrator"/…, the exhaustive `Short` values 03-Environment.
+ps1's Get-PathPriorityPlan/Get-PathInstallPlan return) and LeftoverRow's
+own reason line (17-Leftovers.ps1's `-Reason` literals) — both routed
+through i18n_catalog.
+
+v10.17.3 closes the rest of the inspector/action-dialog roster named
+explicitly in that pass: PowerHealthDialog/StorageAnalyzerDialog/
+DnsSwitcherDialog/ContextMenuDialog (InspectorDialog's other three
+subclasses, opting into TITLE_KEY/LOADING_KEY the same way
+PathConflictDialog does) and the smaller one-off dialogs — NoticeDialog,
+RevertChoiceDialog, PlaybookDialog, ActivationStatusDialog,
+CloseConfirmDialog, ElevatePromptDialog, ShortcutSheetDialog,
+SelfUpdateDialog, DataHygieneDialog. Two more finite, non-interpolated
+string sets joined the i18n_catalog exact-text roster: utils.updater.
+can_apply()'s one refusal reason (SelfUpdateDialog's notes page) and
+PulseApp.SHORTCUTS' nine row descriptions (ShortcutSheetDialog).
+ActivationStatusDialog's own product `status`/`channel`/`explanation`
+fields stay English on purpose — most of 13-Activation.ps1's explanation
+variants interpolate a live day-count, so an exact-text lookup cannot
+carry them; this is the same "dynamic content stays English" boundary
+PathConflictDialog's `reason` tooltip already sits on, not an oversight.
+Every dialog this pass touched is either InspectorDialog's own opt-in
+mechanism or built fresh on every open, so none of them needed a
+retranslate() path.
+
 WHAT STILL STAYS ENGLISH, on purpose (see ROADMAP.md for the tracked
 follow-up): the live PowerShell console log (including any TaskResult
 message reported at runtime — a toggle's own success/failure line, a
-scan's caveat, its Trigger value), playbooks, the Health Report, the
-Restore Point Browser, the Office setup wizard, and
-ToolInstallWizardDialog's own per-app install-option picker.
-SettingsView's own UPDATE_STATE_TEXTS vocabulary (IDLE/CHECKING/UP TO
-DATE/UPDATE READY) stays deferred too — see widgets.py's own note on it.
-StatusRail's elevation text is NOT on this list — see the "footer
-chrome" section below, where it earns a translation rather than staying
-a gap, now that it is the only control still living in the footer.
+scan's caveat, its Trigger value, PathConflictDialog's own long-form
+`reason` tooltip), playbooks, the Health Report, and the Restore Point
+Browser (widgets.RestorePointDialog deliberately does not opt into
+InspectorDialog's TITLE_KEY/LOADING_KEY). SettingsView's own
+UPDATE_STATE_TEXTS vocabulary (IDLE/CHECKING/UP TO DATE/UPDATE READY)
+stays deferred too — see widgets.py's own note on it. The elevation
+state's own text (now Settings' Session group, formerly the sidebar's
+widgets.StatusRail) and the activity drawer's own canonical states are
+NOT on this list — see the "settings: Session" and "activity drawer"
+sections below.
 
 NOT "FOLLOW WINDOWS". Unlike theme.py's system-sync mode, this reads no
 OS locale API at all: a user picks English or Arabic, and that choice is
@@ -293,45 +348,99 @@ STRINGS: dict[str, dict[str, str]] = {
         "ar": "يتحقق من GitHub بحثًا عن إصدار أحدث من Pulse.",
     },
 
-    # -- footer chrome: the sidebar's one remaining control -----------
-    # v16 ("ultra-clean footer") removed the theme toggle, the update
-    # badge and the version/identity line from the sidebar footer
-    # entirely — all three live exclusively in Settings now (theme in
-    # General, updates in its own group; the version string is not
-    # shown anywhere in chrome any more, only in Settings' tagline
-    # context). The elevation-status indicator is the ONLY thing left
-    # in the footer, so — unlike the deferred UPDATE_STATE_TEXTS
-    # vocabulary (see widgets.py's own note on that one) — it earns a
-    # translation now rather than staying a documented gap.
-    "footer.elevation.engine_missing_name": {
-        "en": "Engine missing",
-        "ar": "المحرك غير موجود",
+    # -- settings: Session (v10.17.2) --------------------------------------
+    # v16 ("ultra-clean footer") had already removed the theme toggle, the
+    # update badge and the version/identity line from the sidebar footer,
+    # leaving only the elevation/engine indicator (widgets.StatusRail) as
+    # a standalone shield button there. v10.17.2 removes that too: a
+    # control glanced at maybe once a session does not earn a permanent
+    # icon-only seat in the busiest real estate in the window, and every
+    # other "how this session is set up" fact already lives in Settings —
+    # so this one now does too, as a plain captioned row (General's theme
+    # picker, this group's session state) rather than a painted icon.
+    "settings.group.session": {
+        "en": "Session",
+        "ar": "الجلسة",
     },
-    "footer.elevation.engine_missing_detail": {
+    "settings.session.engine_missing_detail": {
         "en": "The PowerShell engine is missing — Pulse can report but "
               "cannot run operations.",
         "ar": "محرك PowerShell غير موجود — يمكن لـPulse الإبلاغ لكن لا "
               "يمكنه تنفيذ العمليات.",
     },
-    "footer.elevation.admin_name": {
-        "en": "Running as Administrator",
-        "ar": "يعمل بصلاحيات المسؤول",
-    },
-    "footer.elevation.admin_detail": {
+    "settings.session.admin_detail": {
         "en": "Running as Administrator — every operation is available.",
         "ar": "يعمل بصلاحيات المسؤول — كل العمليات متاحة.",
     },
-    "footer.elevation.not_admin_name": {
-        "en": "Not elevated — relaunch as Administrator",
-        "ar": "غير مرتفع الصلاحيات — أعد التشغيل كمسؤول",
-    },
-    "footer.elevation.not_admin_detail": {
+    "settings.session.not_admin_detail": {
         "en": "Not elevated. Some system-level operations need "
               "Administrator rights — click to relaunch (a UAC prompt "
               "will appear).",
         "ar": "غير مرتفع الصلاحيات. بعض عمليات مستوى النظام تحتاج "
               "صلاحيات المسؤول — انقر لإعادة التشغيل (ستظهر نافذة "
               "UAC).",
+    },
+    "settings.session.relaunch_btn": {
+        "en": "Relaunch as Administrator",
+        "ar": "إعادة التشغيل كمسؤول",
+    },
+
+    # -- activity drawer / status strip (v10.17.1) -------------------------
+    # The always-visible 44px rail (status dot, status text, Stop button,
+    # pin chevron) — CHANGELOG.md's "bottom status bar", the last chrome
+    # surface still hardcoded English. Only the rail's own canonical
+    # states are covered here: a dynamic phase line (main._set_status fed
+    # a live backend stage or a catalog item's title, e.g. "Downloading
+    # Firefox 145.0…") stays English along with the live console it
+    # echoes into, same boundary as everywhere else — see main.py's own
+    # _status_key/_set_canonical_status split.
+    "activity.status.ready": {
+        "en": "System Ready",
+        "ar": "النظام جاهز",
+    },
+    "activity.status.admin_required": {
+        "en": "Administrator rights required",
+        "ar": "صلاحيات المسؤول مطلوبة",
+    },
+    "activity.status.stopping": {
+        "en": "Stopping task…",
+        "ar": "جارٍ إيقاف المهمة…",
+    },
+    "activity.stop_btn": {
+        "en": "■  Stop Task",
+        "ar": "■  إيقاف المهمة",
+    },
+    "activity.stop_btn.stopping": {
+        "en": "Stopping…",
+        "ar": "جارٍ الإيقاف…",
+    },
+    "activity.stop_btn_tooltip": {
+        "en": "Hard-stop the running task (kills the whole process tree)",
+        "ar": "إيقاف قسري للمهمة الجارية (يُنهي شجرة العمليات بأكملها)",
+    },
+    "activity.pin.open_tooltip": {
+        "en": "Pin the live output open",
+        "ar": "تثبيت الإخراج المباشر مفتوحًا",
+    },
+    "activity.pin.unpin_tooltip": {
+        "en": "Unpin the live output",
+        "ar": "إلغاء تثبيت الإخراج المباشر",
+    },
+    "activity.engine_ready_toast": {
+        "en": "Engine ready — all modules loaded.",
+        "ar": "المحرك جاهز — تم تحميل كل الوحدات.",
+    },
+    "activity.engine_missing_toast": {
+        "en": "{filename} not found next to the app.",
+        "ar": "لم يُعثر على {filename} بجانب التطبيق.",
+    },
+    "activity.not_admin_toast": {
+        "en": "Not running as Administrator — system tasks will prompt to "
+              "relaunch elevated. Settings' Session group does it in one "
+              "click.",
+        "ar": "لا يعمل بصلاحيات المسؤول — ستطلب مهام النظام إعادة التشغيل "
+              "بصلاحيات مرتفعة. مجموعة الجلسة في الإعدادات تقوم بذلك "
+              "بنقرة واحدة.",
     },
 
     # -- shared confirm-dialog chrome -------------------------------------
@@ -526,6 +635,19 @@ STRINGS: dict[str, dict[str, str]] = {
     "category.empty_filtered": {
         "en": "No operations in this module are {filter}.",
         "ar": "لا توجد عمليات في هذه الوحدة {filter}.",
+    },
+    "category.search_placeholder": {
+        "en": "Search this module…",
+        "ar": "ابحث في هذه الوحدة…",
+    },
+    "category.empty_search": {
+        "en": "No operations match “{query}”.",
+        "ar": "لا توجد عمليات تطابق “{query}”.",
+    },
+    # QLineEdit's built-in clear (×) button — see widgets.name_clear_button.
+    "search.clear": {
+        "en": "Clear search",
+        "ar": "مسح البحث",
     },
 
     # -- card status badges (GlassCard._STATE_BADGES) ----------------------
@@ -1331,6 +1453,1462 @@ STRINGS: dict[str, dict[str, str]] = {
               "fails; turning it off is safe.",
         "ar": "البرنامج الذي يشير إليه هذا العنصر لم يعد مثبَّتًا. "
               "يحاول ويندوز تشغيله كل إقلاع ويفشل؛ تعطيله آمن.",
+    },
+
+    # ============================================================
+    #  OFFICE DEPLOYMENT WIZARD (v10.17.1)
+    # ============================================================
+    # OfficeWizardDialog's own chrome — built fresh on every open, same
+    # shape as CommandPalette/SoftwareCatalogDialog: `lang` is read once
+    # at construction, no retranslate() needed. The choice page's three
+    # GlassCards route through i18n_catalog instead (see its own note),
+    # since GlassCard only knows that lookup; everything else here is
+    # this dialog's own static chrome or a format template it fills with
+    # a live file path — never translated content of its own.
+    "office_wizard.title": {
+        "en": "📄  Microsoft Office Deployment",
+        "ar": "📄  نشر Microsoft Office",
+    },
+    "office_wizard.step.choice": {
+        "en": "Choose how you'd like to proceed",
+        "ar": "اختر كيف تريد المتابعة",
+    },
+    "office_wizard.step.auto_confirm": {
+        "en": "Automated Cloud Download",
+        "ar": "تنزيل سحابي تلقائي",
+    },
+    "office_wizard.step.guide": {
+        "en": "Beginner Guide — get the official tools",
+        "ar": "دليل المبتدئين — احصل على الأدوات الرسمية",
+    },
+    "office_wizard.step.locate": {
+        "en": "Locate your Office files",
+        "ar": "حدد موقع ملفات Office الخاصة بك",
+    },
+    "office_wizard.step.confirm": {
+        "en": "Confirm & Install",
+        "ar": "تأكيد وتثبيت",
+    },
+    "office_wizard.back": {
+        "en": "‹  Back",
+        "ar": "‹  رجوع",
+    },
+    "office_wizard.choice.intro": {
+        "en": "Office ships as one bundle through Microsoft's official "
+              "Deployment Tool (ODT) — there's no per-app silent "
+              "installer. Choose how you'd like to proceed.",
+        "ar": "يُشحن Office كحزمة واحدة عبر أداة النشر الرسمية من "
+              "Microsoft (ODT) — لا يوجد مثبِّت صامت لكل تطبيق على حدة. "
+              "اختر كيف تريد المتابعة.",
+    },
+    "office_wizard.auto.info": {
+        "en": "Pulse will download the official Office Click-to-Run "
+              "client and write a standard configuration to "
+              "<b>Desktop\\Office</b> — Word, Excel, PowerPoint and "
+              "Outlook in English and Arabic. No files to find, nothing "
+              "to configure by hand.",
+        "ar": "سيُنزِّل Pulse عميل Office Click-to-Run الرسمي ويكتب "
+              "تكوينًا قياسيًا إلى <b>سطح المكتب\\Office</b> — Word "
+              "وExcel وPowerPoint وOutlook بالإنجليزية والعربية. لا "
+              "ملفات لإيجادها، ولا شيء لضبطه يدويًا.",
+    },
+    "office_wizard.auto.note": {
+        "en": "ℹ️  This standard configuration targets Volume License "
+              "activation (no product key baked in). If your network "
+              "has a KMS host it activates automatically; otherwise "
+              "Office installs but stays unactivated until a key is "
+              "added. Prefer a subscription install with your own "
+              "settings? Use one of the other two paths instead.",
+        "ar": "ℹ️  يستهدف هذا التكوين القياسي تفعيل ترخيص الحجم "
+              "(Volume License) دون مفتاح منتج مضمَّن. إن كانت شبكتك "
+              "تضم مضيف KMS فسيُفعَّل تلقائيًا؛ وإلا فسيُثبَّت Office "
+              "لكنه يبقى غير مفعَّل حتى تُضاف مفتاح. تفضّل تثبيت اشتراك "
+              "بإعداداتك الخاصة؟ استخدم أحد المسارين الآخرين بدلًا من "
+              "ذلك.",
+    },
+    "office_wizard.warn_dont_close": {
+        "en": "⚠️  IMPORTANT: When the Microsoft Setup window appears, "
+              "DO NOT close it or open any other apps until it reaches "
+              "100%.",
+        "ar": "⚠️  مهم: عند ظهور نافذة إعداد Microsoft، لا تُغلقها ولا "
+              "تفتح أي تطبيقات أخرى حتى تصل إلى 100%.",
+    },
+    "office_wizard.auto.install_btn": {
+        "en": "Download && Install Now",
+        "ar": "تنزيل && تثبيت الآن",
+    },
+    "office_wizard.guide.step1": {
+        "en": "Open the Deployment Tool below, run it, and extract it "
+              "into a folder named <b>Office</b> on your Desktop.",
+        "ar": "افتح أداة النشر أدناه، شغِّلها، واستخرجها إلى مجلد باسم "
+              "<b>Office</b> على سطح مكتبك.",
+    },
+    "office_wizard.guide.step2": {
+        "en": "Open the Customization Tool below, choose your apps, "
+              "languages and channel, then download the resulting "
+              "<b>configuration.xml</b> into that same Office folder.",
+        "ar": "افتح أداة التخصيص أدناه، اختر تطبيقاتك ولغاتك وقناتك، ثم "
+              "نزِّل ملف <b>configuration.xml</b> الناتج إلى مجلد "
+              "Office نفسه.",
+    },
+    "office_wizard.guide.step3": {
+        "en": "Come back here and continue — Pulse will pick up both "
+              "files automatically.",
+        "ar": "عد إلى هنا وتابع — سيلتقط Pulse كلا الملفين تلقائيًا.",
+    },
+    "office_wizard.guide.odt_link": {
+        "en": "🌐  Open Office Deployment Tool   ↗",
+        "ar": "🌐  فتح أداة نشر Office   ↗",
+    },
+    "office_wizard.guide.oct_link": {
+        "en": "⚙️  Open Office Customization Tool   ↗",
+        "ar": "⚙️  فتح أداة تخصيص Office   ↗",
+    },
+    "office_wizard.guide.continue_btn": {
+        "en": "I have the files now  ›",
+        "ar": "لدي الملفات الآن  ›",
+    },
+    "office_wizard.locate.found": {
+        "en": "✅  Found in <b>{folder}</b>",
+        "ar": "✅  وُجد في <b>{folder}</b>",
+    },
+    "office_wizard.locate.setup_label": {
+        "en": "<b>Setup:</b> {path}",
+        "ar": "<b>الإعداد:</b> {path}",
+    },
+    "office_wizard.locate.config_label": {
+        "en": "<b>Config:</b> {path}",
+        "ar": "<b>التكوين:</b> {path}",
+    },
+    "office_wizard.locate.pick_config": {
+        "en": "Found {n} configuration files — which one should Pulse "
+              "use?",
+        "ar": "عُثر على {n} ملفات تكوين — أيها يجب أن يستخدم Pulse؟",
+    },
+    "office_wizard.locate.recommended_tag": {
+        "en": "  (recommended)",
+        "ar": "  (موصى به)",
+    },
+    "office_wizard.locate.browse_other": {
+        "en": "📂  Browse for a different folder…",
+        "ar": "📂  تصفّح مجلدًا آخر…",
+    },
+    "office_wizard.locate.continue_btn": {
+        "en": "Continue  ›",
+        "ar": "متابعة  ›",
+    },
+    "office_wizard.locate.missing": {
+        "en": "⚠️  No Office folder with both setup.exe and a "
+              "configuration file was found automatically (checked "
+              "<b>{folder}</b>).",
+        "ar": "⚠️  لم يُعثر تلقائيًا على مجلد Office يحوي كلًا من "
+              "setup.exe وملف تكوين (تم التحقق من <b>{folder}</b>).",
+    },
+    "office_wizard.locate.browse_folder": {
+        "en": "📂  Browse for the Office folder…",
+        "ar": "📂  تصفّح مجلد Office…",
+    },
+    "office_wizard.locate.pick_individually": {
+        "en": "🗂️  Pick setup.exe and configuration.xml individually…",
+        "ar": "🗂️  اختر setup.exe وconfiguration.xml كلًا على حدة…",
+    },
+    "office_wizard.locate.retry": {
+        "en": "Retry auto-detect",
+        "ar": "إعادة محاولة الاكتشاف التلقائي",
+    },
+    "office_wizard.locate.missing_setup": {
+        "en": "setup.exe (or the ODT self-extractor)",
+        "ar": "setup.exe (أو المستخرج الذاتي لـODT)",
+    },
+    "office_wizard.locate.missing_config": {
+        "en": "a configuration .xml file",
+        "ar": "ملف تكوين .xml",
+    },
+    "office_wizard.locate.incomplete": {
+        "en": "❌  <b>{folder}</b> is missing: {missing}",
+        "ar": "❌  <b>{folder}</b> ينقصه: {missing}",
+    },
+    "office_wizard.locate.pick_individually_short": {
+        "en": "🗂️  Pick the files individually…",
+        "ar": "🗂️  اختر الملفات كلًا على حدة…",
+    },
+    "office_wizard.locate.browse_again": {
+        "en": "Browse again",
+        "ar": "تصفّح مجددًا",
+    },
+    "office_wizard.locate.browse_dialog_title": {
+        "en": "Select the folder with setup.exe and configuration.xml",
+        "ar": "حدد المجلد الذي يحوي setup.exe وconfiguration.xml",
+    },
+    "office_wizard.locate.pick_setup_dialog_title": {
+        "en": "Select the Office Deployment Tool (setup.exe)",
+        "ar": "حدد أداة نشر Office (setup.exe)",
+    },
+    "office_wizard.locate.pick_setup_filter": {
+        "en": "Executable files (*.exe)",
+        "ar": "الملفات التنفيذية (*.exe)",
+    },
+    "office_wizard.locate.pick_config_dialog_title": {
+        "en": "Select configuration.xml",
+        "ar": "حدد configuration.xml",
+    },
+    "office_wizard.locate.pick_config_filter": {
+        "en": "XML files (*.xml)",
+        "ar": "ملفات XML (*.xml)",
+    },
+    "office_wizard.confirm.summary": {
+        "en": "<b>Setup:</b> {setup}<br><b>Config:</b> {config}",
+        "ar": "<b>الإعداد:</b> {setup}<br><b>التكوين:</b> {config}",
+    },
+    "office_wizard.confirm.install_btn": {
+        "en": "Install Now",
+        "ar": "تثبيت الآن",
+    },
+
+    # ============================================================
+    #  TOOL INSTALL WIZARD — per-app winget option picker (v10.17.1)
+    # ============================================================
+    "tool_install.note": {
+        "en": "Pulse installs this silently with winget — the same path "
+              "it uses everywhere else.",
+        "ar": "يثبِّت Pulse هذا بصمت عبر winget — نفس المسار الذي "
+              "يستخدمه في كل مكان آخر.",
+    },
+    "tool_install.install_btn": {
+        "en": "Automated Install (winget)",
+        "ar": "تثبيت تلقائي (winget)",
+    },
+    "tool_install.website_btn": {
+        "en": "Visit Official Website",
+        "ar": "زيارة الموقع الرسمي",
+    },
+    "tool_install.website_tooltip_named": {
+        "en": "Opens {name}'s official download page in your browser.",
+        "ar": "يفتح صفحة تنزيل {name} الرسمية في متصفحك.",
+    },
+    "tool_install.website_tooltip_generic": {
+        "en": "Opens a web search for the official download page.",
+        "ar": "يفتح بحثًا على الويب عن صفحة التنزيل الرسمية.",
+    },
+    # The one caller-supplied `desc` this dialog is opened with today
+    # (PulseApp's bundled-app restore flow, _RESTORE_TARGETS) — kept here
+    # rather than inline so the sentence a user sees INSIDE a now-Arabic
+    # dialog isn't the one part of it still hardcoded English.
+    "tool_install.not_installed_desc": {
+        "en": "{name} is not currently installed. Choose how to put it "
+              "back.",
+        "ar": "{name} غير مثبَّت حاليًا. اختر كيف تريد إعادته.",
+    },
+
+    # ============================================================
+    #  HUB DIALOG — PATH Doctor, Leftovers Cleaner, Edge, OneDrive,
+    #  Network & Connectivity (v10.17.2)
+    # ============================================================
+    # HubDialog itself is built fresh on every open (no retranslate()
+    # needed, same shape as CommandPalette/SoftwareCatalogDialog). Its
+    # hub['title']/hub['desc'] and every ActionRow's item['title']/
+    # item['desc'] already have entries in i18n_catalog (the hub is also
+    # a card, translated there since v16); only these action VERBS are
+    # new — short, reused across every hub, so they read as chrome
+    # vocabulary (i18n.py) rather than catalog copy (i18n_catalog.py).
+    "hub.action.scan": {"en": "Scan", "ar": "فحص"},
+    "hub.action.fix": {"en": "Fix", "ar": "إصلاح"},
+    "hub.action.prune": {"en": "Prune", "ar": "تقليم"},
+    "hub.action.restore": {"en": "Restore", "ar": "استعادة"},
+    "hub.action.open": {"en": "Open", "ar": "فتح"},
+    "hub.action.remove": {"en": "Remove", "ar": "إزالة"},
+    "hub.action.reinstall": {"en": "Reinstall", "ar": "إعادة تثبيت"},
+    "hub.action.install": {"en": "Install", "ar": "تثبيت"},
+    "hub.action.run": {"en": "Run", "ar": "تشغيل"},
+    "hub.action.check": {"en": "Check", "ar": "فحص"},
+    "hub.action.reset": {"en": "Reset", "ar": "إعادة ضبط"},
+
+    # ============================================================
+    #  INSPECTOR DIALOGS — shared shell (v10.17.2)
+    # ============================================================
+    # widgets.InspectorDialog's own chrome: TITLE/LOADING move from class-
+    # level literals to class-level i18n KEYS (TITLE_KEY/LOADING_KEY) so
+    # each subclass still owns its own text without hardcoding English.
+    # RestorePointDialog is the one subclass that does NOT opt in — the
+    # Restore Point Browser stays English on purpose, same documented
+    # boundary as the Health Report (see i18n.py's own module docstring).
+    "inspector.close": {
+        "en": "Close",
+        "ar": "إغلاق",
+    },
+    "inspector.rescan": {
+        "en": "Re-scan",
+        "ar": "إعادة الفحص",
+    },
+    "inspector.recheck": {
+        "en": "Re-check",
+        "ar": "إعادة التحقق",
+    },
+    "inspector.unknown": {
+        "en": "Unknown",
+        "ar": "غير معروف",
+    },
+    "inspector.not_reported": {
+        "en": "Not reported",
+        "ar": "غير مُبلَّغ عنه",
+    },
+    "inspector.enabled": {
+        "en": "Enabled",
+        "ar": "مفعَّل",
+    },
+    "inspector.disabled": {
+        "en": "Disabled",
+        "ar": "معطَّل",
+    },
+    "inspector.loading": {
+        "en": "Reading…",
+        "ar": "جارٍ القراءة…",
+    },
+    "inspector.engine_unavailable": {
+        "en": "Engine unavailable — core.ps1 was not found.",
+        "ar": "المحرك غير متاح — لم يُعثر على core.ps1.",
+    },
+    "inspector.report_unreadable": {
+        "en": "The report could not be read.",
+        "ar": "تعذّرت قراءة التقرير.",
+    },
+
+    # ============================================================
+    #  PATH CONFLICT DIALOG — PATH Doctor's "Fix Shadowed Tools" (v10.17.2)
+    # ============================================================
+    "path_conflict.title": {
+        "en": "🧭  Shadowed Tools",
+        "ar": "🧭  الأدوات المتراكبة",
+    },
+    "path_conflict.loading": {
+        "en": "Scanning your PATH for tools with more than one copy…",
+        "ar": "جارٍ فحص PATH بحثًا عن أدوات لها أكثر من نسخة…",
+    },
+    "path_conflict.elevate_btn": {
+        "en": "Restart as administrator",
+        "ar": "إعادة التشغيل كمسؤول",
+    },
+    "path_conflict.elevate_tooltip": {
+        "en": "Reordering the system PATH needs an elevated Pulse. This "
+              "closes Pulse and reopens it with administrator rights; "
+              "Windows will ask you to confirm.",
+        "ar": "إعادة ترتيب PATH النظام يتطلب صلاحيات مرتفعة لـPulse. "
+              "سيُغلق هذا Pulse ويعيد فتحه بصلاحيات المسؤول؛ سيطلب "
+              "ويندوز تأكيدك.",
+    },
+    "path_conflict.nothing_shadowed": {
+        "en": "Nothing is shadowed. Across {entries} PATH entries, "
+              "every tool Pulse checks is answered by exactly one "
+              "installation.",
+        "ar": "لا شيء متراكب. عبر {entries} إدخالًا في PATH، تُجيب "
+              "تثبيتة واحدة فقط عن كل أداة يتحقق منها Pulse.",
+    },
+    "path_conflict.nothing_to_fix_title": {
+        "en": "Nothing to fix",
+        "ar": "لا شيء لإصلاحه",
+    },
+    "path_conflict.nothing_to_fix_note": {
+        "en": "Pulse looks for a second copy of the tools where "
+              "“which one wins?” is a question people actually "
+              "have to debug — interpreters, package managers, "
+              "compilers and build drivers. A machine with one of each "
+              "has nothing to show here, which is the healthy result.",
+        "ar": "يبحث Pulse عن نسخة ثانية للأدوات التي يُضطر الناس فعليًا "
+              "لتشخيص سؤال «أيّها يفوز؟» بشأنها — المفسِّرات، ومديرو "
+              "الحزم، والمترجمات، وأدوات البناء. جهاز يملك نسخة واحدة "
+              "من كل منها لا يُظهر شيئًا هنا، وهذه هي النتيجة السليمة.",
+    },
+    "path_conflict.status_singular": {
+        "en": "1 toolchain has more than one installation on this "
+              "PATH, across {entries} entries. Choosing one REORDERS "
+              "your PATH so it is found first — nothing is removed, "
+              "and an installation's folders always move together.",
+        "ar": "سلسلة أدوات واحدة لها أكثر من تثبيتة على PATH هذا، عبر "
+              "{entries} إدخالًا. اختيار واحدة يُعيد ترتيب PATH ليُعثر "
+              "عليها أولًا — لا يُزال شيء، ومجلدات كل تثبيتة تنتقل معًا "
+              "دائمًا.",
+    },
+    "path_conflict.status_plural": {
+        "en": "{count} toolchains have more than one installation on "
+              "this PATH, across {entries} entries. Choosing one "
+              "REORDERS your PATH so it is found first — nothing is "
+              "removed, and an installation's folders always move "
+              "together.",
+        "ar": "{count} سلاسل أدوات لها أكثر من تثبيتة على PATH هذا، "
+              "عبر {entries} إدخالًا. اختيار واحدة يُعيد ترتيب PATH "
+              "ليُعثر عليها أولًا — لا يُزال شيء، ومجلدات كل تثبيتة "
+              "تنتقل معًا دائمًا.",
+    },
+    "path_conflict.installation_singular": {
+        "en": "{count} INSTALLATION",
+        "ar": "تثبيتة واحدة",
+    },
+    "path_conflict.installation_plural": {
+        "en": "{count} INSTALLATIONS",
+        "ar": "{count} تثبيتات",
+    },
+    "path_conflict.commands_label": {
+        "en": "Commands",
+        "ar": "الأوامر",
+    },
+    "path_conflict.system_path": {
+        "en": "System PATH",
+        "ar": "PATH النظام",
+    },
+    "path_conflict.user_path": {
+        "en": "Your PATH",
+        "ar": "PATH الخاص بك",
+    },
+    "path_conflict.more_folder_singular": {
+        "en": "   (+{n} more folder)",
+        "ar": "   (+{n} مجلد إضافي)",
+    },
+    "path_conflict.more_folder_plural": {
+        "en": "   (+{n} more folders)",
+        "ar": "   (+{n} مجلدات إضافية)",
+    },
+    "path_conflict.applying_status": {
+        "en": "Making {directory} the installation in use…",
+        "ar": "جارٍ جعل {directory} التثبيتة المستخدَمة…",
+    },
+    "path_conflict.applied_fallback": {
+        "en": "PATH updated.",
+        "ar": "تم تحديث PATH.",
+    },
+    "path_conflict.apply_failed": {
+        "en": "The PATH was not changed: {message}",
+        "ar": "لم يتغيّر PATH: {message}",
+    },
+
+    # ============================================================
+    #  LEFTOVERS CLEANER (v10.17.2)
+    # ============================================================
+    # Built fresh on every open (no retranslate() needed, same shape as
+    # the other scan-and-select dialogs). Select All/Deselect All, the
+    # count chip and the Safe Purge button reuse the exact same English
+    # text the Bloatware Purge/Software Catalog dialogs already use
+    # (catalog.select_all/deselect_all, bloatware.count.selected,
+    # bloatware.purge_btn/purge_btn_count) — one key each, not
+    # duplicated here.
+    "leftovers.title": {
+        "en": "🧽  Leftovers Cleaner",
+        "ar": "🧽  منظّف المخلّفات",
+    },
+    "leftovers.subtitle.scanning": {
+        "en": "Looking for what uninstalled software left behind…",
+        "ar": "جارٍ البحث عمّا خلّفته البرامج التي أُزيلت…",
+    },
+    "leftovers.loading": {
+        "en": "Checking startup entries, scheduled tasks, app folders "
+              "and the right-click menu for anything pointing at "
+              "software that is gone…",
+        "ar": "جارٍ فحص إدخالات بدء التشغيل والمهام المجدولة ومجلدات "
+              "التطبيقات وقائمة النقر بالزر الأيمن بحثًا عمّا يشير إلى "
+              "برامج لم تعد موجودة…",
+    },
+    "leftovers.error.scan_failed": {
+        "en": "The leftovers scan returned nothing.",
+        "ar": "لم يعد فحص المخلّفات بأي نتيجة.",
+    },
+    "leftovers.error.suffix": {
+        "en": "\n\nNothing was changed.",
+        "ar": "\n\nلم يتغيّر شيء.",
+    },
+    "leftovers.clean.headline": {
+        "en": "Nothing left behind",
+        "ar": "لا شيء متروك خلفًا",
+    },
+    "leftovers.clean.note": {
+        "en": "No startup entry, scheduled task, app folder or "
+              "right-click entry on this PC points at software that "
+              "has been removed.",
+        "ar": "لا يوجد إدخال بدء تشغيل، أو مهمة مجدولة، أو مجلد "
+              "تطبيق، أو إدخال نقر بزر أيمن على هذا الجهاز يشير إلى "
+              "برنامج أُزيل.",
+    },
+    "leftovers.clean.checked_subtitle": {
+        "en": "Checked startup entries, scheduled tasks, app folders "
+              "and the right-click menu.",
+        "ar": "تم فحص إدخالات بدء التشغيل والمهام المجدولة ومجلدات "
+              "التطبيقات وقائمة النقر بالزر الأيمن.",
+    },
+    "leftovers.section.startup": {
+        "en": "Startup entries",
+        "ar": "إدخالات بدء التشغيل",
+    },
+    "leftovers.section.tasks": {
+        "en": "Scheduled tasks",
+        "ar": "المهام المجدولة",
+    },
+    "leftovers.section.residue": {
+        "en": "Abandoned app folders",
+        "ar": "مجلدات تطبيقات مهجورة",
+    },
+    "leftovers.section.shell": {
+        "en": "Right-click menu",
+        "ar": "قائمة النقر بالزر الأيمن",
+    },
+    "leftovers.section.other": {
+        "en": "Other",
+        "ar": "أخرى",
+    },
+    "leftovers.section_header": {
+        "en": "{title}  ·  {count}",
+        "ar": "{title}  ·  {count}",
+    },
+    "leftovers.summary.singular": {
+        "en": "1 item points at software that is no longer installed",
+        "ar": "عنصر واحد يشير إلى برنامج لم يعد مثبَّتًا",
+    },
+    "leftovers.summary.plural": {
+        "en": "{count} items point at software that is no longer "
+              "installed",
+        "ar": "{count} عناصر تشير إلى برامج لم تعد مثبَّتة",
+    },
+    "leftovers.summary.holding_suffix": {
+        "en": ", holding {size}",
+        "ar": "، تشغل {size}",
+    },
+    "leftovers.summary.backup_note": {
+        "en": ". Everything you purge is backed up first — Restore "
+              "Last Purge puts it back.",
+        "ar": ". كل ما تزيله يُنسخ احتياطيًا أولًا — استعادة آخر إزالة "
+              "تعيده.",
+    },
+    "leftovers.summary.needs_admin_suffix": {
+        "en": " Removing some of these needs administrator; Pulse "
+              "will ask.",
+        "ar": " إزالة بعض هذه العناصر يتطلب صلاحيات المسؤول؛ سيطلبها "
+              "Pulse.",
+    },
+    "leftovers.kind.startup_run": {
+        "en": "Startup entry",
+        "ar": "إدخال بدء تشغيل",
+    },
+    "leftovers.kind.startup_folder": {
+        "en": "Startup shortcut",
+        "ar": "اختصار بدء تشغيل",
+    },
+    "leftovers.kind.task": {
+        "en": "Scheduled task",
+        "ar": "مهمة مجدولة",
+    },
+    "leftovers.kind.residue": {
+        "en": "App folder",
+        "ar": "مجلد تطبيق",
+    },
+    "leftovers.kind.shell_handler": {
+        "en": "Right-click extension",
+        "ar": "امتداد نقر بزر أيمن",
+    },
+    "leftovers.kind.shell_verb": {
+        "en": "Right-click entry",
+        "ar": "إدخال نقر بزر أيمن",
+    },
+    "leftovers.size_tooltip": {
+        "en": "Disk space this frees once the cleanup's backup folder "
+              "is emptied — a purge moves folders aside rather than "
+              "deleting them, so it can be undone.",
+        "ar": "مساحة القرص التي يحررها هذا بعد إفراغ مجلد النسخ "
+              "الاحتياطي الخاص بالتنظيف — الإزالة تنقل المجلدات "
+              "جانبًا بدلًا من حذفها، حتى يمكن التراجع عنها.",
+    },
+
+    # ============================================================
+    #  DATA & STORAGE — DataHygieneDialog (v10.17.3)
+    # ============================================================
+    # Built fresh on every open, no retranslate() needed. Row label/
+    # consequence text lives in i18n_catalog (utils.datastore.CATEGORIES
+    # is Pulse's own Python-authored data, looked up the same way
+    # BloatRow's Note/StartupRow's Reason already are).
+    "data_hygiene.title": {
+        "en": "🗂️  Data Pulse keeps on this PC",
+        "ar": "🗂️  بيانات يحتفظ بها Pulse على هذا الجهاز",
+    },
+    "data_hygiene.summary": {
+        "en": "{size} in total, across {count} categories. Nothing "
+              "here is removed automatically except downloaded "
+              "installers.",
+        "ar": "{size} إجمالًا، عبر {count} فئات. لا شيء هنا يُزال "
+              "تلقائيًا باستثناء المثبِّتات المنزَّلة.",
+    },
+    "data_hygiene.remove_btn": {
+        "en": "Remove",
+        "ar": "إزالة",
+    },
+    "data_hygiene.remove_accessible": {
+        "en": "Remove {label}",
+        "ar": "إزالة {label}",
+    },
+    "data_hygiene.row_title": {
+        "en": "{label} — {size}",
+        "ar": "{label} — {size}",
+    },
+    "data_hygiene.confirm_title": {
+        "en": "Remove {label}?",
+        "ar": "إزالة {label}؟",
+    },
+    "data_hygiene.cannot_undo_suffix": {
+        "en": "  This cannot be undone.",
+        "ar": "  لا يمكن التراجع عن هذا.",
+    },
+    "data_hygiene.removed_toast": {
+        "en": "Removed {files} item(s) — {size} freed.",
+        "ar": "أُزيل {files} عنصر — تحرَّرت {size}.",
+    },
+    "data_hygiene.nothing_removed_toast": {
+        "en": "Nothing was removed from {label} — the files may be "
+              "in use.",
+        "ar": "لم تتم إزالة شيء من {label} — قد تكون الملفات قيد "
+              "الاستخدام.",
+    },
+
+    # ============================================================
+    #  NOTICE DIALOG (v10.17.3)
+    # ============================================================
+    # NoticeDialog's title/body are always caller-supplied (there is no
+    # content of its own besides Close) — the one caller today is
+    # PulseApp's bundled-app restore flow, same as
+    # tool_install.not_installed_desc.
+    "notice.already_installed_title": {
+        "en": "{name} is already installed",
+        "ar": "{name} مثبَّت بالفعل",
+    },
+    "notice.already_installed_body": {
+        "en": "{name} is already on this PC, so there is nothing to "
+              "restore. Use the removal action in this hub first if "
+              "you meant to take it off, or close this and carry on.",
+        "ar": "{name} موجود بالفعل على هذا الجهاز، فلا شيء لاستعادته. "
+              "استخدم إجراء الإزالة في هذا المركز أولًا إن كنت تقصد "
+              "إزالته، أو أغلق هذا وتابع.",
+    },
+
+    # ============================================================
+    #  REVERT CHOICE DIALOG — the two-way toggle's decision (v10.17.3)
+    # ============================================================
+    "revert_choice.mixed_status": {
+        "en": "This tweak is PARTIALLY applied — some of its values "
+              "match, some don't (it may have been changed outside "
+              "Pulse).",
+        "ar": "هذا التعديل مُطبَّق جزئيًا — بعض قيمه مطابقة وبعضها لا "
+              "(قد يكون تغيّر خارج Pulse).",
+    },
+    "revert_choice.applied_status": {
+        "en": "This tweak is currently applied on your system.",
+        "ar": "هذا التعديل مُطبَّق حاليًا على نظامك.",
+    },
+    "revert_choice.body_suffix": {
+        "en": "\n\nRe-apply it to enforce Pulse's values again, or "
+              "revert it to your original settings (or Windows "
+              "defaults if no original was captured).",
+        "ar": "\n\nأعد تطبيقه لفرض قيم Pulse مجددًا، أو ارجع إلى "
+              "إعداداتك الأصلية (أو افتراضيات ويندوز إن لم تُلتقط "
+              "قيم أصلية).",
+    },
+    "revert_choice.revert_btn": {
+        "en": "Revert to Default",
+        "ar": "الرجوع إلى الافتراضي",
+    },
+    "revert_choice.reapply_btn": {
+        "en": "Re-apply",
+        "ar": "إعادة التطبيق",
+    },
+
+    # ============================================================
+    #  PLAYBOOK DIALOG (v10.17.3)
+    # ============================================================
+    # A playbook's own name/description/step titles are USER-AUTHORED
+    # content (a .json file dropped into the playbooks folder) — Pulse
+    # did not write them and cannot translate them, so only this
+    # dialog's OWN chrome is covered here. Malformed-playbook error text
+    # (playbooks.py's own parse errors) stays English too, the same
+    # "live/dynamic diagnostic" boundary the console log sits on.
+    "playbook.title": {
+        "en": "📘  Playbooks",
+        "ar": "📘  كتيّبات التشغيل",
+    },
+    "playbook.blurb": {
+        "en": "Ordered task sequences that run through the normal "
+              "engine. Preview simulates every step with -WhatIf and "
+              "changes nothing.",
+        "ar": "تسلسلات مهام مرتَّبة تُشغَّل عبر المحرك المعتاد. "
+              "المعاينة تحاكي كل خطوة بوضع -WhatIf ولا تغيّر شيئًا.",
+    },
+    "playbook.empty": {
+        "en": "No playbooks found. Drop a .json file into the "
+              "'playbooks' folder next to Pulse to add one.",
+        "ar": "لم يُعثر على كتيّبات تشغيل. ضع ملف .json في مجلد "
+              "'playbooks' بجانب Pulse لإضافة واحد.",
+    },
+    "playbook.preview_btn": {
+        "en": "Preview",
+        "ar": "معاينة",
+    },
+    "playbook.preview_tooltip": {
+        "en": "Run every step with -WhatIf: reports what would happen "
+              "and changes nothing.",
+        "ar": "تشغيل كل خطوة بوضع -WhatIf: يُبلِّغ عمّا سيحدث دون "
+              "تغيير أي شيء.",
+    },
+    "playbook.run_btn": {
+        "en": "Run Playbook",
+        "ar": "تشغيل الكتيّب",
+    },
+    "playbook.stop_btn": {
+        "en": "Stop",
+        "ar": "إيقاف",
+    },
+    "playbook.admin_note": {
+        "en": "  ·  ⚠️ needs Administrator — some steps will be "
+              "refused in this session",
+        "ar": "  ·  ⚠️ يتطلب صلاحيات المسؤول — سترفض بعض الخطوات في "
+              "هذه الجلسة",
+    },
+    "playbook.steps_count_singular": {
+        "en": "1 step",
+        "ar": "خطوة واحدة",
+    },
+    "playbook.steps_count_plural": {
+        "en": "{count} steps",
+        "ar": "{count} خطوات",
+    },
+    "playbook.previewing_status": {
+        "en": "Previewing {name}…",
+        "ar": "جارٍ معاينة {name}…",
+    },
+    "playbook.running_status": {
+        "en": "Running {name}…",
+        "ar": "جارٍ تشغيل {name}…",
+    },
+    "playbook.still_running_warning": {
+        "en": "This playbook is still running — press Stop to end it, "
+              "or let it finish.",
+        "ar": "لا يزال هذا الكتيّب قيد التشغيل — اضغط إيقاف لإنهائه، "
+              "أو دعه يكتمل.",
+    },
+    "playbook.optional_tag": {
+        "en": "optional",
+        "ar": "اختياري",
+    },
+    "playbook.needs_admin_desc": {
+        "en": "This playbook changes machine-wide settings, so Pulse "
+              "needs to run elevated. Preview still works without "
+              "elevation.",
+        "ar": "يغيّر هذا الكتيّب إعدادات على مستوى الجهاز، لذا يحتاج "
+              "Pulse إلى العمل بصلاحيات مرتفعة. المعاينة تعمل دون "
+              "صلاحيات مرتفعة.",
+    },
+
+    # ============================================================
+    #  ACTIVATION STATUS DIALOG (v10.17.3)
+    # ============================================================
+    # This dialog's OWN chrome only. The report's status/channel labels
+    # (product.get("status")/product.get("channel")) are the one
+    # backend-authored data point in this pass left untranslated on
+    # purpose: 13-Activation.ps1's Get-ActivationStatusDetail interpolates
+    # a dynamic day-count into 4 of its 7 explanation sentences, which
+    # cannot be matched by i18n_catalog's exact-text lookup the way a
+    # fixed sentence (BloatRow's Note, PathConflictDialog's verdicts) can
+    # — see i18n_catalog.py's own note if this gets revisited.
+    "activation.title": {
+        "en": "🔑  Activation Status — Windows & Office",
+        "ar": "🔑  حالة التفعيل — ويندوز وOffice",
+    },
+    "activation.loading": {
+        "en": "Reading the licensing service…",
+        "ar": "جارٍ قراءة خدمة الترخيص…",
+    },
+    "activation.docs_btn": {
+        "en": "Official Activation Docs",
+        "ar": "وثائق التفعيل الرسمية",
+    },
+    "activation.docs_tooltip": {
+        "en": "Opens Microsoft's activation documentation in your browser.",
+        "ar": "يفتح وثائق التفعيل من Microsoft في متصفحك.",
+    },
+    "activation.settings_btn": {
+        "en": "Windows Activation Settings",
+        "ar": "إعدادات تفعيل ويندوز",
+    },
+    "activation.settings_tooltip": {
+        "en": "Opens Settings › System › Activation, where Windows "
+              "licence state is changed.",
+        "ar": "يفتح الإعدادات › النظام › التفعيل، حيث تُغيَّر حالة "
+              "ترخيص ويندوز.",
+    },
+    "activation.report_unreadable_fallback": {
+        "en": "The licence status could not be read.",
+        "ar": "تعذّرت قراءة حالة الترخيص.",
+    },
+    "activation.failed_prefix": {
+        "en": "Could not read activation status: {message}",
+        "ar": "تعذّرت قراءة حالة التفعيل: {message}",
+    },
+    "activation.settings_open_failed": {
+        "en": "Windows could not open the Activation settings page. "
+              "Open Settings › System › Activation manually.",
+        "ar": "تعذّر على ويندوز فتح صفحة إعدادات التفعيل. افتح "
+              "الإعدادات › النظام › التفعيل يدويًا.",
+    },
+    "activation.docs_open_failed": {
+        "en": "Could not open your browser. The activation "
+              "documentation is at {url}",
+        "ar": "تعذّر فتح متصفحك. وثائق التفعيل على {url}",
+    },
+    "activation.status_line": {
+        "en": "{host} · {edition}",
+        "ar": "{host} · {edition}",
+    },
+    "activation.status_line_build_suffix": {
+        "en": " (build {build})",
+        "ar": " (الإصدار {build})",
+    },
+    "activation.default_hostname": {
+        "en": "this machine",
+        "ar": "هذا الجهاز",
+    },
+    "activation.default_edition": {
+        "en": "Unknown edition",
+        "ar": "إصدار غير معروف",
+    },
+    "activation.card_windows": {
+        "en": "Windows",
+        "ar": "ويندوز",
+    },
+    "activation.windows_unknown_note": {
+        "en": "The licensing service did not report a Windows licence "
+              "on this machine. That is normal on some managed or "
+              "evaluation images; Settings › System › Activation is "
+              "authoritative.",
+        "ar": "لم تُبلِّغ خدمة الترخيص عن ترخيص ويندوز على هذا الجهاز. "
+              "هذا طبيعي في بعض الصور المُدارة أو التجريبية؛ الإعدادات "
+              "› النظام › التفعيل هي المرجع الموثوق.",
+    },
+    "activation.badge_unknown": {
+        "en": "Unknown",
+        "ar": "غير معروف",
+    },
+    "activation.row_channel": {
+        "en": "Licence channel",
+        "ar": "قناة الترخيص",
+    },
+    "activation.row_product_key": {
+        "en": "Product key",
+        "ar": "مفتاح المنتج",
+    },
+    "activation.product_key_value": {
+        "en": "Ends in {partial}",
+        "ar": "ينتهي بـ{partial}",
+    },
+    "activation.row_licence_type": {
+        "en": "Licence type",
+        "ar": "نوع الترخيص",
+    },
+    "activation.licence_permanent": {
+        "en": "Permanent — does not expire",
+        "ar": "دائم — لا ينتهي",
+    },
+    "activation.licence_leased": {
+        "en": "Leased — renews automatically",
+        "ar": "مؤجَّر — يتجدد تلقائيًا",
+    },
+    "activation.row_renews_in": {
+        "en": "Renews in",
+        "ar": "يتجدد خلال",
+    },
+    "activation.row_grace_left": {
+        "en": "Grace period left",
+        "ar": "الفترة المتبقية للسماح",
+    },
+    "activation.days_value": {
+        "en": "{days} day(s)",
+        "ar": "{days} يوم/أيام",
+    },
+    "activation.office_default_name": {
+        "en": "Microsoft Office",
+        "ar": "Microsoft Office",
+    },
+    "activation.badge_no_licence": {
+        "en": "No licence",
+        "ar": "لا ترخيص",
+    },
+    "activation.row_installation": {
+        "en": "Installation",
+        "ar": "التثبيت",
+    },
+    "activation.office_unlicensed_note": {
+        "en": "Office is installed but reports no licence. An Office "
+              "licence is held against the Microsoft account that "
+              "owns the subscription — signing into that account in "
+              "any Office app restores it. See the guide below.",
+        "ar": "Office مثبَّت لكنه لا يُبلِّغ عن ترخيص. يُحفظ ترخيص "
+              "Office مقابل حساب Microsoft المالك للاشتراك — تسجيل "
+              "الدخول بذلك الحساب في أي تطبيق Office يستعيده. راجع "
+              "الدليل أدناه.",
+    },
+    "activation.badge_not_installed": {
+        "en": "Not installed",
+        "ar": "غير مثبَّت",
+    },
+    "activation.office_not_installed_note": {
+        "en": "No Microsoft Office installation was found on this "
+              "machine.",
+        "ar": "لم يُعثر على تثبيت Microsoft Office على هذا الجهاز.",
+    },
+    "activation.card_licensing_service": {
+        "en": "Licensing service",
+        "ar": "خدمة الترخيص",
+    },
+    "activation.row_kms_host": {
+        "en": "KMS host",
+        "ar": "مضيف KMS",
+    },
+    "activation.row_oem_firmware": {
+        "en": "OEM firmware licence",
+        "ar": "ترخيص البرنامج الثابت من الشركة المصنِّعة",
+    },
+    "activation.oem_present": {
+        "en": "Present",
+        "ar": "موجود",
+    },
+    "activation.oem_present_with_edition": {
+        "en": "Present ({edition})",
+        "ar": "موجود ({edition})",
+    },
+    "activation.oem_not_present": {
+        "en": "Not present",
+        "ar": "غير موجود",
+    },
+
+    # ============================================================
+    #  POWER HEALTH DIALOG (v10.17.3)
+    # ============================================================
+    "power_health.title": {
+        "en": "🔋  Battery & Power Health",
+        "ar": "🔋  صحة البطارية والطاقة",
+    },
+    "power_health.loading": {
+        "en": "Reading battery and power state…",
+        "ar": "جارٍ قراءة حالة البطارية والطاقة…",
+    },
+    "power_health.settings_btn": {
+        "en": "Power & Sleep Settings",
+        "ar": "إعدادات الطاقة والسكون",
+    },
+    "power_health.settings_open_failed": {
+        "en": "Windows could not open the Power & Sleep page. Open "
+              "Settings › System › Power manually.",
+        "ar": "تعذّر على ويندوز فتح صفحة الطاقة والسكون. افتح "
+              "الإعدادات › النظام › الطاقة يدويًا.",
+    },
+    "power_health.no_battery_status": {
+        "en": "No battery is installed — the power plan section "
+              "still applies.",
+        "ar": "لا توجد بطارية مثبَّتة — قسم خطة الطاقة ما زال ينطبق.",
+    },
+    "power_health.card_battery": {
+        "en": "Battery",
+        "ar": "البطارية",
+    },
+    "power_health.no_battery_default_note": {
+        "en": "No battery detected on this machine.",
+        "ar": "لم تُكتشف بطارية على هذا الجهاز.",
+    },
+    "power_health.badge_unknown": {
+        "en": "UNKNOWN",
+        "ar": "غير معروف",
+    },
+    "power_health.unknown_wear_status": {
+        "en": "A battery is present, but this firmware does not "
+              "report its design capacity, so wear cannot be "
+              "calculated.",
+        "ar": "توجد بطارية، لكن هذا البرنامج الثابت لا يُبلِّغ عن "
+              "سعتها التصميمية، فلا يمكن حساب التآكل.",
+    },
+    "power_health.badge_health": {
+        "en": "{health}% HEALTH",
+        "ar": "{health}% صحة",
+    },
+    "power_health.health_status": {
+        "en": "This battery holds {health}% of the capacity it "
+              "shipped with ({wear}% wear).",
+        "ar": "تحتفظ هذه البطارية بـ{health}% من السعة التي شُحنت "
+              "بها (تآكل {wear}%).",
+    },
+    "power_health.row_design_capacity": {
+        "en": "Design capacity",
+        "ar": "السعة التصميمية",
+    },
+    "power_health.capacity_value": {
+        "en": "{value} mWh",
+        "ar": "{value} mWh",
+    },
+    "power_health.row_full_capacity": {
+        "en": "Full-charge capacity",
+        "ar": "سعة الشحن الكامل",
+    },
+    "power_health.row_cycle_count": {
+        "en": "Cycle count",
+        "ar": "عدد دورات الشحن",
+    },
+    "power_health.not_reported_by_firmware": {
+        "en": "Not reported by this firmware",
+        "ar": "لا يُبلِّغ عنه هذا البرنامج الثابت",
+    },
+    "power_health.row_current_charge": {
+        "en": "Current charge",
+        "ar": "الشحن الحالي",
+    },
+    "power_health.row_power_source": {
+        "en": "Power source",
+        "ar": "مصدر الطاقة",
+    },
+    "power_health.ac_adapter": {
+        "en": "AC adapter",
+        "ar": "مهبط تيار متردد",
+    },
+    "power_health.power_source_battery": {
+        "en": "Battery",
+        "ar": "البطارية",
+    },
+    "power_health.cycle_count_optional_note": {
+        "en": "Cycle count is optional in the battery firmware "
+              "specification — plenty of otherwise healthy laptops "
+              "simply do not publish it.",
+        "ar": "عدد دورات الشحن اختياري في مواصفات البرنامج الثابت "
+              "للبطارية — كثير من أجهزة الحاسوب المحمولة السليمة لا "
+              "تنشره ببساطة.",
+    },
+    "power_health.card_power_plan": {
+        "en": "Power plan",
+        "ar": "خطة الطاقة",
+    },
+    "power_health.row_active_plan": {
+        "en": "Active plan",
+        "ar": "الخطة النشطة",
+    },
+    "power_health.row_plans_available": {
+        "en": "Plans available",
+        "ar": "الخطط المتاحة",
+    },
+    "power_health.power_plan_not_returned_note": {
+        "en": "Windows did not return the power plan list on this "
+              "machine.",
+        "ar": "لم يُعِد ويندوز قائمة خطط الطاقة على هذا الجهاز.",
+    },
+    "power_health.row_hibernation": {
+        "en": "Hibernation",
+        "ar": "الإسبات",
+    },
+
+    # ============================================================
+    #  STORAGE ANALYZER DIALOG (v10.17.3)
+    # ============================================================
+    "storage_analyzer.title": {
+        "en": "🔭  Storage Analyzer",
+        "ar": "🔭  محلِّل التخزين",
+    },
+    "storage_analyzer.loading": {
+        "en": "Scanning… this can take a minute on a large drive.",
+        "ar": "جارٍ الفحص… قد يستغرق دقيقة على قرص كبير.",
+    },
+    "storage_analyzer.scan_folder_btn": {
+        "en": "Scan a Folder…",
+        "ar": "فحص مجلد…",
+    },
+    "storage_analyzer.choose_folder_dialog_title": {
+        "en": "Choose a folder to analyse",
+        "ar": "اختر مجلدًا لتحليله",
+    },
+    "storage_analyzer.drive_label": {
+        "en": "Drive",
+        "ar": "القرص",
+    },
+    "storage_analyzer.reveal_failed": {
+        "en": "Could not open Explorer for {path}",
+        "ar": "تعذّر فتح مستكشف الملفات لـ{path}",
+    },
+    "storage_analyzer.reveal_btn": {
+        "en": "Reveal",
+        "ar": "إظهار",
+    },
+    "storage_analyzer.reveal_tooltip": {
+        "en": "Show {path} in File Explorer",
+        "ar": "إظهار {path} في مستكشف الملفات",
+    },
+    "storage_analyzer.drive_free_of": {
+        "en": "{free} free of {total}",
+        "ar": "{free} خالية من {total}",
+    },
+    "storage_analyzer.could_not_read": {
+        "en": "Could not read {path} — it does not exist or is not "
+              "readable by this account.",
+        "ar": "تعذّرت قراءة {path} — غير موجود أو غير قابل للقراءة "
+              "بهذا الحساب.",
+    },
+    "storage_analyzer.accounted_for": {
+        "en": "{path} — {total} accounted for.",
+        "ar": "{path} — {total} محسوبة.",
+    },
+    "storage_analyzer.truncated_suffix": {
+        "en": " The scan hit its time budget, so this is a partial "
+              "view of the largest items found so far.",
+        "ar": " بلغ الفحص حد وقته المخصَّص، فهذا عرض جزئي لأكبر "
+              "العناصر التي عُثر عليها حتى الآن.",
+    },
+    "storage_analyzer.partial_scan_title": {
+        "en": "Partial scan",
+        "ar": "فحص جزئي",
+    },
+    "storage_analyzer.time_budget_badge": {
+        "en": "TIME BUDGET REACHED",
+        "ar": "بُلغ حد الوقت",
+    },
+    "storage_analyzer.partial_note": {
+        "en": "Large drives can take longer than the scan's budget "
+              "allows. The figures below are real, but smaller items "
+              "may be missing — scan a specific folder for an exact "
+              "picture.",
+        "ar": "قد تستغرق الأقراص الكبيرة أطول مما يسمح به وقت الفحص. "
+              "الأرقام أدناه حقيقية، لكن قد تُفقد عناصر أصغر — افحص "
+              "مجلدًا محددًا للحصول على صورة دقيقة.",
+    },
+    "storage_analyzer.largest_folders": {
+        "en": "Largest folders",
+        "ar": "أكبر المجلدات",
+    },
+    "storage_analyzer.no_subfolders": {
+        "en": "No readable subfolders were found here.",
+        "ar": "لم تُوجد مجلدات فرعية قابلة للقراءة هنا.",
+    },
+    "storage_analyzer.largest_files": {
+        "en": "Largest files",
+        "ar": "أكبر الملفات",
+    },
+    "storage_analyzer.no_files": {
+        "en": "No readable files were found here.",
+        "ar": "لم تُوجد ملفات قابلة للقراءة هنا.",
+    },
+    "storage_analyzer.about_title": {
+        "en": "About this report",
+        "ar": "عن هذا التقرير",
+    },
+    "storage_analyzer.about_note": {
+        "en": "Pulse never deletes anything from this screen. Reveal "
+              "opens the item in File Explorer, where Windows' own "
+              "delete, undo and Recycle Bin apply.",
+        "ar": "لا يحذف Pulse أي شيء من هذه الشاشة أبدًا. يفتح الإظهار "
+              "العنصر في مستكشف الملفات، حيث تنطبق أدوات ويندوز "
+              "الخاصة بالحذف والتراجع وسلة المحذوفات.",
+    },
+    "dns_switcher.title": {
+        "en": "🛰️  DNS & Network Profiles",
+        "ar": "🛰️  ملفات DNS والشبكة",
+    },
+    "dns_switcher.loading": {
+        "en": "Reading network adapters…",
+        "ar": "جارٍ قراءة مهيّئات الشبكة…",
+    },
+    "dns_switcher.no_adapters": {
+        "en": "No connected network adapters were found.",
+        "ar": "لم يُعثر على أي مهيّئ شبكة متصل.",
+    },
+    "dns_switcher.adapters_title": {
+        "en": "Adapters",
+        "ar": "المهيّئات",
+    },
+    "dns_switcher.no_adapters_note": {
+        "en": "Pulse lists physical adapters that are currently up. A "
+              "machine on Wi-Fi with the adapter disabled, or one behind "
+              "a virtual switch only, will show nothing here.",
+        "ar": "يسرد Pulse المهيّئات الفعلية العاملة حاليًا. الجهاز الذي "
+              "يعمل عبر Wi-Fi مع تعطيل المهيّئ، أو الموجود خلف مبدّل "
+              "افتراضي فقط، لن يُظهر شيئًا هنا.",
+    },
+    "dns_switcher.status": {
+        "en": "{count} connected adapter(s). Changes apply to ONE "
+              "adapter at a time and can be undone with Automatic (DHCP).",
+        "ar": "{count} مهيّئ(ات) متصل(ة). تُطبَّق التغييرات على مهيّئ "
+              "واحد في كل مرة ويمكن التراجع عنها باستخدام التلقائي (DHCP).",
+    },
+    "dns_switcher.status_no_doh": {
+        "en": " This build of Windows cannot encrypt DNS (DoH needs "
+              "Windows 11), so profiles are applied unencrypted.",
+        "ar": " لا يمكن لهذا الإصدار من ويندوز تشفير DNS (يتطلب DoH "
+              "ويندوز 11)، لذا تُطبَّق الملفات بلا تشفير.",
+    },
+    "dns_switcher.admin_required_title": {
+        "en": "Administrator required",
+        "ar": "يتطلب صلاحيات المسؤول",
+    },
+    "dns_switcher.not_elevated_badge": {
+        "en": "NOT ELEVATED",
+        "ar": "غير مرتفع الصلاحية",
+    },
+    "dns_switcher.admin_required_note": {
+        "en": "DNS lives in the adapter's machine-scope settings, so "
+              "changing it needs an elevated Pulse. You can still see "
+              "what each adapter is using now.",
+        "ar": "يقع DNS ضمن إعدادات الجهاز على مستوى النظام، لذا يتطلب "
+              "تغييره تشغيل Pulse بصلاحيات مرتفعة. يمكنك مع ذلك رؤية ما "
+              "يستخدمه كل مهيّئ حاليًا.",
+    },
+    "dns_switcher.adapter_label": {
+        "en": "Adapter",
+        "ar": "المهيّئ",
+    },
+    "dns_switcher.current_dns_label": {
+        "en": "Current DNS",
+        "ar": "DNS الحالي",
+    },
+    "dns_switcher.automatic_router": {
+        "en": "Automatic (provided by your router)",
+        "ar": "تلقائي (من جهاز التوجيه)",
+    },
+    "dns_switcher.automatic_badge": {
+        "en": "AUTOMATIC",
+        "ar": "تلقائي",
+    },
+    "dns_switcher.custom_badge": {
+        "en": "CUSTOM",
+        "ar": "مخصّص",
+    },
+    "dns_switcher.automatic_dhcp": {
+        "en": "Automatic (DHCP)",
+        "ar": "تلقائي (DHCP)",
+    },
+    "dns_switcher.already_active_tooltip": {
+        "en": "This adapter is already using this profile.",
+        "ar": "يستخدم هذا المهيّئ هذا الملف الشخصي بالفعل.",
+    },
+    "dns_switcher.needs_admin_tooltip": {
+        "en": "Changing DNS needs an elevated Pulse.",
+        "ar": "يتطلب تغيير DNS تشغيل Pulse بصلاحيات مرتفعة.",
+    },
+    "dns_switcher.restoring_status": {
+        "en": "Restoring automatic DNS on {adapter}…",
+        "ar": "جارٍ استرجاع DNS التلقائي على {adapter}…",
+    },
+    "dns_switcher.applying_status": {
+        "en": "Applying {profile} to {adapter}…",
+        "ar": "جارٍ تطبيق {profile} على {adapter}…",
+    },
+    "dns_switcher.updated": {
+        "en": "DNS updated.",
+        "ar": "تم تحديث DNS.",
+    },
+    "dns_switcher.change_failed": {
+        "en": "Could not change DNS: {message}",
+        "ar": "تعذّر تغيير DNS: {message}",
+    },
+    "context_menu.title": {
+        "en": "🧹  Right-Click Menu Entries",
+        "ar": "🧹  عناصر قائمة النقر بالزر الأيمن",
+    },
+    "context_menu.loading": {
+        "en": "Reading shell context-menu handlers…",
+        "ar": "جارٍ قراءة معالِجات قائمة السياق…",
+    },
+    "context_menu.restore_all_btn": {
+        "en": "Restore All",
+        "ar": "استرجاع الكل",
+    },
+    "context_menu.restore_all_tooltip": {
+        "en": "Put every context-menu entry back exactly as it was before "
+              "Pulse changed anything.",
+        "ar": "إرجاع كل عنصر في قائمة السياق إلى حالته كما كانت قبل أي "
+              "تغيير من Pulse.",
+    },
+    "context_menu.status": {
+        "en": "{total} handler(s) registered · {managed} manageable · "
+              "{hidden} currently hidden.",
+        "ar": "{total} معالِج(ات) مسجَّل(ة) · {managed} قابل(ة) للإدارة · "
+              "{hidden} مخفي(ة) حاليًا.",
+    },
+    "context_menu.needs_admin_suffix": {
+        "en": "  Changing entries needs an elevated Pulse.",
+        "ar": "  يتطلب تغيير العناصر تشغيل Pulse بصلاحيات مرتفعة.",
+    },
+    "context_menu.manageable_title": {
+        "en": "Manageable entries",
+        "ar": "العناصر القابلة للإدارة",
+    },
+    "context_menu.items_badge": {
+        "en": "{count} ITEMS",
+        "ar": "{count} عنصر",
+    },
+    "context_menu.no_managed_note": {
+        "en": "None of the handlers on this machine are ones Pulse "
+              "manages. That is a good sign, not a failure — it means "
+              "nothing recognised as safe-to-hide is installed.",
+        "ar": "لا يُدير Pulse أيًّا من المعالِجات الموجودة على هذا الجهاز. "
+              "هذه علامة جيدة لا فشل — تعني عدم وجود أي عنصر معروف بأنه "
+              "آمن للإخفاء مثبَّت.",
+    },
+    "context_menu.other_handlers_title": {
+        "en": "Other handlers",
+        "ar": "معالِجات أخرى",
+    },
+    "context_menu.other_handlers_note": {
+        "en": "Listed so you can see what is in your menu. Pulse does not "
+              "offer to change these: a shell extension can be doing real "
+              "work — a scanner hook, a sync provider — and blocking one "
+              "blind is how a machine breaks in a way nobody connects "
+              "back to a context menu.",
+        "ar": "مسرودة لتتمكن من رؤية ما في قائمتك. لا يعرض Pulse تغيير "
+              "هذه العناصر: قد يقوم امتداد النظام بعمل حقيقي — نقطة "
+              "ربط لفاحص، أو مزوّد مزامنة — وحظر أحدها دون معرفة هو ما "
+              "يجعل الجهاز يتعطل بطريقة لا يربطها أحد بقائمة السياق.",
+    },
+    "context_menu.showing_n_of": {
+        "en": "Showing 40 of {count}.",
+        "ar": "يُعرض 40 من {count}.",
+    },
+    "context_menu.visible_btn": {
+        "en": "Visible",
+        "ar": "ظاهر",
+    },
+    "context_menu.hidden_btn": {
+        "en": "Hidden",
+        "ar": "مخفي",
+    },
+    "context_menu.hide_tooltip": {
+        "en": "Hide this entry from right-click menus.",
+        "ar": "إخفاء هذا العنصر من قوائم النقر بالزر الأيمن.",
+    },
+    "context_menu.show_tooltip": {
+        "en": "Bring this entry back.",
+        "ar": "إرجاع هذا العنصر.",
+    },
+    "context_menu.updating_status": {
+        "en": "Updating the context menu…",
+        "ar": "جارٍ تحديث قائمة السياق…",
+    },
+    "context_menu.restoring_status": {
+        "en": "Restoring the context menu…",
+        "ar": "جارٍ استرجاع قائمة السياق…",
+    },
+    "context_menu.updated": {
+        "en": "Context menu updated.",
+        "ar": "تم تحديث قائمة السياق.",
+    },
+    "context_menu.change_failed": {
+        "en": "Could not change the context menu: {message}",
+        "ar": "تعذّر تغيير قائمة السياق: {message}",
+    },
+    "close_confirm.head": {
+        "en": "⚠️  A task is still running",
+        "ar": "⚠️  لا تزال مهمة قيد التشغيل",
+    },
+    "close_confirm.body": {
+        "en": "<b>{running}</b> hasn't finished yet. Closing Pulse now stops "
+              "it partway through — the change it was making may be left "
+              "half applied, and you'll need to run it again.",
+        "ar": "لم تنتهِ <b>{running}</b> بعد. إغلاق Pulse الآن يوقفها في "
+              "منتصف الطريق — قد يبقى التغيير الذي كانت تجريه مطبَّقًا "
+              "جزئيًا، وستحتاج إلى تشغيلها مرة أخرى.",
+    },
+    "close_confirm.default_task": {
+        "en": "An operation",
+        "ar": "عملية ما",
+    },
+    "close_confirm.keep_running_btn": {
+        "en": "Keep Running",
+        "ar": "متابعة التشغيل",
+    },
+    "close_confirm.stop_close_btn": {
+        "en": "Stop && Close",
+        "ar": "إيقاف && إغلاق",
+    },
+    "elevate_prompt.head": {
+        "en": "🛡  Administrator required",
+        "ar": "🛡  يتطلب صلاحيات المسؤول",
+    },
+    "elevate_prompt.body": {
+        "en": "“{title}” makes system-level changes that need Administrator "
+              "rights. Relaunch Pulse elevated to continue — Windows will "
+              "show a UAC consent prompt.",
+        "ar": "يجري “{title}” تغييرات على مستوى النظام تتطلب صلاحيات "
+              "المسؤول. أعد تشغيل Pulse بصلاحيات مرتفعة للمتابعة — "
+              "سيعرض ويندوز مطالبة موافقة UAC.",
+    },
+    "elevate_prompt.default_title": {
+        "en": "This action",
+        "ar": "هذا الإجراء",
+    },
+    "elevate_prompt.not_now_btn": {
+        "en": "Not now",
+        "ar": "ليس الآن",
+    },
+    "elevate_prompt.relaunch_btn": {
+        "en": "Relaunch as Administrator",
+        "ar": "إعادة التشغيل كمسؤول",
+    },
+    "shortcut_sheet.head": {
+        "en": "Keyboard shortcuts",
+        "ar": "اختصارات لوحة المفاتيح",
+    },
+    "shortcut_sheet.close_btn": {
+        "en": "Close",
+        "ar": "إغلاق",
+    },
+    "self_update.head": {
+        "en": "🚀  Pulse v{version} is available",
+        "ar": "🚀  الإصدار v{version} من Pulse متاح",
+    },
+    "self_update.prerelease_tag": {
+        "en": "pre-release",
+        "ar": "إصدار تجريبي",
+    },
+    "self_update.no_notes": {
+        "en": "No release notes were published.",
+        "ar": "لم تُنشر ملاحظات إصدار.",
+    },
+    "self_update.later_btn": {
+        "en": "Later",
+        "ar": "لاحقًا",
+    },
+    "self_update.download_install_btn": {
+        "en": "Download && Install",
+        "ar": "تنزيل && تثبيت",
+    },
+    "self_update.view_release_btn": {
+        "en": "View Release",
+        "ar": "عرض الإصدار",
+    },
+    "self_update.downloading": {
+        "en": "Downloading…",
+        "ar": "جارٍ التنزيل…",
+    },
+    "self_update.downloading_progress": {
+        "en": "Downloading… {mb:.1f} / {total_mb:.1f} MB",
+        "ar": "جارٍ التنزيل… {mb:.1f} / {total_mb:.1f} MB",
+    },
+    "self_update.verifying": {
+        "en": "Verifying SHA-256…",
+        "ar": "جارٍ التحقق من SHA-256…",
+    },
+    "self_update.cancel_btn": {
+        "en": "Cancel",
+        "ar": "إلغاء",
+    },
+    "self_update.verified_msg": {
+        "en": "Verified — v{version}'s SHA-256 matches the published "
+              "digest. Pulse will close and Setup will take over.",
+        "ar": "تم التحقق — يطابق SHA-256 للإصدار v{version} البصمة "
+              "المنشورة. سيُغلق Pulse ويتولى المُثبِّت الأمر.",
+    },
+    "self_update.restart_update_btn": {
+        "en": "Restart && Update",
+        "ar": "إعادة التشغيل && التحديث",
+    },
+    "self_update.retry_btn": {
+        "en": "Retry",
+        "ar": "إعادة المحاولة",
+    },
+    "self_update.install_failed": {
+        "en": "The update could not be installed.",
+        "ar": "تعذّر تثبيت التحديث.",
     },
 }
 
