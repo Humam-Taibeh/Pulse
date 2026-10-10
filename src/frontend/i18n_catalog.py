@@ -1125,6 +1125,8 @@ DESCRIPTIONS: dict[str, str] = {
     # lookup as everything else in this dict.
     "Search everything":
         "البحث في كل شيء",
+    "Search this module's cards":
+        "البحث في بطاقات هذه الوحدة",
     "Filter this module by status":
         "تصفية هذه الوحدة بالحالة",
     "Go to the dashboard":

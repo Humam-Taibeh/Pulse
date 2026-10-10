@@ -2259,6 +2259,49 @@ def filter_combo_qss(t: dict, accent: str) -> str:
     """ + menu_item_qss(t, "QComboBox QAbstractItemView::item")
 
 
+def category_search_qss(t: dict, accent: str) -> str:
+    """The category header's INSTANT filter (v1.1) — same bordered-frame/
+    chromeless-QLineEdit construction as palette_field_qss (the leading
+    glyph needs a frame to sit in, for the same reason that field does),
+    but sized and coloured like its header neighbour filter_combo_qss
+    rather than the larger Ctrl+K field: the two sit in the same 36px
+    header row, so they read as one control cluster rather than two
+    surfaces borrowed from different dialogs.
+
+    Scoped to its own object name rather than reusing #paletteField -
+    this is not the palette, and giving it a different name is what keeps
+    a future reader from assuming the two share styling by coincidence
+    when a change to one silently reached the other.
+    """
+    return f"""
+        QFrame#categorySearchField {{
+            background: {t['panel']};
+            border: 1px solid {t['panel_line']};
+            border-radius: {RADIUS['control']}px;
+        }}
+        QFrame#categorySearchField:hover {{
+            border: 1px solid {alpha(accent, FIELD['hover'])};
+        }}
+        /* Same reasoning as palette_field_qss: the QLineEdit inside is
+           chromeless, so the focus ring has to live on the frame, flipped
+           by CategoryPage._apply_search_focus off the input's own focus
+           events rather than a :focus pseudo-state QSS cannot target. */
+        QFrame#categorySearchField[focused="true"] {{
+            border: 1px solid {alpha(accent, FIELD['focus'])};
+        }}
+        QFrame#categorySearchField QLineEdit {{
+            background: transparent; border: none;
+            color: {t['text']};
+            font-size: {TYPE['body']}px;
+            selection-background-color: {alpha(accent, 0.35)};
+        }}
+        QFrame#categorySearchField QLabel {{
+            background: transparent; border: none;
+            color: {t['text_faint']};
+        }}
+    """
+
+
 def count_chip_qss(t: dict, accent: str, filtered: bool = False) -> str:
     """'12 operations' / 'showing 3 of 12'. Neutral while the full set is
     shown; accented once a filter is narrowing it, so the chip doubles as

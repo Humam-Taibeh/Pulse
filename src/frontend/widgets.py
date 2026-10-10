@@ -13,7 +13,6 @@ Import graph: theme.py <- animations.py <- widgets.py <- main.py
 """
 from __future__ import annotations
 
-import math
 import os
 import re
 import sys
@@ -26,8 +25,8 @@ from PySide6.QtCore import (
     QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QBrush, QColor, QCursor, QDesktopServices, QFont, QFontMetrics, QImage,
-    QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
+    QColor, QDesktopServices, QFont, QFontMetrics, QImage,
+    QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
     QTextCharFormat, QTextCursor, QTextLayout, QTextOption,
 )
 from PySide6.QtWidgets import (
@@ -35,7 +34,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
     QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from frontend.animations import (
@@ -46,8 +45,9 @@ from frontend.animations import (
     paint_nav_indicator, paint_ripple_frame, paint_top_sheen, squircle_path,
 )
 from frontend import theme as TH
+from frontend import brand as BRAND
 # Data-only module (no widget imports), so this cannot cycle: the command
-# palette scores against its structured search fields (see _match_entry).
+# palette scores against its structured search fields (see match_entry).
 from frontend import menu_structure as MS
 # Also data-only (a string table + is_rtl()), for the same reason.
 from frontend import i18n as I18N
@@ -1693,8 +1693,7 @@ class TitleBar(QWidget):
         # read at 30px rather than scaled down from a hero. See BrandMark
         # for the four things that changed and why each of them was
         # costing this mark its contrast.
-        self._glyph = BrandMark("✦", size=36, accent=t["accent"],
-                                breathe=False)
+        self._glyph = BrandMark(size=36, accent=t["accent"], breathe=False)
         lay.addWidget(self._glyph)
         self._name = QLabel(app_name)
         lay.addWidget(self._name)
@@ -1757,8 +1756,8 @@ class TitleBar(QWidget):
 
         THE WHOLE LOCKUP, not just the mark, and that is the point rather
         than an over-reach. On the dashboard the masthead already carries
-        ✦ at 58px with PULSE at 34px directly beneath this bar — so the
-        title bar's ✦ + PULSE is the same lockup at a sixth of the size,
+        the mark at 58px with PULSE at 34px directly beneath this bar — so
+        the title bar's mark + PULSE is the same lockup at a sixth of the size,
         forty pixels above the original. Hiding only the mark would leave
         an orphaned "PULSE" above a bigger "PULSE": one duplicate traded
         for a worse one.
@@ -3603,8 +3602,11 @@ class GlassCard(QFrame):
 #  BREATHING ICON — pure-paint pulsing brand glyph (no effects)
 # ============================================================
 class BrandMark(QWidget):
-    """The '✦' Pulse mark, painted — a glyph over a soft radial halo, with
-    an optional slow breath.
+    """The Pulse mark, painted — the heartbeat trace from frontend.brand
+    over a soft radial halo, with an optional slow breath. The same
+    geometry the .ico and installer art are rendered from
+    (tools/make_brand.py), so the mark in the window and the icon on the
+    taskbar are one drawing.
 
     Doctrine-compliant: NO QGraphicsOpacityEffect. One looping
     QVariantAnimation (0→1→0, InOutSine, ~2.6 s) drives painter opacity
@@ -3630,9 +3632,9 @@ class BrandMark(QWidget):
     So a static mark is not merely "the same thing without the animation".
     It is drawn to be READ at chrome scale:
 
-      * DemiBold rather than Light. At this size a hairline weight has no
-        mass left once antialiasing has taken its share.
-      * 24px of glyph in a 36px box (STATIC_GLYPH_RATIO). It was 20-in-30,
+      * the heavier stroke (brand.STROKE_SMALL). At this size the hero's
+        weight has no mass left once antialiasing has taken its share.
+      * 28px of mark in a 36px box (STATIC_GLYPH_RATIO). It was 20-in-30,
         matched to ICON["plaque"] so the mark carried the same optical
         weight as every other glyph in the chrome — and that was the
         mistake, restated as a rule: the app's LOGO is not one more chrome
@@ -3661,19 +3663,17 @@ class BrandMark(QWidget):
     #: 20px glyph is invisible at arm's length.
     STATIC_HALO_ALPHA = 0.30
 
-    #: Glyph size as a fraction of the widget box, per mode. The hero can
-    #: afford a delicate 58% because it is 58px across and the negative
-    #: space is part of the composition; a chrome mark cannot — at 58% it
-    #: is a Light-weight glyph in a box big enough to make it look lost.
-    #: 0.68 of the title bar's 36px box lands on 24.
-    GLYPH_RATIO = 0.58
-    STATIC_GLYPH_RATIO = 0.68
+    #: Mark size as a fraction of the widget box, per mode. The trace is
+    #: wide and short (unlike the compact star it replaced), so it needs
+    #: more of the box than a glyph did to carry the same weight. The hero
+    #: keeps some negative space as part of the composition; a chrome mark
+    #: cannot afford it. 0.78 of the title bar's 36px box lands on 28.
+    GLYPH_RATIO = 0.72
+    STATIC_GLYPH_RATIO = 0.78
 
-    def __init__(self, glyph: str = "✦", size: int = 110,
-                 accent: str = "#00d4ff", parent: QWidget | None = None,
-                 breathe: bool = True):
+    def __init__(self, size: int = 110, accent: str = "#00d4ff",
+                 parent: QWidget | None = None, breathe: bool = True):
         super().__init__(parent)
-        self._glyph = glyph
         self._accent = QColor(accent)
         self._accent2 = QColor(accent)
         self._breathe = breathe
@@ -3685,10 +3685,9 @@ class BrandMark(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         ratio = self.GLYPH_RATIO if breathe else self.STATIC_GLYPH_RATIO
-        self._font = QFont("Segoe UI")
-        self._font.setPixelSize(int(size * ratio))
-        self._font.setWeight(QFont.Weight.Light if breathe
-                             else QFont.Weight.DemiBold)
+        inner = size * ratio
+        off = (size - inner) / 2.0
+        self._mark_box = QRectF(off, off, inner, inner)
 
         self._anim: QVariantAnimation | None = None
         if breathe:
@@ -3756,18 +3755,6 @@ class BrandMark(QWidget):
         self._breath = step / self.BREATH_STEPS
         self.update()
 
-    def _pen(self):
-        """The mark's ink. A static mark takes the brand sweep across its
-        own box; a breathing one stays flat, because a gradient under a
-        varying opacity reads as two effects fighting."""
-        if self._breathe:
-            return QBrush(self._accent)
-        grad = QLinearGradient(0.0, 0.0, float(self.width()),
-                               float(self.height()))
-        grad.setColorAt(0.0, self._accent)
-        grad.setColorAt(1.0, self._accent2)
-        return QBrush(grad)
-
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -3789,12 +3776,11 @@ class BrandMark(QWidget):
         p.setBrush(halo)
         p.drawEllipse(self.rect())
 
-        # the glyph itself
+        # the mark itself — in the theme's brand sweep, cyan into indigo,
+        # the same direction the icon artwork runs
         p.setOpacity(level)
-        pen = QPen(self._pen(), 1.0)
-        p.setPen(pen)
-        p.setFont(self._font)
-        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._glyph)
+        BRAND.paint_mark(p, self._mark_box, self._accent2, self._accent,
+                         small=not self._breathe)
         p.end()
 
 
@@ -8822,10 +8808,23 @@ def normalise_query(text: str) -> str:
     return "".join(out)
 
 
+def name_clear_button(field: QLineEdit, lang: str = "en") -> None:
+    """Give a QLineEdit's built-in clear (×) button an accessible name.
+
+    setClearButtonEnabled(True) spawns a private, glyph-only QToolButton
+    child with no text, tooltip or name — a screen reader announces
+    nothing for it (test_accessibility walks the window for exactly
+    this). Call after enabling the button, and again from retranslate()."""
+    label = I18N.tr("search.clear", lang)
+    for button in field.findChildren(QToolButton):
+        button.setAccessibleName(label)
+        button.setToolTip(label)
+
+
 #: Query term -> the English words it should ALSO search for.
 #:
 #: MATCHING stays keyed to the English source text regardless of display
-#: language — _match_entry reads item["title"]/["desc"] directly, never
+#: language — match_entry reads item["title"]/["desc"] directly, never
 #: the translated form, so one index serves both languages and a
 #: translation edit in i18n_catalog.py can never silently break search.
 #: This table is what lets an Arabic query still reach that English-keyed
@@ -8953,7 +8952,7 @@ def _fuzzy_score(needle: str, haystack: str) -> int | None:
     higher. Returns None when needle is not a subsequence of haystack.
 
     ONLY EVER APPLIED TO A SHORT FIELD (a title), never to a concatenation
-    of everything an item knows about — see _match_entry.
+    of everything an item knows about — see match_entry.
     """
     if not needle:
         return 0
@@ -9014,8 +9013,30 @@ _MATCH_ALIAS = 500
 _MATCH_TYPO_TITLE = 150
 
 
-def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | None:
-    """(score, matched_content) for one palette entry, or None.
+def match_entry(query: str, item: dict, category: str,
+                 fuzzy: bool = True) -> tuple[int, str] | None:
+    """(score, matched_content) for one catalog entry, or None.
+
+    NOT PALETTE-PRIVATE, despite living in this section — CategoryPage's
+    own instant filter (main.py) calls this exact function too, on the
+    reasoning that "search" should mean the same thing everywhere in the
+    app: the same query resolves the same cards whether it is typed into
+    Ctrl+K or into the filter field on the page you are already on. A
+    second, independently-tuned matcher would drift from this one the
+    first time either was edited.
+
+    `fuzzy=False` (CategoryPage's own default) drops ONLY the initials/
+    abbreviations tier below — everything else (exact, prefix, word,
+    substring, contents, alias, typo) stays on. That tier is a genuinely
+    good idea in a RANKED list with room to show a dozen results and let
+    the real ones float above a coincidence: "sfc" finding System Repair
+    by initials. It is a bad idea as a bare yes/no filter with nothing
+    but a title to look at: measured on the System & Tweaks page, plain
+    "dark" fuzzy-matched "Disable Recent-Item Tracking" (d-a-r-k occurs
+    in order across "Disable ... tRacKing") with no way for the page to
+    explain why, next to the actual Dark Mode card it was also showing.
+    The palette can afford that tier because a coincidence ranks near the
+    bottom of a scored list; an unranked filter cannot.
 
     `matched_content` names the CONTAINED thing that matched, when that is
     why the row is in the results — "Software Catalog" surfacing for
@@ -9078,10 +9099,13 @@ def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | Non
 
     # -- initials / abbreviations, TITLE ONLY ----------------------
     # Keeps "sfc", "odt" and "cdi" style shorthand working without letting
-    # a long contents blob match everything.
-    fuzzy = _fuzzy_score(query, title)
-    if fuzzy is not None:
-        return (_MATCH_FUZZY_TITLE + fuzzy - len(title), "")
+    # a long contents blob match everything — but only for a caller that
+    # asked for it; see this function's own docstring for why the default
+    # differs by caller.
+    if fuzzy:
+        fuzzy_score = _fuzzy_score(query, title)
+        if fuzzy_score is not None:
+            return (_MATCH_FUZZY_TITLE + fuzzy_score - len(title), "")
 
     # -- the query, translated -------------------------------------
     # Arabic, or an English verb the interface does not happen to use. Each
@@ -9099,7 +9123,7 @@ def _match_entry(query: str, item: dict, category: str) -> tuple[int, str] | Non
     for alias in SEARCH_ALIASES.get(query, ()):
         if alias in SEARCH_ALIASES:
             continue
-        hit = _match_entry(alias, item, category)
+        hit = match_entry(alias, item, category, fuzzy=fuzzy)
         if hit is not None:
             # Capped at the alias tier: a translated match is real, and it
             # is still weaker evidence than the user's own words.
@@ -9376,7 +9400,7 @@ class CommandPalette(PulseDialog):
 
         scored = []
         for item, category in self._entries:
-            hit = _match_entry(query, item, category)
+            hit = match_entry(query, item, category)
             if hit is not None:
                 scored.append((hit[0], hit[1], item, category))
         # Sort by score, then by title, so equal scores order predictably
@@ -12877,6 +12901,7 @@ class BloatwarePurgeDialog(PulseDialog):
         self._search.setPlaceholderText(
             I18N.tr("bloatware.filter_placeholder", self._lang))
         self._search.setClearButtonEnabled(True)
+        name_clear_button(self._search, self._lang)
         self._search.setFrame(False)
         self._search.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         # DEBOUNCED: each keystroke re-runs visibility across ~48 rows and

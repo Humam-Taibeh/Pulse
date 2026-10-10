@@ -32,7 +32,7 @@ if sys.platform == "win32":
     import ctypes.wintypes  # MSG / RECT for native window hit-testing
 
 from PySide6.QtCore import (
-    QEvent, QPoint, QPropertyAnimation, QRect, QSize, Qt,
+    QEvent, QPoint, QPropertyAnimation, QSize, Qt,
     QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
@@ -41,8 +41,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFileDialog, QFrame,
     QGraphicsOpacityEffect,
-    QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QScrollArea,
-    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
+    QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 # Allow "from utils.helpers import ..." / "from frontend import ..." when
@@ -63,8 +63,7 @@ from frontend import theme as TH  # noqa: E402
 from frontend import i18n  # noqa: E402
 from frontend import i18n_catalog  # noqa: E402
 from frontend.animations import (  # noqa: E402
-    CASCADE_BUDGET_MS, CASCADE_MS, EASE_INOUT, PAGE_FADE_MS, CascadeAnimator,
-    PageFader,
+    EASE_INOUT, CascadeAnimator, PageFader,
 )
 from frontend.menu_structure import (  # noqa: E402
     CATEGORIES, SOFTWARE_CATALOG, catalog_section, category_bands,
@@ -92,6 +91,10 @@ from frontend.widgets import (  # noqa: E402
     StartupManagerDialog, StorageAnalyzerDialog, TitleBar,
     ToolInstallWizardDialog, UpdateCenterDialog,
     reanchor_dialog, refit_dialog,
+    # v1.1 instant category filter — the exact matcher Ctrl+K already
+    # uses (see widgets.match_entry's own docstring for why it is shared
+    # rather than reimplemented here).
+    match_entry, name_clear_button, normalise_query,
 )
 from frontend import playbooks  # noqa: E402
 from frontend.playbooks import PlaybookRunner, load_playbooks  # noqa: E402
@@ -273,7 +276,7 @@ class WelcomePage(QWidget):
     rather than a splash:
 
         ┌──────────────────────────────────────────────────────┐
-        │ ✦  PULSE                                             │  masthead
+        │ ∿  PULSE                                             │  masthead
         │    Windows Orchestration Toolkit                     │
         │                                                      │
         │ SYSTEM HEALTH ────────────────────────────────────── │
@@ -516,7 +519,7 @@ class WelcomePage(QWidget):
         hb.setContentsMargins(TH.SPACE["xl"], 0, TH.SPACE["xl"], 0)
         hb.setSpacing(TH.SPACE["lg"])
 
-        self._logo = BrandMark("✦", size=58, accent=t["accent"])
+        self._logo = BrandMark(size=58, accent=t["accent"])
         hb.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
         id_col = QVBoxLayout()
@@ -1111,6 +1114,55 @@ class CategoryPage(QWidget):
         head.addLayout(title_col)
         head.addStretch()
 
+        # -- v1.1 INSTANT filter: text, ahead of the status combo --------
+        # The v1.0 note below explains why a free-text box was removed
+        # from here once already — it sat on screen at the same time as
+        # the sidebar's "Search everything…" doorway (Ctrl+K) and the two
+        # competed to answer the same question. This is not that box
+        # again: Ctrl+K is a MODAL that jumps anywhere in the app and
+        # closes; this narrows the grid you are already looking at,
+        # in place, and stays open while you read the result — the same
+        # split VS Code draws between Ctrl+P and in-file Ctrl+F. Ctrl+F
+        # itself stays bound to the palette (main._install_shortcuts) for
+        # exactly that reason; this field's own key is "/".
+        #
+        # Reuses widgets.match_entry verbatim rather than a second
+        # matcher — see that function's own docstring — plus one check
+        # match_entry does not cover: a literal substring of the CURRENT
+        # display language's translated title/description, so pasting the
+        # Arabic text actually on screen matches even when it is not one
+        # of SEARCH_ALIASES' curated verbs. See _card_matches_query.
+        self._search_field = QFrame()
+        self._search_field.setObjectName("categorySearchField")
+        self._search_field.setFixedSize(220, TH.CONTROL_H)
+        search_lay = QHBoxLayout(self._search_field)
+        search_lay.setContentsMargins(TH.SPACE["sm"], 0, TH.SPACE["sm"], 0)
+        search_lay.setSpacing(TH.SPACE["sm"])
+        search_mark = QLabel()
+        search_char, search_is_fluent = TH.glyph("search")
+        if search_is_fluent:
+            search_font = TH.icon_font(TH.ICON["inline"])
+            if search_font is not None:
+                search_mark.setFont(search_font)
+        search_mark.setText(search_char)
+        search_lay.addWidget(search_mark)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText(
+            i18n.tr("category.search_placeholder", lang))
+        self._search.setFrame(False)
+        self._search.setClearButtonEnabled(True)
+        name_clear_button(self._search, lang)
+        # INSTANT, deliberately not debounced: the status filter beside it
+        # reflows this same grid on every currentIndexChanged with no
+        # debounce either, and this page never holds enough cards (the
+        # densest module today is in the low dozens) for a per-keystroke
+        # relayout to be the wrong call — "zero perceptible lag" is the
+        # requirement, not "as fast as a debounce allows".
+        self._search.textChanged.connect(lambda _t: self.refresh_filter())
+        self._search.installEventFilter(self)
+        search_lay.addWidget(self._search, 1)
+        head.addWidget(self._search_field, 0, Qt.AlignmentFlag.AlignVCenter)
+
         # -- v1.0 STATUS filter: the header's right-hand side ------------
         # This was a free-text "Filter…" box, which sat on screen at the
         # same time as the sidebar's "Search everything…" doorway and left
@@ -1311,26 +1363,73 @@ class CategoryPage(QWidget):
         return max(1, min(self.MAX_COLUMNS, fits))
 
     # -- filtering -------------------------------------------------
-    def refresh_filter(self):
-        """Re-apply the current status filter.
+    def _card_matches_query(self, item: dict, query_norm: str) -> bool:
+        """Does this card answer the instant filter's (already-normalised)
+        query? Two independent yeses, either is enough:
 
-        Called both when the user changes the dropdown AND whenever card
-        badges are re-decided (main._refresh_card_badges): the filter
-        selects on badge state, so a probe result arriving after the user
-        picked "Action due" has to reflow the grid or the page would keep
-        showing a stale selection."""
+        1. widgets.match_entry against the item's ENGLISH source text —
+           title, description, note and (for a hub) what it contains —
+           with typo tolerance and SEARCH_ALIASES' EN<->AR verb table.
+           This is the exact function Ctrl+K scores results with, so a
+           query behaves identically in both places.
+        2. A literal substring of the item's title/description AS
+           CURRENTLY DISPLAYED (i18n_catalog, this page's own `_lang`).
+           match_entry never looks at translated text — see its own
+           docstring — so without this a query built from copying the
+           Arabic actually on screen would not match unless that exact
+           phrase happened to also be a SEARCH_ALIASES key. Folded through
+           the same normalise_query as the query itself, so the alef/yeh/
+           teh-marbuta variance that makes typed Arabic inconsistent is
+           handled once, not twice.
+        """
+        if not query_norm:
+            return True
+        if match_entry(query_norm, item, self.category.get("title", ""),
+                        fuzzy=False) is not None:
+            return True
+        title = normalise_query(i18n_catalog.tr_title(item.get("title", ""), self._lang))
+        if query_norm in title:
+            return True
+        desc = normalise_query(i18n_catalog.tr_desc(item.get("desc", ""), self._lang))
+        return query_norm in desc
+
+    def _empty_message(self) -> str:
+        """Why the grid is showing nothing — the search text if there is
+        one (the more specific, more recently-changed signal), else the
+        status filter's name, else the empty string a fully-populated
+        page never needs to show."""
+        query = self._search.text().strip()
+        if query:
+            return i18n.tr("category.empty_search", self._lang).format(query=query)
         state = self._filter.currentData() or ""
+        if state:
+            return i18n.tr("category.empty_filtered", self._lang).format(
+                filter=self._filter.currentText().lower())
+        return ""
+
+    def refresh_filter(self):
+        """Re-apply the status filter AND the instant text filter — the
+        card grid shows their AND, exactly like narrowing a spreadsheet by
+        two columns at once.
+
+        Called when either control changes, when card badges are
+        re-decided (main._refresh_card_badges, since the status filter
+        selects on badge state and a probe result arriving after the user
+        picked "Action due" has to reflow the grid), and once more from
+        retranslate() (the empty-state sentence and the search
+        placeholder are language-dependent)."""
+        state = self._filter.currentData() or ""
+        query = normalise_query(self._search.text())
         self._visible = [
             card for card in self.cards
-            if not state or card.state() == state
+            if (not state or card.state() == state)
+            and self._card_matches_query(card.item, query)
         ]
         shown = set(id(c) for c in self._visible)
         for card in self.cards:
             card.setVisible(id(card) in shown)
-        self._empty.setText(
-            i18n.tr("category.empty_filtered", self._lang)
-                .format(filter=self._filter.currentText().lower()))
-        self._empty.setVisible(bool(state) and not self._visible)
+        self._empty.setText(self._empty_message())
+        self._empty.setVisible(bool(state or query) and not self._visible)
         # force a rebuild: the column count may not change, but WHICH cards
         # occupy which cells certainly has
         self._cols = 0
@@ -1351,7 +1450,7 @@ class CategoryPage(QWidget):
 
     def _sync_count_chip(self):
         total = category_operations(self.category)
-        filtering = bool(self._filter.currentData())
+        filtering = bool(self._filter.currentData()) or bool(self._search.text().strip())
         if filtering:
             self._count_chip.setText(
                 i18n.tr("category.count.filtered", self._lang)
@@ -1621,12 +1720,54 @@ class CategoryPage(QWidget):
     def focus_filter(self):
         """Ctrl+Shift+F target — open the status dropdown.
 
-        Plain Ctrl+F no longer lands here: with page-level text search
-        folded into the global palette (v1.0), the muscle-memory "find"
-        keys belong to the one search the app has. This shortcut reaches
-        the status filter, which is a different question."""
+        Plain Ctrl+F still does not land here: it is bound to the global
+        Ctrl+K palette (main._install_shortcuts), and stays there even
+        now that this page has its own text search too — see the v1.1
+        comment above self._search_field for why the two are different
+        questions rather than the same one twice. This shortcut reaches
+        the status filter specifically."""
         self._filter.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._filter.showPopup()
+
+    def focus_search(self):
+        """"/" target — focus the instant filter with its current text
+        selected, so typing immediately replaces rather than appends."""
+        self._search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self._search.selectAll()
+
+    def eventFilter(self, obj, event):
+        if obj is not self._search:
+            return super().eventFilter(obj, event)
+        if event.type() == QEvent.Type.FocusIn:
+            self._apply_search_focus(True)
+        elif event.type() == QEvent.Type.FocusOut:
+            self._apply_search_focus(False)
+        elif event.type() == QEvent.Type.ShortcutOverride:
+            # Claims bare Escape BEFORE PulseApp's own WindowShortcut
+            # (Escape -> go_home) sees the key event at all — without
+            # this, Qt's shortcut map wins the key first and the field
+            # never gets a chance to clear itself; the user's Escape
+            # navigates them off the page they were trying to narrow.
+            # Only claimed while there is text TO clear, so an empty
+            # field's Escape still falls through to "go home" — the
+            # same two-stage behaviour a browser's own address bar has.
+            if event.key() == Qt.Key.Key_Escape and self._search.text():
+                event.accept()
+                return True
+        elif event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape and self._search.text():
+                self._search.clear()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _apply_search_focus(self, on: bool):
+        """The field's focus ring lives on its container frame, because
+        the QLineEdit inside is chromeless — same reasoning and same
+        mechanism as CommandPalette._apply_field_focus (theme.
+        category_search_qss's own docstring)."""
+        self._search_field.setProperty("focused", on)
+        self._search_field.setStyleSheet(
+            TH.category_search_qss(self._t, TH.resolve_accent(self._t, self.category["accent"])))
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -1639,6 +1780,7 @@ class CategoryPage(QWidget):
         self._t = t
         accent = TH.resolve_accent(t, self.category["accent"])
         self._filter.setStyleSheet(TH.filter_combo_qss(t, accent))
+        self._search_field.setStyleSheet(TH.category_search_qss(t, accent))
         self._empty.setStyleSheet(TH.empty_state_qss(t))
         self._sync_count_chip()
         self._home.apply_theme(t)
@@ -1683,6 +1825,8 @@ class CategoryPage(QWidget):
         self._crumb_sep.setText("‹" if i18n.is_rtl(lang) else "›")
         self._title.setText(i18n_catalog.tr_title(self.category["title"], lang))
         self._tagline.setText(i18n_catalog.tr_desc(self.category["tagline"], lang))
+        self._search.setPlaceholderText(i18n.tr("category.search_placeholder", lang))
+        name_clear_button(self._search, lang)
         for i, (label_key, _key) in enumerate(self.FILTERS):
             self._filter.setItemText(i, i18n.tr(label_key, lang))
         for (header, _cards), band_title in zip(self._bands, self._band_titles):
@@ -3345,6 +3489,7 @@ class PulseApp(QMainWindow):
     # help sheet, so a shortcut can never exist without being documented.
     SHORTCUTS = [
         ("Ctrl+K  or  Ctrl+F", "Search everything"),
+        ("/",             "Search this module's cards"),
         ("Ctrl+Shift+F",  "Filter this module by status"),
         ("Ctrl+H",        "Go to the dashboard"),
         ("Ctrl+1 … 4",    "Jump to a module"),
@@ -3375,6 +3520,19 @@ class PulseApp(QMainWindow):
         # answering a keypress the user meant for text search.
         bind("Ctrl+F", self._open_command_palette)
         bind("Ctrl+Shift+F", self._focus_page_filter)
+        # v1.1: the page-local instant filter's own key — deliberately
+        # NOT Ctrl+F (see that binding's own comment for why that one
+        # stays pointed at the palette). "/" is unclaimed and is the
+        # convention this exact split already uses elsewhere (GitHub,
+        # Slack, Notion): a bare key for "search what I'm looking at",
+        # a modifier chord for "search everything, from anywhere". Safe
+        # as a bare WindowShortcut on the same grounds "?" two lines
+        # below already relies on: a focused QLineEdit claims an
+        # ordinary text key via ShortcutOverride before it ever reaches
+        # the shortcut map, so typing "/" into any field — including
+        # this one, mid-query — inserts the character instead of
+        # re-triggering the focus jump.
+        bind("/", self._focus_page_search)
         bind("Ctrl+\\", self.activity.toggle_pinned)
         bind("F1", self._open_shortcut_sheet)
         bind("?", self._open_shortcut_sheet)
@@ -3388,6 +3546,17 @@ class PulseApp(QMainWindow):
         page = self.stack.currentWidget()
         if isinstance(page, CategoryPage):
             page.focus_filter()
+        else:
+            self._open_command_palette()
+
+    def _focus_page_search(self):
+        """"/" on a module page focuses its instant filter; anywhere else
+        (the dashboard, Settings) there is no page-local search to focus,
+        so this falls through to the one search that always exists —
+        same "never does nothing" rule _focus_page_filter follows."""
+        page = self.stack.currentWidget()
+        if isinstance(page, CategoryPage):
+            page.focus_search()
         else:
             self._open_command_palette()
 

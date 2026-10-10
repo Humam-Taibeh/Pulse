@@ -15,6 +15,34 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [Unreleased]
+
+### Changed — a brand mark that says the product's name
+- **New logo.** The four-pointed sparkle — the same shape a dozen AI
+  products use — is replaced by a heartbeat trace ending in a lit "live"
+  point, on a dark squircle tile, in the cyan-to-indigo brand sweep.
+- **One drawing everywhere.** The geometry lives once, in
+  `src/frontend/brand.py`. The title bar and dashboard paint it live in the
+  theme's colours (`BrandMark`); `tools/make_brand.py` renders the fixed-
+  colour artwork from it: `assets/pulse.ico` (9 layers, 16–256px, each drawn
+  natively at its own size with a heavier stroke at ≤32px rather than
+  downscaled), and SVG + 512px PNG masters under `assets/brand/`.
+- The Setup wizard art (`tools/make_installer_art.py`) now composes from the
+  brand mark instead of luminance-matting a glyph out of the old `.ico`.
+- README header uses the vector icon; the repository tree and test counts
+  are brought up to date.
+
+### Added
+- **Instant search inside a module page** (`/`): narrows the card grid in
+  place, with the same matcher as the Ctrl+K palette (`widgets.match_entry`),
+  plus matching against the Arabic text actually on screen. Escape clears it.
+
+### Fixed
+- The search fields' built-in clear (×) button had no accessible name, so a
+  screen reader announced nothing for it (`widgets.name_clear_button`).
+
+---
+
 ## [10.17.0] — 2026-09-20
 
 ### Added — the three "primary interactive dialogs" translate in full

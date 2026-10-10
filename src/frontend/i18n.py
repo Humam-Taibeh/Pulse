@@ -636,6 +636,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "No operations in this module are {filter}.",
         "ar": "لا توجد عمليات في هذه الوحدة {filter}.",
     },
+    "category.search_placeholder": {
+        "en": "Search this module…",
+        "ar": "ابحث في هذه الوحدة…",
+    },
+    "category.empty_search": {
+        "en": "No operations match “{query}”.",
+        "ar": "لا توجد عمليات تطابق “{query}”.",
+    },
+    # QLineEdit's built-in clear (×) button — see widgets.name_clear_button.
+    "search.clear": {
+        "en": "Clear search",
+        "ar": "مسح البحث",
+    },
 
     # -- card status badges (GlassCard._STATE_BADGES) ----------------------
     "badge.applied": {
