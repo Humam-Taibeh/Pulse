@@ -141,36 +141,23 @@ TITLES: dict[str, str] = {
     "Disable Telemetry": "تعطيل القياس عن بُعد",
     "Drive Space Report": "تقرير مساحة الأقراص",
     "Driver Backup": "نسخ احتياطي لبرامج التشغيل",
-    "Edge Backup Folder": "مجلد النسخ الاحتياطي لـEdge",
     "Enable Hibernation": "تفعيل الإسبات",
     "Essential Daily Software": "البرامج الأساسية اليومية",
-    "Ethernet & Wi-Fi Driver Check": "فحص برامج تشغيل الإيثرنت والواي فاي",
-    "Fix Shadowed Tools": "إصلاح تعارض الأدوات",
     "Game Mode & Game Bar": "وضع الألعاب وشريط الألعاب",
     "Global Dark Mode": "الوضع الداكن الشامل",
     "Health & Drift Report": "تقرير الحالة والانحراف",
-    "Install / Restore OneDrive": "تثبيت / استعادة OneDrive",
-    "Leftovers Backup Folder": "مجلد النسخ الاحتياطي للمخلّفات",
     "Leftovers Cleaner": "منظّف المخلّفات",
     "Microsoft Office Suite": "حزمة Microsoft Office",
     "Minimalist Taskbar": "شريط مهام بسيط",
     "Missing Driver Scan": "فحص برامج التشغيل المفقودة",
     "Network & Connectivity": "الشبكة والاتصال",
     "Network & Ping Optimizer": "محسِّن الشبكة والبينغ",
-    "Network Adapter Diagnostics": "تشخيص محوّلات الشبكة",
-    "OneDrive Backup Folder": "مجلد النسخ الاحتياطي لـOneDrive",
     "Optimize All Drives": "تحسين جميع الأقراص",
     "PATH Doctor": "طبيب PATH",
     "Playbooks": "كتيّبات التشغيل",
-    "Prune Dead & Duplicate Entries": "تقليم الإدخالات الميتة والمكرَّرة",
-    "Purge OneDrive": "إزالة OneDrive نهائيًا",
-    "Reinstall Microsoft Edge": "إعادة تثبيت Microsoft Edge",
     "Remove Bloatware": "إزالة البرامج غير المرغوبة",
-    "Remove Microsoft Edge": "إزالة Microsoft Edge",
     "Remove Windows.old": "إزالة مجلد Windows.old",
     "Reset All Tweaks": "إعادة ضبط كل التعديلات",
-    "Reset Network Stack": "إعادة ضبط مكدّس الشبكة",
-    "Restore Last Purge": "استرجاع آخر عملية حذف",
     "Restore Point Browser": "متصفّح نقاط الاستعادة",
     "Restore Services": "استعادة الخدمات",
     "Right-Click Menu Entries": "عناصر قائمة النقر بالزر الأيمن",
@@ -194,8 +181,6 @@ TITLES: dict[str, str] = {
     "Hide Task View Button": "إخفاء زر عرض المهام",
     "Disable Transparency Effects": "تعطيل تأثيرات الشفافية",
 
-    "Scan & Purge Leftovers": "فحص المخلّفات وإزالتها",
-    "Scan PATH & Environment": "فحص PATH ومتغيرات البيئة",
     "Startup Manager": "مدير بدء التشغيل",
     "Storage Analyzer": "محلِّل التخزين",
     "System Info Snapshot": "لقطة معلومات النظام",
@@ -301,8 +286,6 @@ DESCRIPTIONS: dict[str, str] = {
     "A safety checkpoint before big changes.": "نقطة أمان قبل إجراء تغييرات كبيرة.",
 
     # -- every remaining card description across the four categories ----
-    "Back up local files, then uninstall OneDrive.":
-        "نسخ الملفات المحلية احتياطيًا، ثم إلغاء تثبيت OneDrive.",
     "Battery wear, cycle count and the active power plan — read-only.":
         "تآكل البطارية وعدد دورات الشحن وخطة الطاقة الحالية — للعرض فقط.",
     "Boot-impact audit with instant enable/disable toggles.":
@@ -315,10 +298,6 @@ DESCRIPTIONS: dict[str, str] = {
         "جهاز جديد ليصبح جاهزًا للاستخدام.",
     "Check Windows Update for drivers you're missing.":
         "التحقق من Windows Update بحثًا عن برامج التشغيل الناقصة.",
-    "Dead folders, duplicates, malformed entries and shadowed "
-    "toolchains — reported, nothing changed.":
-        "مجلدات ميتة وإدخالات مكرَّرة وتالفة وأدوات متعارضة — تُعرض "
-        "فقط، دون أي تغيير.",
     "Delete hiberfil.sys and free disk space.":
         "حذف ملف hiberfil.sys وتحرير مساحة القرص.",
     "Diagnose adapters, check Ethernet and Wi-Fi drivers, or rebuild "
@@ -346,77 +325,39 @@ DESCRIPTIONS: dict[str, str] = {
         "معرفة ما خلّفته البرامج التي أُزيلت — إدخالات بدء تشغيل "
         "ميتة، ومهام مجدولة شبحية، ومجلدات تطبيقات مهجورة — وإزالتها "
         "بأمان.",
-    "Flags only what points at files that are provably gone. "
-    "Everything removed is backed up first, behind a restore point.":
-        "لا يُعلَّم إلا ما يشير إلى ملفات ثبت زوالها فعليًا. كل ما "
-        "تتم إزالته يُنسخ احتياطيًا أولًا، خلف نقطة استعادة.",
     "Flush DNS and reset Winsock for lower latency.":
         "تفريغ ذاكرة DNS المؤقتة وإعادة ضبط Winsock لخفض زمن الاستجابة.",
     "Force the dark theme across Windows and all apps.":
         "فرض المظهر الداكن على ويندوز وكل التطبيقات.",
-    "Force-purge Chromium Edge, with a backup kept.":
-        "إزالة Chromium Edge إزالة قسرية، مع الاحتفاظ بنسخة احتياطية.",
     "Free / used space snapshot for every fixed drive.":
         "لقطة للمساحة الحرة/المستخدمة لكل قرص ثابت.",
     "Hardware, uptime and drive space — written to the log.":
         "العتاد ومدة التشغيل ومساحة الأقراص — تُكتب في السجل.",
-    "How old each network driver is, and the official Intel / Realtek "
-    "page to get a newer one.":
-        "عمر كل برنامج تشغيل شبكة، وصفحة Intel / Realtek الرسمية "
-        "للحصول على إصدار أحدث.",
     "Languages, compilers, IDEs and the local AI stack — everything "
     "needed to build software here.":
         "لغات ومترجمات وبيئات تطوير متكاملة وحزمة الذكاء الاصطناعي "
         "المحلية — كل ما يلزم لبناء البرامج هنا.",
     "Left-aligned, widget-free, chat-free taskbar.":
         "شريط مهام محاذًى لليسار، بلا ودجات وبلا محادثة.",
-    "Link state, speed, addresses, gateway and driver for every "
-    "adapter — read-only.":
-        "حالة الاتصال والسرعة والعناوين والبوابة وبرنامج التشغيل لكل "
-        "محوّل — للعرض فقط.",
     "Live scan of installed apps — update exactly what you pick.":
         "فحص مباشر للتطبيقات المثبَّتة — حدِّث ما تختاره بالضبط.",
     "Manual System Restore checkpoint — your safety net before big "
     "changes.":
         "نقطة استعادة يدوية للنظام — شبكة أمانك قبل إجراء تغييرات كبيرة.",
-    "Open files rescued before OneDrive removal.":
-        "فتح الملفات التي أُنقذت قبل إزالة OneDrive.",
     "Open the full Pulse operation log.":
         "فتح سجل عمليات Pulse كاملًا.",
-    "Open the registry exports, task definitions and folders a purge "
-    "set aside.":
-        "فتح تصديرات السجل وتعريفات المهام والمجلدات التي نحّتها "
-        "عملية حذف جانبًا.",
-    "Open the settings and profile data saved before removal.":
-        "فتح الإعدادات وبيانات الملف الشخصي المحفوظة قبل الإزالة.",
     "Purge Chromium Edge from Windows — or put it back. A backup is "
     "kept either way, so the removal is reversible.":
         "إزالة Chromium Edge من ويندوز — أو إعادته. يُحتفظ بنسخة "
         "احتياطية في كل الحالات، فالإزالة قابلة للتراجع.",
-    "Put back everything the most recent purge removed.":
-        "إعادة كل ما أزالته آخر عملية حذف.",
     "Raw pointer precision — no speed curves or thresholds.":
         "دقة مؤشر خام — بلا منحنيات سرعة أو عتبات.",
     "Re-enable Windows services disabled by the optimizer.":
         "إعادة تفعيل خدمات ويندوز التي عطّلها المحسِّن.",
-    "Rebuild Winsock and TCP/IP, then renew the lease. Requires a "
-    "restart to finish.":
-        "إعادة بناء Winsock وTCP/IP، ثم تجديد عقد الإيجار. يتطلب "
-        "إعادة التشغيل للإكمال.",
     "Reclaim gigabytes from a previous Windows install.":
         "استعادة غيغابايتات من تثبيت ويندوز سابق.",
-    "Reinstall Edge and restore your backed-up settings.":
-        "إعادة تثبيت Edge واستعادة إعداداتك المحفوظة.",
-    "Reinstall OneDrive so it's back and syncing.":
-        "إعادة تثبيت OneDrive ليعود ويستأنف المزامنة.",
     "Remove the per-user identifier that ad networks track.":
         "إزالة المعرِّف الخاص بكل مستخدم الذي تتعقّبه شبكات الإعلانات.",
-    "Removes only what is provably safe: duplicates, unparseable "
-    "entries, and folders missing from a mounted internal disk. A "
-    "restore point and a copy of your current PATH are saved first.":
-        "لا يُزيل إلا ما ثبتت سلامته: الإدخالات المكرَّرة، وغير "
-        "القابلة للتحليل، والمجلدات المفقودة من قرص داخلي متصل. "
-        "تُحفظ نقطة استعادة ونسخة من PATH الحالي أولًا.",
     "Repair protected system files and the component store.":
         "إصلاح ملفات النظام المحمية ومخزن المكوّنات.",
     "Restore the full Windows 10 right-click menu.":
@@ -497,12 +438,6 @@ DESCRIPTIONS: dict[str, str] = {
         "عودة بنقرة واحدة.",
     "TRIM SSDs and defragment HDDs — drive by drive.":
         "تنفيذ TRIM لأقراص SSD وإلغاء تجزئة أقراص HDD — قرصًا قرصًا.",
-    "Two Pythons, two Nodes, two Javas — see which copy your terminal "
-    "actually runs, and promote the one you want. Reorders your "
-    "PATH; removes nothing.":
-        "نسختا Python، ونسختا Node، ونسختا Java — اعرف أي نسخة "
-        "يشغّلها الطرفية فعليًا، ورقِّ النسخة التي تريدها. يعيد ترتيب "
-        "PATH؛ لا يزيل شيئًا.",
     "Uninstall OneDrive with your local files rescued first — or "
     "reinstall it and pick syncing back up.":
         "إلغاء تثبيت OneDrive بعد إنقاذ ملفاتك المحلية أولًا — أو "

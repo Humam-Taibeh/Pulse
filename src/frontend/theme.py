@@ -26,7 +26,6 @@ Rules:
 from __future__ import annotations
 
 import ctypes
-import math
 import sys
 
 from PySide6.QtCore import QObject, QRect, Qt, Signal
@@ -2562,8 +2561,8 @@ def scrollbar_qss(t: dict) -> str:
 
 
 def scroll_area_qss(t: dict) -> str:
-    return f"""
-        QScrollArea {{ background: transparent; border: none; }}
+    return """
+        QScrollArea { background: transparent; border: none; }
     """ + scrollbar_qss(t)
 
 

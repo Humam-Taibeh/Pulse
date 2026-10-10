@@ -15,6 +15,46 @@ long after `VERSION` had become the single source.
 
 ---
 
+## [10.18.1] — 2026-10-10
+
+### Fixed — a full repository audit, triggered by a direct question
+A pass over every tracked file (byte-identical duplicates, case
+collisions, orphaned modules, unused imports, requirements duplicates,
+backend function-name uniqueness) came back clean except for the
+following, all real and all fixed here:
+
+- **Thirty dead translation entries in `i18n_catalog.py`.** `TITLES` and
+  `DESCRIPTIONS` are flat `dict[str, str]` literals keyed on the English
+  source text, built up incrementally across many feature passes. Python
+  dict literals silently keep only the *last* value for a repeated key,
+  so wherever a later pass reused an English phrase an earlier pass had
+  already translated, the earlier entry became dead code — syntactically
+  present, visually plausible, and never once reached at runtime. One
+  concrete example: *"Dead folders, duplicates, malformed entries and
+  shadowed toolchains — reported, nothing changed."* had two different
+  Arabic translations on file, 700 lines apart; editing the first one —
+  the one a reader finds first — would have changed nothing the app ever
+  shows. Removed the shadowed earlier occurrence in each of the 30 pairs,
+  keeping whichever entry is actually live today, so this is a pure
+  dead-code deletion with zero effect on any string the app renders.
+- **Three unused imports**, pre-existing: `theme.py`'s `import math` (no
+  call anywhere in the module) and one of `nativeicons.py`'s two
+  `ctypes.POINTER`/`ctypes.c_void_p` imports (the other call site
+  genuinely uses both; this one uses neither), plus one redundant
+  f-string prefix with no interpolation inside it.
+- **`core.ps1`'s own module-map comment was four modules stale.** The
+  loader itself is a wildcard dot-source, so `14-Inspectors`/
+  `15-Network`/`16-ContextMenu`/`17-Leftovers` have always loaded
+  correctly — only the hand-maintained doc comment above it never
+  listed them, and still said "13 single-responsibility modules" where
+  the real count is 20.
+
+Verified: pyflakes clean across `src/` and `tools/` (was 44 findings
+across 4 files); PSScriptAnalyzer 0 findings; 1,776 pytest collected,
+0 failed.
+
+---
+
 ## [10.18.0] — 2026-10-10
 
 ### Highlights
